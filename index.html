@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>Windy Cave Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=3" />
+    <link rel="stylesheet" href="./styles.css?v=4" />
   </head>
   <body>
     <div class="app-shell">
@@ -25,7 +25,7 @@
         </div>
 
         <div class="build-info" title="클라이언트 버전은 실행 코드, 스키마 버전은 JSON 구조의 호환 기준입니다.">
-          <span id="clientVersionBadge">CLIENT 2.2.0</span>
+          <span id="clientVersionBadge">CLIENT 2.2.1</span>
           <span id="schemaVersionBadge">SCHEMA 3</span>
         </div>
 
@@ -207,6 +207,8 @@
               <button data-layer="item">Item</button>
             </div>
 
+            <p class="palette-help">항목 선택 → 맵 셀 클릭/드래그로 추가 · 선택 항목 재클릭 → 배치 해제</p>
+
             <div class="selected-asset" id="selectedAssetSummary"></div>
             <div class="asset-grid" id="assetGrid"></div>
           </section>
@@ -248,7 +250,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=3"></script>
+    <script src="./app.js?v=4"></script>
   </body>
 </html>
 
