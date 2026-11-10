@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0d12" />
+    <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
+    <title>Windy Cave Map Tool</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">W</div>
+          <div>
+            <strong>WINDY WORKS</strong>
+            <span>CAVE MAP TOOL</span>
+          </div>
+        </div>
+
+        <div class="version-control">
+          <label for="versionInput">VERSION</label>
+          <input id="versionInput" value="V0001" maxlength="16" />
+        </div>
+
+        <div class="top-actions">
+          <button class="button ghost" id="importButton">불러오기</button>
+          <button class="button ghost" id="exportButton">JSON 내보내기</button>
+          <button class="button primary" id="saveButton">저장</button>
+          <input id="importFile" type="file" accept="application/json" hidden />
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="left-panel panel">
+          <section class="panel-section cave-section">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">LEVELS</span>
+                <h2>Caves</h2>
+              </div>
+              <button class="icon-button" id="newCaveButton" title="새 Cave">＋</button>
+            </div>
+            <div id="caveList" class="cave-list"></div>
+            <div class="cave-actions">
+              <button class="button compact" id="duplicateCaveButton">복제</button>
+              <button class="button compact danger" id="deleteCaveButton">삭제</button>
+            </div>
+          </section>
+
+          <section class="panel-section rules-section">
+            <div class="section-heading simple">
+              <div>
+                <span class="eyebrow">CAVE RULES</span>
+                <h2>레벨 설정</h2>
+              </div>
+            </div>
+
+            <label class="field-label" for="caveName">Cave 이름</label>
+            <input class="field" id="caveName" />
+
+            <div class="field-row">
+              <label>
+                <span class="field-label">너비</span>
+                <input class="field" id="mapWidth" type="number" min="4" max="20" />
+              </label>
+              <label>
+                <span class="field-label">높이</span>
+                <input class="field" id="mapHeight" type="number" min="4" max="20" />
+              </label>
+            </div>
+            <button class="button full" id="resizeButton">맵 크기 적용</button>
+
+            <span class="field-label spaced">중력 방향</span>
+            <div class="gravity-control" id="gravityControl">
+              <button data-gravity="up" title="위">↑</button>
+              <button data-gravity="left" title="왼쪽">←</button>
+              <button data-gravity="down" title="아래">↓</button>
+              <button data-gravity="right" title="오른쪽">→</button>
+            </div>
+
+            <div class="field-row three">
+              <label>
+                <span class="field-label">목표</span>
+                <select class="field" id="targetType">
+                  <option value="red">Red</option>
+                  <option value="yellow">Yellow</option>
+                  <option value="blue">Blue</option>
+                  <option value="green">Green</option>
+                  <option value="orange">Orange</option>
+                  <option value="purple">Purple</option>
+                </select>
+              </label>
+              <label>
+                <span class="field-label">개수</span>
+                <input class="field" id="targetCount" type="number" min="1" max="999" />
+              </label>
+              <label>
+                <span class="field-label">Moves</span>
+                <input class="field" id="moveLimit" type="number" min="1" max="999" />
+              </label>
+            </div>
+
+            <label class="check-field">
+              <input id="failureBonus" type="checkbox" />
+              <span>Failure Bonus 사용</span>
+            </label>
+          </section>
+        </aside>
+
+        <section class="editor-area">
+          <div class="editor-toolbar panel">
+            <div class="tool-group" id="toolGroup">
+              <button class="tool-button active" data-tool="brush"><span>✎</span>브러시</button>
+              <button class="tool-button" data-tool="fill"><span>◩</span>채우기</button>
+              <button class="tool-button" data-tool="eraser"><span>◇</span>지우개</button>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="tool-group">
+              <button class="tool-button" id="undoButton"><span>↶</span>실행 취소</button>
+              <button class="tool-button" id="redoButton"><span>↷</span>다시 실행</button>
+            </div>
+            <div class="toolbar-spacer"></div>
+            <button class="button validate" id="validateButton">검증</button>
+            <button class="button play" id="playButton"><span>▶</span> Play</button>
+          </div>
+
+          <div class="canvas-stage panel">
+            <div class="canvas-header">
+              <div>
+                <span class="eyebrow">CURRENT CAVE</span>
+                <h1 id="currentCaveTitle">Cave 0001</h1>
+              </div>
+              <div class="canvas-meta">
+                <span id="mapSizeBadge">10 × 12</span>
+                <span id="gravityBadge">GRAVITY ↓</span>
+              </div>
+            </div>
+
+            <div class="grid-viewport">
+              <div id="mapGrid" class="map-grid" aria-label="Cave grid editor"></div>
+            </div>
+
+            <div class="canvas-footer">
+              <button class="button compact" id="prevCaveButton">← Previous Cave</button>
+              <div id="cellStatus" class="cell-status">셀을 선택하세요</div>
+              <button class="button compact" id="nextCaveButton">Next Cave →</button>
+            </div>
+          </div>
+
+          <div class="note-panel panel">
+            <label for="noteInput">
+              <span class="eyebrow">NOTE</span>
+              <textarea id="noteInput" placeholder="레벨 의도, 검증 포인트, 기믹 설명을 기록하세요."></textarea>
+            </label>
+          </div>
+        </section>
+
+        <aside class="right-panel panel">
+          <section class="panel-section palette-section">
+            <div class="section-heading simple">
+              <div>
+                <span class="eyebrow">ASSET PALETTE</span>
+                <h2>오브젝트</h2>
+              </div>
+            </div>
+
+            <div class="layer-tabs" id="layerTabs">
+              <button class="active" data-layer="terrain">Terrain</button>
+              <button data-layer="block">Block</button>
+              <button data-layer="gimmick">Gimmick</button>
+              <button data-layer="item">Item</button>
+            </div>
+
+            <div class="selected-asset" id="selectedAssetSummary"></div>
+            <div class="asset-grid" id="assetGrid"></div>
+          </section>
+
+          <section class="panel-section usable-section">
+            <span class="eyebrow">USABLE BLOCK</span>
+            <h2>사용 색상</h2>
+            <div class="color-toggles" id="usableColors"></div>
+          </section>
+
+          <section class="panel-section legend-section">
+            <span class="eyebrow">LAYERS</span>
+            <div class="legend-row"><i class="terrain-dot"></i> Terrain: 바닥과 벽</div>
+            <div class="legend-row"><i class="block-dot"></i> Block: 퍼즐 블록</div>
+            <div class="legend-row"><i class="gimmick-dot"></i> Gimmick: 포털·스위치</div>
+            <div class="legend-row"><i class="item-dot"></i> Item: 수집·보상</div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status"></div>
+
+    <dialog id="simulationDialog" class="simulation-dialog">
+      <div class="dialog-header">
+        <div>
+          <span class="eyebrow">CAVE SIMULATION</span>
+          <h2 id="simulationTitle">Cave 0001</h2>
+        </div>
+        <button class="icon-button" id="closeSimulationButton">×</button>
+      </div>
+      <div id="simulationResult" class="simulation-result"></div>
+      <div id="simulationGrid" class="simulation-grid"></div>
+      <div class="dialog-footer">
+        <button class="button" id="closeSimulationFooterButton">닫기</button>
+      </div>
+    </dialog>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
+
