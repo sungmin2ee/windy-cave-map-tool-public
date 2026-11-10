@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.4.0";
+const CLIENT_VERSION = "2.5.0";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -14,6 +14,15 @@ const ASSETS = {
     { id: "ice", name: "Ice", className: "terrain-ice", visual: "❄" },
     { id: "pit", name: "Pit", className: "terrain-pit", visual: "●" },
     { id: "conveyor", name: "Conveyor", className: "terrain-conveyor", visual: "➜" },
+    { id: "ddung-web", name: "DDUNG Web", className: "terrain-ddung-web", visual: "⌁" },
+    { id: "ddung-dust", name: "DDUNG Dust", className: "terrain-ddung-dust", visual: "░" },
+    { id: "ddung-oak", name: "DDUNG Oak", className: "terrain-ddung-oak", visual: "♣" },
+    { id: "ddung-stone", name: "DDUNG Stone", className: "terrain-ddung-stone", visual: "▰" },
+    { id: "ddung-water", name: "DDUNG Water", className: "terrain-ddung-water", visual: "≈" },
+    { id: "ddung-ice", name: "DDUNG Ice", className: "terrain-ddung-ice", visual: "❅" },
+    { id: "ddung-heather-small", name: "DDUNG Heather Small", className: "terrain-ddung-heather", visual: "♨" },
+    { id: "ddung-heather-large", name: "DDUNG Heather Large", className: "terrain-ddung-heather", visual: "♨" },
+    { id: "ddung-jelly", name: "DDUNG Jelly", className: "terrain-ddung-jelly", visual: "◫" },
   ],
   block: Object.keys(COLORS).map((id) => ({ id, name: id[0].toUpperCase() + id.slice(1), className: `block-${id}`, visual: "◆" })),
   gimmick: [
@@ -25,6 +34,17 @@ const ASSETS = {
     { id: "arrow-down", name: "Arrow Down", visual: "↓" },
     { id: "spawner", name: "Spawner", visual: "✦" },
     { id: "exit", name: "Exit", visual: "⇥" },
+    { id: "ddung-box", name: "DDUNG Box", visual: "□" },
+    { id: "ddung-mouse-panel", name: "DDUNG Mouse Panel", visual: "◉" },
+    { id: "ddung-dungs", name: "DDUNG Dungs", visual: "♟" },
+    { id: "ddung-bulldozer", name: "DDUNG Bulldozer", visual: "▸" },
+    { id: "ddung-spider-cave", name: "DDUNG Spider Cave", visual: "⌂" },
+    { id: "ddung-bee", name: "DDUNG Bee", visual: "♢" },
+    { id: "ddung-feng", name: "DDUNG Feng", visual: "風" },
+    { id: "ddung-mayor-small", name: "DDUNG Mayor Small", visual: "♙" },
+    { id: "ddung-mayor-large", name: "DDUNG Mayor Large", visual: "♛" },
+    { id: "ddung-bee-up", name: "DDUNG Bee Up", visual: "⇧" },
+    { id: "ddung-octo", name: "DDUNG Octo", visual: "◈" },
   ],
   item: [
     { id: "coin", name: "Coin", visual: "●" },
@@ -32,6 +52,15 @@ const ASSETS = {
     { id: "star", name: "Star", visual: "★" },
     { id: "bomb", name: "Bomb", visual: "✹" },
     { id: "bonus", name: "Bonus", visual: "+" },
+    { id: "ddung-treasure-1", name: "DDUNG Treasure 1", visual: "◆" },
+    { id: "ddung-treasure-2", name: "DDUNG Treasure 2", visual: "◇" },
+    { id: "ddung-chocolate", name: "DDUNG Chocolate", visual: "▣" },
+    { id: "ddung-jam-blue", name: "DDUNG Jam Blue", visual: "●" },
+    { id: "ddung-jam-green", name: "DDUNG Jam Green", visual: "●" },
+    { id: "ddung-jam-orange", name: "DDUNG Jam Orange", visual: "●" },
+    { id: "ddung-jam-pink", name: "DDUNG Jam Pink", visual: "●" },
+    { id: "ddung-jam-purple", name: "DDUNG Jam Purple", visual: "●" },
+    { id: "ddung-jam-yellow", name: "DDUNG Jam Yellow", visual: "●" },
   ],
 };
 
@@ -41,6 +70,15 @@ const DEFAULT_TERRAIN_RULES = {
   ice: { blocksFlow: false, reaction: "adjacent", durability: 2 },
   pit: { blocksFlow: true, reaction: "none", durability: 1 },
   conveyor: { blocksFlow: false, reaction: "none", durability: 1 },
+  "ddung-web": { blocksFlow: false, reaction: "adjacent", durability: 1 },
+  "ddung-dust": { blocksFlow: false, reaction: "adjacent", durability: 1 },
+  "ddung-oak": { blocksFlow: true, reaction: "adjacent", durability: 2 },
+  "ddung-stone": { blocksFlow: true, reaction: "adjacent", durability: 2 },
+  "ddung-water": { blocksFlow: false, reaction: "adjacent", durability: 1 },
+  "ddung-ice": { blocksFlow: false, reaction: "adjacent", durability: 1 },
+  "ddung-heather-small": { blocksFlow: false, reaction: "adjacent", durability: 1 },
+  "ddung-heather-large": { blocksFlow: false, reaction: "adjacent", durability: 2 },
+  "ddung-jelly": { blocksFlow: false, reaction: "adjacent", durability: 1 },
 };
 
 const FLOW_RULES = ["left-first", "right-first", "alternate", "seeded-random", "none"];
@@ -56,6 +94,40 @@ const STORAGE_KEY = "windy-cave-map-tool-v1";
 
 const deepCopy = (value) => JSON.parse(JSON.stringify(value));
 const emptyLayers = (size) => ({ terrain: Array(size).fill(null), block: Array(size).fill(null), gimmick: Array(size).fill(null), item: Array(size).fill(null) });
+
+function packLayer(layer, values) {
+  const ids = [null, ...ASSETS[layer].map((asset) => asset.id)];
+  return values.map((value) => String.fromCharCode(33 + Math.max(0, ids.indexOf(value)))).join("");
+}
+
+function unpackLayer(layer, packed, size) {
+  const ids = [null, ...ASSETS[layer].map((asset) => asset.id)];
+  const text = String(packed || "");
+  return Array.from({ length: size }, (_, index) => ids[Math.max(0, text.charCodeAt(index) - 33)] || null);
+}
+
+function packProjectForStorage(value) {
+  return {
+    ...value,
+    storageFormat: "packed-layers-v1",
+    caves: value.caves.map((cave) => {
+      const compact = {
+        ...cave,
+        layers: undefined,
+        packedLayers: Object.fromEntries(Object.entries(cave.layers).map(([layer, values]) => [layer, packLayer(layer, values)])),
+      };
+      delete compact.targetType;
+      delete compact.targetCount;
+      if (JSON.stringify(compact.terrainRules) === JSON.stringify(DEFAULT_TERRAIN_RULES)) delete compact.terrainRules;
+      if (compact.testClearMoves === 0) delete compact.testClearMoves;
+      if (compact.simulationRuns === 30) delete compact.simulationRuns;
+      if (compact.randomDensity === 100) delete compact.randomDensity;
+      if (compact.flowRule === "left-first") delete compact.flowRule;
+      if (!compact.failureBonus) delete compact.failureBonus;
+      return compact;
+    }),
+  };
+}
 
 function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
   const width = 10;
@@ -98,6 +170,7 @@ let isPainting = false;
 let strokeSnapshotTaken = false;
 let playtestState = null;
 let selectedTerrainRule = "ice";
+let caveSearchQuery = "";
 
 const $ = (id) => document.getElementById(id);
 const activeCave = () => project.caves.find((c) => c.id === project.activeCaveId);
@@ -182,7 +255,9 @@ function normalizeCave(data, index = 0) {
   const size = width * height;
   const layers = emptyLayers(size);
   for (const layer of Object.keys(layers)) {
-    const values = Array.isArray(source.layers?.[layer]) ? source.layers[layer] : [];
+    const values = Array.isArray(source.layers?.[layer])
+      ? source.layers[layer]
+      : unpackLayer(layer, source.packedLayers?.[layer], size);
     for (let i = 0; i < size; i += 1) layers[layer][i] = values[i] ?? null;
   }
   const usableBlocks = Array.isArray(source.usableBlocks)
@@ -205,7 +280,7 @@ function normalizeCave(data, index = 0) {
       durability: clampNumber(rule.durability, DEFAULT_TERRAIN_RULES[terrainId].durability, 1, 99),
     };
   });
-  return {
+  const normalized = {
     ...source,
     id: source.id || crypto.randomUUID(),
     name: String(source.name || `Cave ${String(index + 1).padStart(4, "0")}`),
@@ -222,6 +297,9 @@ function normalizeCave(data, index = 0) {
     failureBonus: Boolean(source.failureBonus),
     note: String(source.note || ""),
   };
+  delete normalized.packedLayers;
+  delete normalized.storageFormat;
+  return normalized;
 }
 
 function loadProject() {
@@ -233,8 +311,12 @@ function loadProject() {
 }
 
 function persist(showMessage = false) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
-  if (showMessage) toast("브라우저에 저장했습니다.");
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(packProjectForStorage(project)));
+    if (showMessage) toast("브라우저에 저장했습니다.");
+  } catch (_) {
+    toast("프로젝트가 너무 커서 브라우저 저장 공간을 초과했습니다. JSON으로 내보내 백업하세요.");
+  }
 }
 
 function snapshot() {
@@ -363,10 +445,36 @@ function renderAll() {
 function renderCaveList() {
   const list = $("caveList");
   list.innerHTML = "";
-  project.caves.forEach((cave, index) => {
+  const activeIndex = Math.max(0, project.caves.findIndex((cave) => cave.id === project.activeCaveId));
+  const query = caveSearchQuery.trim().toLocaleLowerCase();
+  const indexedCaves = project.caves.map((cave, index) => ({ cave, index }));
+  let visibleCaves;
+  let summary;
+  if (query) {
+    visibleCaves = indexedCaves.filter(({ cave, index }) => {
+      const number = String(index + 1);
+      return cave.name.toLocaleLowerCase().includes(query) || number === query || number.padStart(4, "0").includes(query);
+    }).slice(0, 250);
+    summary = `${visibleCaves.length}${visibleCaves.length === 250 ? "+" : ""}개 검색 결과 · 전체 ${project.caves.length}개`;
+  } else {
+    const windowSize = 200;
+    const start = Math.max(0, Math.min(activeIndex - Math.floor(windowSize / 2), project.caves.length - windowSize));
+    visibleCaves = indexedCaves.slice(start, start + windowSize);
+    const end = start + visibleCaves.length;
+    summary = project.caves.length > windowSize
+      ? `${start + 1}–${end} / ${project.caves.length} · 검색으로 바로 이동`
+      : `전체 ${project.caves.length}개`;
+  }
+  $("caveListSummary").textContent = summary;
+  if (!visibleCaves.length) {
+    list.innerHTML = `<div class="cave-empty">일치하는 레벨이 없습니다.</div>`;
+    return;
+  }
+  const digits = Math.max(2, String(project.caves.length).length);
+  visibleCaves.forEach(({ cave, index }) => {
     const button = document.createElement("button");
     button.className = `cave-item${cave.id === project.activeCaveId ? " active" : ""}`;
-    button.innerHTML = `<span class="cave-number">${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(cave.name)}</strong>`;
+    button.innerHTML = `<span class="cave-number">${String(index + 1).padStart(digits, "0")}</span><strong>${escapeHtml(cave.name)}</strong>`;
     button.addEventListener("click", () => { project.activeCaveId = cave.id; undoStack = []; redoStack = []; renderAll(); persist(); });
     list.appendChild(button);
   });
@@ -398,8 +506,11 @@ function renderRules() {
 
 function renderTerrainRuleEditor() {
   const cave = activeCave();
+  const terrainSelect = $("terrainRuleType");
+  terrainSelect.innerHTML = ASSETS.terrain.map((asset) => `<option value="${asset.id}">${escapeHtml(asset.name)}</option>`).join("");
+  if (!ASSETS.terrain.some((asset) => asset.id === selectedTerrainRule)) selectedTerrainRule = "ice";
   const rule = cave.terrainRules[selectedTerrainRule] || DEFAULT_TERRAIN_RULES[selectedTerrainRule];
-  $("terrainRuleType").value = selectedTerrainRule;
+  terrainSelect.value = selectedTerrainRule;
   $("terrainReaction").value = rule.reaction;
   $("terrainDurability").value = rule.durability;
   $("terrainBlocksFlow").checked = rule.blocksFlow;
@@ -1420,7 +1531,177 @@ function adaptExternalObjective(raw, fallbackTarget = "purple", fallbackCount = 
   });
 }
 
+const DDUNG_COLOR_IDS = ["yellow", "blue", "orange", "green", "red", "purple"];
+const DDUNG_BLOCK_CHARACTERS = {
+  yellow: "ㄵㄶㄷㄸㄹ⒰",
+  blue: "ㄺㄻㄼㄽㄾ⒱",
+  orange: "ㄿㅀㅁㅂㅃ⒲",
+  green: "ㅄㅅㅆㅇㅈ⒳",
+  red: "ㅉㅊㅋㅌㅍ⒴",
+  purple: "ㅎㅏㅐㅑㅒ⒵",
+};
+
+const DDUNG_TARGETS = {
+  1: ["block", "yellow"], 2: ["block", "blue"], 3: ["block", "orange"],
+  4: ["block", "green"], 5: ["block", "red"], 6: ["block", "purple"],
+  7: ["gimmick", "ddung-box"], 8: ["terrain", "ddung-web"], 9: ["terrain", "ddung-dust"],
+  10: ["terrain", "ddung-oak"], 11: ["item", "ddung-treasure-1"], 12: ["item", "ddung-treasure-2"],
+  13: ["terrain", "ddung-stone"], 14: ["terrain", "ddung-water"], 15: ["item", "bomb"],
+  16: ["gimmick", "ddung-mouse-panel"], 17: ["gimmick", "ddung-dungs"], 18: ["gimmick", "ddung-bulldozer"],
+  20: ["item", "ddung-chocolate"], 21: ["gimmick", "ddung-spider-cave"], 22: ["gimmick", "ddung-bee"],
+  23: ["gimmick", "ddung-feng"], 24: ["terrain", "ddung-ice"],
+  25: ["gimmick", "ddung-mayor-small"], 26: ["gimmick", "ddung-mayor-large"],
+  27: ["item", "ddung-jam-blue"], 28: ["item", "ddung-jam-green"], 29: ["item", "ddung-jam-orange"],
+  30: ["item", "ddung-jam-pink"], 31: ["item", "ddung-jam-purple"], 32: ["item", "ddung-jam-yellow"],
+  33: ["gimmick", "ddung-bee-up"], 34: ["terrain", "ddung-heather-small"],
+  35: ["terrain", "ddung-heather-large"], 36: ["terrain", "ddung-jelly"], 37: ["gimmick", "ddung-octo"],
+};
+
+function ddungGridIndex(size, x, y) {
+  return x >= 0 && x < size && y >= 0 && y < size ? y * size + x : -1;
+}
+
+function ddungPositionGroups(value, chunkSize) {
+  const text = String(value || "");
+  const groups = [];
+  for (let start = 0; start + chunkSize <= text.length; start += chunkSize) groups.push(text.slice(start, start + chunkSize));
+  return groups;
+}
+
+function ddungObjective(raw, index, unknownTokens) {
+  const type = Number(raw?.type);
+  const mapping = DDUNG_TARGETS[type];
+  if (!mapping) {
+    unknownTokens?.add(`ddung-target:${type}`);
+    return normalizeObjective({ id: `ddung-target-${index}-${type}`, layer: "gimmick", targetId: "switch", count: raw?.count || 1 });
+  }
+  const [layer, targetId] = mapping;
+  return normalizeObjective({
+    id: `ddung-target-${index}-${type}`,
+    layer,
+    targetId,
+    action: OBJECTIVE_ACTIONS[layer].action,
+    countMode: "manual",
+    count: raw?.count || 1,
+  });
+}
+
+function applyDdungTile(layers, index, character, unknownTokens) {
+  layers.terrain[index] = character === "y" ? "pit" : "floor";
+  for (const [color, characters] of Object.entries(DDUNG_BLOCK_CHARACTERS)) {
+    if (characters.includes(character)) { layers.block[index] = color; return; }
+  }
+  if (".ㄱㄲㄳ⑴ㄴy".includes(character)) return;
+  const terrainCharacters = [
+    ["ddung-web", "WV"], ["ddung-dust", "D"], ["ddung-oak", "IC⒝⒞⒟⒠⒣⒤⒥!@#$"],
+    ["ddung-stone", "FG78"], ["ddung-water", "U6⒦⒧⒨⒩⒪⒫⒬⒭⒮⒯"],
+    ["ddung-ice", "EN"], ["ddung-heather-small", "s"], ["ddung-heather-large", "tuvw"],
+    ["ddung-jelly", "①②③④⑤⑥⑦⑧⑨⑩ⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ"],
+  ];
+  const terrain = terrainCharacters.find(([, characters]) => characters.includes(character));
+  if (terrain) { layers.terrain[index] = terrain[0]; return; }
+  const itemMap = {
+    M: "bomb", J: "ddung-chocolate", "⑺": "ddung-treasure-1", "⑻": "ddung-treasure-2",
+    l: "ddung-jam-blue", n: "ddung-jam-green", m: "ddung-jam-orange", o: "ddung-jam-pink", p: "ddung-jam-purple", k: "ddung-jam-yellow",
+  };
+  if (itemMap[character]) { layers.item[index] = itemMap[character]; return; }
+  const gimmickMap = {
+    B: "ddung-box", H: "ddung-mouse-panel", L: "ddung-dungs", 5: "ddung-bulldozer",
+    "%": "ddung-spider-cave", "^": "ddung-bee", q: "ddung-bee-up", z: "exit",
+    R: "switch", Y: "switch", K: "door", A: "arrow-up", Q: "arrow-down", Z: "switch",
+    "1": "switch", "2": "switch", "3": "switch", "4": "switch", r: "switch",
+    "?": "ddung-feng", "(": "ddung-feng", ")": "ddung-feng", "[": "ddung-feng", "]": "ddung-feng",
+    a: "ddung-feng", b: "ddung-feng", c: "ddung-feng", d: "ddung-feng", e: "ddung-feng",
+    f: "ddung-mayor-small", g: "ddung-mayor-large", h: "ddung-mayor-large", i: "ddung-mayor-large", j: "ddung-mayor-large",
+    "⑵": "ddung-octo", "⑶": "ddung-octo", "⑷": "ddung-octo", "⑸": "ddung-octo", "⑹": "ddung-octo",
+  };
+  if (gimmickMap[character]) { layers.gimmick[index] = gimmickMap[character]; return; }
+  if ("PX".includes(character)) { layers.terrain[index] = "wall"; return; }
+  unknownTokens?.add(`ddung-tile:${character}`);
+  layers.gimmick[index] = "switch";
+}
+
+function ddungWeightedColor(source, usableBlocks, random) {
+  const text = String(source.objectpercent || "");
+  const weighted = usableBlocks.map((color) => {
+    const colorIndex = DDUNG_COLOR_IDS.indexOf(color);
+    return { color, weight: Number(text.slice(colorIndex * 2, colorIndex * 2 + 2)) || 1 };
+  });
+  const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+  let cursor = random() * total;
+  for (const entry of weighted) {
+    cursor -= entry.weight;
+    if (cursor <= 0) return entry.color;
+  }
+  return usableBlocks[0];
+}
+
+function adaptDdungMapInfo(source, index, format, unknownTokens) {
+  const size = clampNumber(source.size, 9, 4, 20);
+  const layers = emptyLayers(size * size);
+  const tiles = Array.from(String(source.tiles || "").padEnd(size * size, "y"));
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const sourceIndex = (size - y - 1) * size + x;
+      applyDdungTile(layers, y * size + x, tiles[sourceIndex], unknownTokens);
+    }
+  }
+  const applySixDigitPositions = (value, callback) => ddungPositionGroups(value, 6).forEach((group) => {
+    const key = Number(group.slice(0, 2));
+    const cellIndex = ddungGridIndex(size, Number(group.slice(2, 4)), Number(group.slice(4, 6)));
+    if (cellIndex >= 0) callback(cellIndex, key);
+  });
+  applySixDigitPositions(source.starts, (cellIndex) => { layers.gimmick[cellIndex] = "spawner"; });
+  applySixDigitPositions(source.goals, (cellIndex) => { layers.gimmick[cellIndex] = "exit"; });
+  applySixDigitPositions(source.roads, (cellIndex) => { layers.terrain[cellIndex] = "conveyor"; });
+  ddungPositionGroups(source.warps, 4).forEach((group) => {
+    const first = ddungGridIndex(size, Number(group[0]), Number(group[1]));
+    const second = ddungGridIndex(size, Number(group[2]), Number(group[3]));
+    if (first >= 0) layers.gimmick[first] = "teleport-a";
+    if (second >= 0) layers.gimmick[second] = "teleport-b";
+  });
+  ddungPositionGroups(source.gears, 4).forEach((group) => {
+    const cellIndex = ddungGridIndex(size, Number(group[2]), Number(group[3]));
+    if (cellIndex >= 0) layers.gimmick[cellIndex] = "switch";
+  });
+  ddungPositionGroups(source.watercolors, 4).forEach((group) => {
+    const cellIndex = ddungGridIndex(size, Number(group[0]), Number(group[1]));
+    const color = DDUNG_COLOR_IDS[Number(group[2])];
+    if (cellIndex >= 0 && color) layers.block[cellIndex] = color;
+  });
+  const usableBlocks = String(source.colors || "").split(",").map((value) => DDUNG_COLOR_IDS[Number(value)]).filter(Boolean);
+  const objectives = (Array.isArray(source.targets) ? source.targets : []).slice(0, MAX_OBJECTIVES).map((target, targetIndex) => ddungObjective(target, targetIndex, unknownTokens));
+  const gravity = ({ 0: "up", 1: "down", 2: "left", 3: "right" })[Number(source.GravityType)] || "down";
+  const cave = normalizeCave({
+    id: `ddung-level-${source.level ?? index + 1}`,
+    name: `DDUNG Level ${String(source.level ?? index + 1).padStart(4, "0")}`,
+    width: size, height: size, gravity, layers,
+    usableBlocks: usableBlocks.length ? usableBlocks : Object.keys(COLORS),
+    objectives: objectives.length ? objectives : undefined,
+    moveLimit: clampNumber(source.count, 20, 1, 999),
+    parMoves: Math.max(1, Math.ceil(clampNumber(source.count, 20, 1, 999) * 0.7)),
+    simulationRuns: 10,
+    randomSeed: `DDUNG-${source.level ?? index + 1}`,
+    randomDensity: 100,
+    flowRule: "left-first",
+    failureBonus: false,
+    note: `${format} · 원본 레벨 ${source.level ?? index + 1} · 특수 타일과 목표를 웹 맵툴 자산으로 변환`,
+    externalSource: { format, sourceId: source.level ?? index + 1, ddungVersion: format.match(/v(\d+)/i)?.[1] || null },
+  }, index);
+  const random = seededRandom(`${cave.randomSeed}|import`);
+  for (let cellIndex = 0; cellIndex < cave.layers.block.length; cellIndex += 1) {
+    if (cave.layers.block[cellIndex] || isBarrier(cave, cellIndex)) continue;
+    const candidates = [...cave.usableBlocks].sort(() => random() - 0.5);
+    let color = candidates.find((candidate) => !wouldCreateMatch(cave.layers.block, cellIndex, candidate, cave));
+    if (!color) color = ddungWeightedColor(source, cave.usableBlocks, random);
+    cave.layers.block[cellIndex] = color;
+  }
+  syncLegacyTarget(cave);
+  return cave;
+}
+
 function adaptExternalLevel(level, index, format, unknownTokens) {
+  if (/^DDUNG MapInfo/i.test(format)) return adaptDdungMapInfo(level, index, format, unknownTokens);
   const source = level && typeof level === "object" ? level : {};
   const grid = valueAt(source, ["grid", "board", "cells", "tiles", "map.grid", "map.cells", "map.tiles"], []);
   const gridRows = Array.isArray(grid) && Array.isArray(grid[0]) ? grid : null;
@@ -1475,6 +1756,7 @@ function adaptImportedJson(data) {
   let levels = [];
   let format = "외부 단일 레벨";
   if (Array.isArray(data)) { levels = data; format = "외부 레벨 배열"; }
+  else if (Array.isArray(data?.mapinfos)) { levels = data.mapinfos; format = `DDUNG MapInfo v${data.version ?? "unknown"}`; }
   else {
     const containers = ["levels", "stages", "maps", "puzzles"];
     const key = containers.find((name) => Array.isArray(data?.[name]));
@@ -1541,6 +1823,7 @@ function bindInputs() {
   $("exportButton").addEventListener("click", exportProject);
   $("importButton").addEventListener("click", () => $("importFile").click());
   $("importFile").addEventListener("change", (event) => importProject(event.target.files[0]));
+  $("caveSearch").addEventListener("input", (event) => { caveSearchQuery = event.target.value; renderCaveList(); });
   $("versionInput").addEventListener("change", (event) => { snapshot(); project.version = event.target.value.trim() || "V0001"; persist(); });
   $("caveName").addEventListener("change", (event) => { snapshot(); activeCave().name = event.target.value.trim() || "Untitled Cave"; renderAll(); persist(); });
   $("addObjectiveButton").addEventListener("click", addObjective);
