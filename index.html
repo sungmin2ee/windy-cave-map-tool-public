@@ -25,7 +25,7 @@
         </div>
 
         <div class="top-actions">
-          <button class="button ghost" id="importButton">불러오기</button>
+          <button class="button ghost" id="importButton">JSON 가져오기</button>
           <button class="button ghost" id="exportButton">JSON 내보내기</button>
           <button class="button primary" id="saveButton">저장</button>
           <input id="importFile" type="file" accept="application/json" hidden />
@@ -102,6 +102,19 @@
               </label>
             </div>
 
+            <div class="field-row">
+              <label>
+                <span class="field-label">권장 클리어 Moves</span>
+                <input class="field" id="parMoves" type="number" min="1" max="999" />
+              </label>
+              <label>
+                <span class="field-label">테스트 클리어 Moves</span>
+                <input class="field" id="testClearMoves" type="number" min="0" max="999" placeholder="미입력" />
+              </label>
+            </div>
+
+            <div class="difficulty-summary" id="difficultySummary" aria-live="polite"></div>
+
             <label class="check-field">
               <input id="failureBonus" type="checkbox" />
               <span>Failure Bonus 사용</span>
@@ -123,7 +136,7 @@
             </div>
             <div class="toolbar-spacer"></div>
             <button class="button validate" id="validateButton">검증</button>
-            <button class="button play" id="playButton"><span>▶</span> Play</button>
+            <button class="button play" id="playButton"><span>▶</span> 미리보기</button>
           </div>
 
           <div class="canvas-stage panel">
