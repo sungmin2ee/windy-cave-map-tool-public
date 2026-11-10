@@ -3,6 +3,10 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
+const CLIENT_VERSION = "2.2.0";
+const SCHEMA_VERSION = 3;
+const MIN_SCHEMA_VERSION = 1;
+
 const ASSETS = {
   terrain: [
     { id: "floor", name: "Floor", className: "terrain-floor", visual: "·" },
@@ -55,6 +59,7 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
     id: crypto.randomUUID(), name, width, height, gravity: "down", layers,
     usableBlocks: Object.keys(COLORS), targetType: "purple", targetCount: 8,
     moveLimit: 20, parMoves: 14, testClearMoves: 0,
+    randomSeed: `CAVE-${String(number).padStart(4, "0")}`, randomDensity: 100,
     failureBonus: true, note: "컬러 블록을 정리하고 출구까지 도달하는 기본 Cave입니다.",
   };
 }
@@ -70,6 +75,7 @@ let undoStack = [];
 let redoStack = [];
 let isPainting = false;
 let strokeSnapshotTaken = false;
+let playtestState = null;
 
 const $ = (id) => document.getElementById(id);
 const activeCave = () => project.caves.find((c) => c.id === project.activeCaveId);
@@ -107,7 +113,7 @@ function normalizeProject(data) {
   const caves = rawCaves.map((cave, index) => normalizeCave(cave, index));
   if (!caves.length) caves.push(createCave(1));
   const activeCaveId = caves.some((cave) => cave.id === source.activeCaveId) ? source.activeCaveId : caves[0].id;
-  return { ...source, version: String(source.version || "V0001"), caves, activeCaveId };
+  return { ...source, version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId };
 }
 
 function normalizeCave(data, index = 0) {
@@ -136,6 +142,8 @@ function normalizeCave(data, index = 0) {
     targetType, targetCount, moveLimit,
     parMoves: clampNumber(source.parMoves, Math.min(moveLimit, estimatedPar), 1, 999),
     testClearMoves: clampNumber(source.testClearMoves, 0, 0, 999),
+    randomSeed: String(source.randomSeed || `CAVE-${String(index + 1).padStart(4, "0")}`),
+    randomDensity: clampNumber(source.randomDensity, 100, 10, 100),
     failureBonus: Boolean(source.failureBonus),
     note: String(source.note || ""),
   };
@@ -195,6 +203,8 @@ function renderAll() {
   renderGrid();
   updateUndoButtons();
   $("versionInput").value = project.version;
+  $("clientVersionBadge").textContent = `CLIENT ${CLIENT_VERSION}`;
+  $("schemaVersionBadge").textContent = `SCHEMA ${SCHEMA_VERSION}`;
 }
 
 function renderCaveList() {
@@ -219,6 +229,8 @@ function renderRules() {
   $("moveLimit").value = cave.moveLimit;
   $("parMoves").value = cave.parMoves;
   $("testClearMoves").value = cave.testClearMoves || "";
+  $("randomSeed").value = cave.randomSeed;
+  $("randomDensity").value = cave.randomDensity;
   $("failureBonus").checked = cave.failureBonus;
   $("noteInput").value = cave.note || "";
   document.querySelectorAll("[data-gravity]").forEach((button) => button.classList.toggle("active", button.dataset.gravity === cave.gravity));
@@ -236,6 +248,7 @@ function renderDifficultySummary(cave) {
   node.innerHTML = `
     <div><span>자동 난이도</span><strong>${analysis.label}</strong></div>
     <small>점수 ${analysis.score} · 여유 ${analysis.slack >= 0 ? "+" : ""}${analysis.slack} Moves · 블록 ${analysis.totalBlocks} · 기믹 ${analysis.gimmickCount}</small>
+    <small>면적 + 사용 색상 + 기믹/아이템 + 목표 비율 + 클리어 기록 대비 Moves로 계산</small>
   `;
 }
 
@@ -377,6 +390,72 @@ function switchCave(delta) {
   project.activeCaveId = project.caves[nextIndex].id; undoStack = []; redoStack = []; renderAll(); persist();
 }
 
+function seededRandom(seedText) {
+  let hash = 1779033703 ^ seedText.length;
+  for (let i = 0; i < seedText.length; i += 1) {
+    hash = Math.imul(hash ^ seedText.charCodeAt(i), 3432918353);
+    hash = hash << 13 | hash >>> 19;
+  }
+  return () => {
+    hash = Math.imul(hash ^ hash >>> 16, 2246822507);
+    hash = Math.imul(hash ^ hash >>> 13, 3266489909);
+    const value = (hash ^= hash >>> 16) >>> 0;
+    return value / 4294967296;
+  };
+}
+
+function wouldCreateMatch(blocks, index, color, cave) {
+  const x = index % cave.width;
+  const y = Math.floor(index / cave.width);
+  const countDirection = (dx, dy) => {
+    let count = 0;
+    let nextX = x + dx;
+    let nextY = y + dy;
+    while (nextX >= 0 && nextX < cave.width && nextY >= 0 && nextY < cave.height) {
+      if (blocks[nextY * cave.width + nextX] !== color) break;
+      count += 1; nextX += dx; nextY += dy;
+    }
+    return count;
+  };
+  return 1 + countDirection(-1, 0) + countDirection(1, 0) >= 3
+    || 1 + countDirection(0, -1) + countDirection(0, 1) >= 3;
+}
+
+function randomizeBlocks() {
+  const cave = activeCave();
+  const seed = ($("randomSeed").value.trim() || `CAVE-${Date.now().toString(36).toUpperCase()}`).slice(0, 40);
+  const density = clampNumber($("randomDensity").value, 100, 10, 100);
+  const colors = cave.usableBlocks.length ? cave.usableBlocks : Object.keys(COLORS);
+  const random = seededRandom(`${seed}|${cave.width}x${cave.height}|${colors.join(",")}|${density}`);
+  const blocks = Array(cave.width * cave.height).fill(null);
+  const eligible = [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    const terrain = cave.layers.terrain[index];
+    if (terrain === "wall" || terrain === "pit") continue;
+    eligible.push(index);
+    if (random() * 100 >= density) continue;
+    const candidates = [...colors].sort(() => random() - 0.5).filter((color) => !wouldCreateMatch(blocks, index, color, cave));
+    blocks[index] = candidates[0] || null;
+  }
+  const targetNeeded = Math.min(cave.targetCount, eligible.length);
+  let targetPlaced = blocks.filter((value) => value === cave.targetType).length;
+  const shuffled = [...eligible].sort(() => random() - 0.5);
+  for (const index of shuffled) {
+    if (targetPlaced >= targetNeeded) break;
+    if (blocks[index] !== cave.targetType && !wouldCreateMatch(blocks, index, cave.targetType, cave)) {
+      blocks[index] = cave.targetType;
+      targetPlaced += 1;
+    }
+  }
+  snapshot();
+  cave.layers.block = blocks;
+  cave.randomSeed = seed;
+  cave.randomDensity = density;
+  renderAll(); persist();
+  const shortfall = Math.max(0, targetNeeded - targetPlaced);
+  toast(`시드 ${seed} · 시작 매치 0개 · 블록 ${blocks.filter(Boolean).length}개${shortfall ? ` · 목표색 ${shortfall}개 부족` : ""}`);
+}
+
 function analyzeDifficulty(cave) {
   const totalBlocks = cave.layers.block.filter(Boolean).length;
   const usedColors = new Set(cave.layers.block.filter(Boolean));
@@ -411,6 +490,7 @@ function validateCave(cave) {
   const teleportA = cave.layers.gimmick.filter((value) => value === "teleport-a").length;
   const teleportB = cave.layers.gimmick.filter((value) => value === "teleport-b").length;
   const targetBlocks = cave.layers.block.filter((value) => value === cave.targetType).length;
+  const initialMatches = findMatches(cave).size;
   if (!analysis.totalBlocks) errors.push("퍼즐 블록이 하나도 없습니다.");
   if (cave.targetCount < 1) errors.push("목표 개수는 1 이상이어야 합니다.");
   if (cave.moveLimit < 1) errors.push("Moves는 1 이상이어야 합니다.");
@@ -424,39 +504,332 @@ function validateCave(cave) {
   if (cave.moveLimit >= cave.parMoves * 2) warnings.push("허용 Moves가 권장 클리어 횟수의 2배 이상이라 난이도가 크게 낮아질 수 있습니다.");
   if (cave.targetCount > analysis.totalBlocks) warnings.push(`목표 ${cave.targetCount}개가 현재 전체 블록 ${analysis.totalBlocks}개보다 많습니다.`);
   if (targetBlocks < cave.targetCount) warnings.push(`현재 ${cave.targetType} 블록은 ${targetBlocks}개입니다. 생성/변환 규칙이 없다면 목표 달성이 어렵습니다.`);
+  if (initialMatches) warnings.push(`시작 상태에 이미 3-Match 블록이 ${initialMatches}개 있습니다. 랜덤 재배치를 권장합니다.`);
+  if (analysis.totalBlocks && !initialMatches && !hasPossibleSwap(cave)) warnings.push("시작 상태에서 가능한 3-Match 교환을 찾지 못했습니다.");
   return { errors, warnings, analysis };
+}
+
+function issueHtml(validation) {
+  const errorHtml = validation.errors.length ? `<div><b>오류</b><br>${validation.errors.map((issue) => `• ${escapeHtml(issue)}`).join("<br>")}</div>` : "";
+  const warningHtml = validation.warnings.length ? `<div><b>경고</b><br>${validation.warnings.map((issue) => `• ${escapeHtml(issue)}`).join("<br>")}</div>` : "";
+  return errorHtml + warningHtml;
+}
+
+function renderSimulationGrid(cave, interactive = false) {
+  const grid = $("simulationGrid");
+  grid.style.gridTemplateColumns = `repeat(${cave.width}, 30px)`;
+  grid.innerHTML = "";
+  for (let index = 0; index < cave.width * cave.height; index += 1) {
+    const cell = document.createElement(interactive ? "button" : "div");
+    cell.className = `map-cell${interactive && cave.layers.block[index] ? " playable" : ""}${interactive && playtestState?.selectedIndex === index ? " selected" : ""}`;
+    cell.type = interactive ? "button" : undefined;
+    applyCellVisual(cell, cave, index);
+    if (interactive) cell.addEventListener("click", () => playtestCell(index));
+    grid.appendChild(cell);
+  }
 }
 
 function showSimulation(playMode) {
   const cave = activeCave();
   const validation = validateCave(cave);
   $("simulationTitle").textContent = cave.name;
-  const result = $("simulationResult");
-  result.className = `simulation-result ${validation.errors.length ? "error" : validation.warnings.length ? "warning" : "success"}`;
-  const errorHtml = validation.errors.length ? `<div><b>오류</b><br>${validation.errors.map((issue) => `• ${escapeHtml(issue)}`).join("<br>")}</div>` : "";
-  const warningHtml = validation.warnings.length ? `<div><b>경고</b><br>${validation.warnings.map((issue) => `• ${escapeHtml(issue)}`).join("<br>")}</div>` : "";
-  result.innerHTML = `
-    <strong>${validation.errors.length ? "검증 실패" : playMode ? "맵 미리보기" : "검증 통과"}</strong><br>
-    난이도 ${validation.analysis.label} (${validation.analysis.score}점) · 목표 ${cave.targetType} × ${cave.targetCount} · 제한 ${cave.moveLimit} · 권장 ${cave.parMoves}${cave.testClearMoves ? ` · 테스트 ${cave.testClearMoves}` : ""}<br>
-    여유 Moves ${validation.analysis.slack >= 0 ? "+" : ""}${validation.analysis.slack} · Gravity ${cave.gravity}
-    ${errorHtml}${warningHtml}
-  `;
-  const grid = $("simulationGrid");
-  grid.style.gridTemplateColumns = `repeat(${cave.width}, 30px)`;
-  grid.innerHTML = "";
-  for (let i = 0; i < cave.width * cave.height; i += 1) {
-    const cell = document.createElement("div"); cell.className = "map-cell"; applyCellVisual(cell, cave, i); grid.appendChild(cell);
+  $("playtestGuide").hidden = !playMode || Boolean(validation.errors.length);
+  $("playtestResetButton").hidden = !playMode || Boolean(validation.errors.length);
+  $("usePlaytestResultButton").hidden = true;
+  if (playMode && !validation.errors.length) {
+    playtestState = {
+      cave: deepCopy(cave), movesLeft: cave.moveLimit, targetCleared: 0, selectedIndex: null,
+      status: "playing", message: "교환할 첫 번째 블록을 선택하세요.", validation,
+      random: seededRandom(`${cave.randomSeed}|playtest`),
+    };
+    renderPlaytest();
+  } else {
+    playtestState = null;
+    const result = $("simulationResult");
+    result.className = `simulation-result ${validation.errors.length ? "error" : validation.warnings.length ? "warning" : "success"}`;
+    result.innerHTML = `
+      <strong>${validation.errors.length ? "검증 실패" : "검증 통과"}</strong><br>
+      난이도 ${validation.analysis.label} (${validation.analysis.score}점) · 목표 ${cave.targetType} × ${cave.targetCount} · 제한 ${cave.moveLimit} · 권장 ${cave.parMoves}${cave.testClearMoves ? ` · 테스트 ${cave.testClearMoves}` : ""}<br>
+      여유 Moves ${validation.analysis.slack >= 0 ? "+" : ""}${validation.analysis.slack} · Gravity ${cave.gravity}
+      ${issueHtml(validation)}
+    `;
+    renderSimulationGrid(cave, false);
   }
   $("simulationDialog").showModal();
 }
 
+function findMatches(cave) {
+  const matches = new Set();
+  const blocks = cave.layers.block;
+  for (let y = 0; y < cave.height; y += 1) {
+    let start = 0;
+    for (let x = 1; x <= cave.width; x += 1) {
+      const current = x < cave.width ? blocks[y * cave.width + x] : null;
+      const first = blocks[y * cave.width + start];
+      if (current === first && first) continue;
+      if (first && x - start >= 3) for (let fill = start; fill < x; fill += 1) matches.add(y * cave.width + fill);
+      start = x;
+    }
+  }
+  for (let x = 0; x < cave.width; x += 1) {
+    let start = 0;
+    for (let y = 1; y <= cave.height; y += 1) {
+      const current = y < cave.height ? blocks[y * cave.width + x] : null;
+      const first = blocks[start * cave.width + x];
+      if (current === first && first) continue;
+      if (first && y - start >= 3) for (let fill = start; fill < y; fill += 1) matches.add(fill * cave.width + x);
+      start = y;
+    }
+  }
+  return matches;
+}
+
+function areAdjacent(cave, first, second) {
+  const firstX = first % cave.width;
+  const firstY = Math.floor(first / cave.width);
+  const secondX = second % cave.width;
+  const secondY = Math.floor(second / cave.width);
+  return Math.abs(firstX - secondX) + Math.abs(firstY - secondY) === 1;
+}
+
+function gravityLines(cave) {
+  const lines = [];
+  if (cave.gravity === "down" || cave.gravity === "up") {
+    for (let x = 0; x < cave.width; x += 1) {
+      const line = [];
+      if (cave.gravity === "down") for (let y = cave.height - 1; y >= 0; y -= 1) line.push(y * cave.width + x);
+      else for (let y = 0; y < cave.height; y += 1) line.push(y * cave.width + x);
+      lines.push(line);
+    }
+  } else {
+    for (let y = 0; y < cave.height; y += 1) {
+      const line = [];
+      if (cave.gravity === "right") for (let x = cave.width - 1; x >= 0; x -= 1) line.push(y * cave.width + x);
+      else for (let x = 0; x < cave.width; x += 1) line.push(y * cave.width + x);
+      lines.push(line);
+    }
+  }
+  return lines;
+}
+
+function applyGravity(cave) {
+  for (const line of gravityLines(cave)) {
+    let segment = [];
+    const settle = () => {
+      const values = segment.map((index) => cave.layers.block[index]).filter(Boolean);
+      segment.forEach((index, position) => { cave.layers.block[index] = values[position] || null; });
+      segment = [];
+    };
+    for (const index of line) {
+      const terrain = cave.layers.terrain[index];
+      if (terrain === "wall" || terrain === "pit") settle();
+      else segment.push(index);
+    }
+    settle();
+  }
+}
+
+function refillBlocks(cave, random) {
+  const colors = cave.usableBlocks.length ? cave.usableBlocks : Object.keys(COLORS);
+  for (let index = 0; index < cave.layers.block.length; index += 1) {
+    const terrain = cave.layers.terrain[index];
+    if (!cave.layers.block[index] && terrain !== "wall" && terrain !== "pit") {
+      cave.layers.block[index] = colors[Math.floor(random() * colors.length)];
+    }
+  }
+}
+
+function resolveMatches(state) {
+  let matches = findMatches(state.cave);
+  let cascade = 0;
+  let removed = 0;
+  while (matches.size && cascade < 20) {
+    matches.forEach((index) => {
+      if (state.cave.layers.block[index] === state.cave.targetType) state.targetCleared += 1;
+      state.cave.layers.block[index] = null;
+      removed += 1;
+    });
+    applyGravity(state.cave);
+    refillBlocks(state.cave, state.random);
+    cascade += 1;
+    matches = findMatches(state.cave);
+  }
+  return { cascade, removed, capped: matches.size > 0 };
+}
+
+function hasPossibleSwap(cave) {
+  const blocks = cave.layers.block;
+  for (let index = 0; index < blocks.length; index += 1) {
+    if (!blocks[index]) continue;
+    const x = index % cave.width;
+    const candidates = [];
+    if (x < cave.width - 1) candidates.push(index + 1);
+    if (index + cave.width < blocks.length) candidates.push(index + cave.width);
+    for (const other of candidates) {
+      if (!blocks[other] || blocks[other] === blocks[index]) continue;
+      [blocks[index], blocks[other]] = [blocks[other], blocks[index]];
+      const possible = findMatches(cave).size > 0;
+      [blocks[index], blocks[other]] = [blocks[other], blocks[index]];
+      if (possible) return true;
+    }
+  }
+  return false;
+}
+
+function playtestCell(index) {
+  const state = playtestState;
+  if (!state || state.status !== "playing" || !state.cave.layers.block[index]) return;
+  if (state.selectedIndex == null) {
+    state.selectedIndex = index;
+    state.message = "교환할 인접 블록을 선택하세요.";
+    renderPlaytest();
+    return;
+  }
+  if (state.selectedIndex === index) {
+    state.selectedIndex = null;
+    state.message = "선택을 취소했습니다.";
+    renderPlaytest();
+    return;
+  }
+  if (!areAdjacent(state.cave, state.selectedIndex, index)) {
+    state.selectedIndex = index;
+    state.message = "인접하지 않아 첫 번째 블록을 다시 선택했습니다.";
+    renderPlaytest();
+    return;
+  }
+  const first = state.selectedIndex;
+  const blocks = state.cave.layers.block;
+  [blocks[first], blocks[index]] = [blocks[index], blocks[first]];
+  state.selectedIndex = null;
+  if (!findMatches(state.cave).size) {
+    [blocks[first], blocks[index]] = [blocks[index], blocks[first]];
+    state.message = "3-Match가 생기지 않아 교환을 되돌렸습니다. Moves는 차감하지 않았습니다.";
+    renderPlaytest();
+    return;
+  }
+  state.movesLeft -= 1;
+  const resolved = resolveMatches(state);
+  state.message = `${resolved.removed}개 제거 · ${resolved.cascade}연쇄${resolved.capped ? " · 연쇄 안전 제한 도달" : ""}`;
+  if (state.targetCleared >= state.cave.targetCount) {
+    state.status = "won";
+    state.message = `${state.cave.moveLimit - state.movesLeft} Moves로 목표를 달성했습니다. ${state.message}`;
+  } else if (state.movesLeft <= 0) {
+    state.status = "lost";
+    state.message = "Moves를 모두 사용했습니다.";
+  } else if (!hasPossibleSwap(state.cave)) {
+    state.status = "stuck";
+    state.message = "가능한 3-Match 교환이 없습니다. 새 시드나 셔플이 필요합니다.";
+  }
+  renderPlaytest();
+}
+
+function renderPlaytest() {
+  const state = playtestState;
+  if (!state) return;
+  const usedMoves = state.cave.moveLimit - state.movesLeft;
+  const result = $("simulationResult");
+  result.className = `simulation-result ${state.status === "won" ? "success" : ["lost", "stuck"].includes(state.status) ? "error" : "warning"}`;
+  result.innerHTML = `
+    <strong>${state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 종료" : "PLAYTEST 진행 중"}</strong><br>
+    Moves <b>${state.movesLeft}</b> / ${state.cave.moveLimit} · 목표 ${state.cave.targetType} <b>${Math.min(state.targetCleared, state.cave.targetCount)}</b> / ${state.cave.targetCount} · 사용 ${usedMoves}회<br>
+    ${escapeHtml(state.message)}
+    ${state.cave.layers.gimmick.some(Boolean) ? "<div>※ 현재 플레이테스트는 3-Match·중력·리필·색상 목표만 계산합니다. 기믹과 아이템은 표시만 됩니다.</div>" : ""}
+  `;
+  $("usePlaytestResultButton").hidden = state.status !== "won";
+  renderSimulationGrid(state.cave, state.status === "playing");
+}
+
+function resetPlaytest() {
+  if (!playtestState) return;
+  const cave = activeCave();
+  playtestState = {
+    cave: deepCopy(cave), movesLeft: cave.moveLimit, targetCleared: 0, selectedIndex: null,
+    status: "playing", message: "교환할 첫 번째 블록을 선택하세요.", validation: validateCave(cave),
+    random: seededRandom(`${cave.randomSeed}|playtest`),
+  };
+  $("usePlaytestResultButton").hidden = true;
+  renderPlaytest();
+}
+
+function usePlaytestResult() {
+  if (!playtestState || playtestState.status !== "won") return;
+  const usedMoves = playtestState.cave.moveLimit - playtestState.movesLeft;
+  snapshot();
+  activeCave().testClearMoves = usedMoves;
+  renderRules(); persist();
+  toast(`${usedMoves} Moves 기록을 난이도 계산에 반영했습니다.`);
+  $("simulationDialog").close();
+}
+
 function exportProject() {
   persist();
-  const payload = { schema: "windy-cave-map-tool/v2", exportedAt: new Date().toISOString(), ...project };
+  const payload = {
+    ...project,
+    schema: `windy-cave-map-tool/v${SCHEMA_VERSION}`,
+    schemaVersion: SCHEMA_VERSION,
+    contentVersion: project.version,
+    minimumClientVersion: CLIENT_VERSION,
+    exportedAt: new Date().toISOString(),
+  };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
   anchor.href = url; anchor.download = `windy-caves-${project.version.toLowerCase()}.json`; anchor.click(); URL.revokeObjectURL(url);
   toast("프로젝트 JSON을 내보냈습니다.");
+}
+
+function parseSchemaVersion(data) {
+  const isWindy = /windy-cave-map-tool\//i.test(String(data?.schema || "")) || data?.type === "patch" || Boolean(data?.patch) || Array.isArray(data?.caves);
+  if (!isWindy) return null;
+  if (Number.isFinite(Number(data?.schemaVersion))) return Number(data.schemaVersion);
+  const match = String(data?.schema || "").match(/windy-cave-map-tool\/v(\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
+function compareVersions(a, b) {
+  const left = String(a || "0").split(".").map((part) => Number(part.replace(/\D.*$/, "")) || 0);
+  const right = String(b || "0").split(".").map((part) => Number(part.replace(/\D.*$/, "")) || 0);
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    if ((left[i] || 0) !== (right[i] || 0)) return (left[i] || 0) > (right[i] || 0) ? 1 : -1;
+  }
+  return 0;
+}
+
+function assertImportCompatibility(data) {
+  const isWindy = /windy-cave-map-tool\//i.test(String(data?.schema || "")) || data?.type === "patch" || Boolean(data?.patch) || Array.isArray(data?.caves);
+  const requiredClient = data?.minimumClientVersion;
+  if (isWindy && requiredClient && compareVersions(requiredClient, CLIENT_VERSION) > 0) {
+    throw new Error(`이 JSON은 Client ${requiredClient} 이상이 필요합니다. 현재는 ${CLIENT_VERSION}입니다.`);
+  }
+  const schemaVersion = parseSchemaVersion(data);
+  if (schemaVersion && schemaVersion > SCHEMA_VERSION) {
+    throw new Error(`Schema ${schemaVersion}은 현재 지원 범위(${MIN_SCHEMA_VERSION}~${SCHEMA_VERSION})보다 새 버전입니다.`);
+  }
+  if (schemaVersion && schemaVersion < MIN_SCHEMA_VERSION) {
+    throw new Error(`Schema ${schemaVersion}은 더 이상 지원하지 않습니다.`);
+  }
+}
+
+function applyPatchPayload(data) {
+  const patch = data?.patch || data;
+  const baseVersion = String(data?.baseContentVersion || patch?.baseContentVersion || "");
+  if (!baseVersion) throw new Error("패치 JSON에 baseContentVersion이 없습니다.");
+  if (baseVersion !== project.version) {
+    throw new Error(`패치 기준 버전 ${baseVersion}과 현재 콘텐츠 버전 ${project.version}이 다릅니다.`);
+  }
+  const removeIds = Array.isArray(patch.removeCaveIds) ? new Set(patch.removeCaveIds.map(String)) : new Set();
+  const upserts = Array.isArray(patch.upsertCaves) ? patch.upsertCaves : [];
+  const next = deepCopy(project);
+  next.caves = next.caves.filter((cave) => !removeIds.has(String(cave.id)));
+  upserts.forEach((rawCave, index) => {
+    const cave = normalizeCave(rawCave, index);
+    const existingIndex = next.caves.findIndex((item) => String(item.id) === String(cave.id));
+    if (existingIndex >= 0) next.caves[existingIndex] = cave;
+    else next.caves.push(cave);
+  });
+  if (!next.caves.length) throw new Error("패치 적용 결과 Cave가 하나도 남지 않습니다.");
+  next.version = String(data?.contentVersion || patch?.contentVersion || baseVersion);
+  if (!next.caves.some((cave) => cave.id === next.activeCaveId)) next.activeCaveId = next.caves[0].id;
+  return { project: normalizeProject(next), format: `패치 ${baseVersion} → ${next.version}`, unknownTokens: [] };
 }
 
 function valueAt(source, paths, fallback = undefined) {
@@ -580,6 +953,8 @@ function adaptExternalLevel(level, index, format, unknownTokens) {
 }
 
 function adaptImportedJson(data) {
+  assertImportCompatibility(data);
+  if (data?.type === "patch" || data?.patch) return applyPatchPayload(data);
   if (data?.caves?.length) return { project: normalizeProject(data), format: data.schema || "Windy Cave", unknownTokens: [] };
   let levels = [];
   let format = "외부 단일 레벨";
@@ -631,6 +1006,7 @@ function bindInputs() {
   $("duplicateCaveButton").addEventListener("click", duplicateCave);
   $("deleteCaveButton").addEventListener("click", deleteCave);
   $("resizeButton").addEventListener("click", resizeMap);
+  $("randomizeButton").addEventListener("click", randomizeBlocks);
   $("undoButton").addEventListener("click", undo);
   $("redoButton").addEventListener("click", redo);
   $("prevCaveButton").addEventListener("click", () => switchCave(-1));
@@ -639,6 +1015,8 @@ function bindInputs() {
   $("playButton").addEventListener("click", () => showSimulation(true));
   $("closeSimulationButton").addEventListener("click", () => $("simulationDialog").close());
   $("closeSimulationFooterButton").addEventListener("click", () => $("simulationDialog").close());
+  $("playtestResetButton").addEventListener("click", resetPlaytest);
+  $("usePlaytestResultButton").addEventListener("click", usePlaytestResult);
   $("saveButton").addEventListener("click", () => persist(true));
   $("exportButton").addEventListener("click", exportProject);
   $("importButton").addEventListener("click", () => $("importFile").click());
@@ -650,8 +1028,17 @@ function bindInputs() {
   $("moveLimit").addEventListener("change", updateRule);
   $("parMoves").addEventListener("change", updateRule);
   $("testClearMoves").addEventListener("change", updateRule);
+  $("randomSeed").addEventListener("change", updateRandomSettings);
+  $("randomDensity").addEventListener("change", updateRandomSettings);
   $("failureBonus").addEventListener("change", updateRule);
   $("noteInput").addEventListener("change", (event) => { snapshot(); activeCave().note = event.target.value; persist(); });
+}
+
+function updateRandomSettings() {
+  snapshot();
+  activeCave().randomSeed = $("randomSeed").value.trim() || activeCave().randomSeed;
+  activeCave().randomDensity = clampNumber($("randomDensity").value, 100, 10, 100);
+  renderRules(); persist();
 }
 
 function updateRule() {
