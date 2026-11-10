@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>Windy Cave Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=2" />
+    <link rel="stylesheet" href="./styles.css?v=3" />
   </head>
   <body>
     <div class="app-shell">
@@ -20,8 +20,13 @@
         </div>
 
         <div class="version-control">
-          <label for="versionInput">VERSION</label>
+          <label for="versionInput">CONTENT VERSION</label>
           <input id="versionInput" value="V0001" maxlength="16" />
+        </div>
+
+        <div class="build-info" title="클라이언트 버전은 실행 코드, 스키마 버전은 JSON 구조의 호환 기준입니다.">
+          <span id="clientVersionBadge">CLIENT 2.2.0</span>
+          <span id="schemaVersionBadge">SCHEMA 3</span>
         </div>
 
         <div class="top-actions">
@@ -115,6 +120,22 @@
 
             <div class="difficulty-summary" id="difficultySummary" aria-live="polite"></div>
 
+            <div class="random-panel">
+              <span class="field-label">랜덤 배치</span>
+              <div class="field-row">
+                <label>
+                  <span class="field-label">시드</span>
+                  <input class="field" id="randomSeed" maxlength="40" />
+                </label>
+                <label>
+                  <span class="field-label">밀도 %</span>
+                  <input class="field" id="randomDensity" type="number" min="10" max="100" />
+                </label>
+              </div>
+              <button class="button full randomize" id="randomizeButton">시드로 블록 랜덤 배치</button>
+              <small>같은 시드·크기·색상이면 같은 결과이며, 시작 3-Match는 만들지 않습니다.</small>
+            </div>
+
             <label class="check-field">
               <input id="failureBonus" type="checkbox" />
               <span>Failure Bonus 사용</span>
@@ -136,7 +157,7 @@
             </div>
             <div class="toolbar-spacer"></div>
             <button class="button validate" id="validateButton">검증</button>
-            <button class="button play" id="playButton"><span>▶</span> 미리보기</button>
+            <button class="button play" id="playButton"><span>▶</span> Playtest</button>
           </div>
 
           <div class="canvas-stage panel">
@@ -218,13 +239,16 @@
         <button class="icon-button" id="closeSimulationButton">×</button>
       </div>
       <div id="simulationResult" class="simulation-result"></div>
+      <div id="playtestGuide" class="playtest-guide" hidden>블록 하나를 고른 뒤 인접 블록을 선택해 교환하세요. 가로·세로 3개 이상 매치되면 제거되고 중력·리필·연쇄가 적용됩니다.</div>
       <div id="simulationGrid" class="simulation-grid"></div>
       <div class="dialog-footer">
+        <button class="button" id="playtestResetButton" hidden>다시 시작</button>
+        <button class="button primary" id="usePlaytestResultButton" hidden>이 기록을 난이도에 사용</button>
         <button class="button" id="closeSimulationFooterButton">닫기</button>
       </div>
     </dialog>
 
-    <script src="./app.js?v=2"></script>
+    <script src="./app.js?v=3"></script>
   </body>
 </html>
 
