@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>Windy Cave Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=4" />
+    <link rel="stylesheet" href="./styles.css?v=5" />
   </head>
   <body>
     <div class="app-shell">
@@ -25,8 +25,8 @@
         </div>
 
         <div class="build-info" title="클라이언트 버전은 실행 코드, 스키마 버전은 JSON 구조의 호환 기준입니다.">
-          <span id="clientVersionBadge">CLIENT 2.2.1</span>
-          <span id="schemaVersionBadge">SCHEMA 3</span>
+          <span id="clientVersionBadge">CLIENT 2.3.0</span>
+          <span id="schemaVersionBadge">SCHEMA 4</span>
         </div>
 
         <div class="top-actions">
@@ -84,6 +84,16 @@
               <button data-gravity="down" title="아래">↓</button>
               <button data-gravity="right" title="오른쪽">→</button>
             </div>
+
+            <label class="field-label spaced" for="flowRule">막힘 우회 흐름</label>
+            <select class="field" id="flowRule">
+              <option value="left-first">왼쪽 통로 우선</option>
+              <option value="right-first">오른쪽 통로 우선</option>
+              <option value="alternate">좌우 교대</option>
+              <option value="seeded-random">시드 랜덤</option>
+              <option value="none">옆으로 흐르지 않음</option>
+            </select>
+            <small class="rule-help">중력 방향이 아래/위면 좌우, 왼쪽/오른쪽이면 위아래 통로를 뜻합니다.</small>
 
             <div class="field-row three">
               <label>
@@ -219,6 +229,36 @@
             <div class="color-toggles" id="usableColors"></div>
           </section>
 
+          <section class="panel-section terrain-rule-section">
+            <span class="eyebrow">TERRAIN BEHAVIOR</span>
+            <h2>Terrain 반응 규칙</h2>
+
+            <label class="field-label" for="terrainRuleType">Terrain 종류</label>
+            <select class="field" id="terrainRuleType">
+              <option value="floor">Floor</option>
+              <option value="wall">Wall</option>
+              <option value="ice">Ice</option>
+              <option value="pit">Pit</option>
+              <option value="conveyor">Conveyor</option>
+            </select>
+
+            <label class="check-field terrain-block-check">
+              <input id="terrainBlocksFlow" type="checkbox" />
+              <span>블록 이동과 리필을 막는 장애물</span>
+            </label>
+
+            <label class="field-label" for="terrainReaction">3-Match 반응</label>
+            <select class="field" id="terrainReaction">
+              <option value="none">제거 불가</option>
+              <option value="under">같은 칸에서 매치될 때</option>
+              <option value="adjacent">같은 칸 또는 인접 4방향 매치</option>
+            </select>
+
+            <label class="field-label" for="terrainDurability">사라질 때까지 필요한 반응 횟수</label>
+            <input class="field" id="terrainDurability" type="number" min="1" max="99" />
+            <div class="terrain-rule-summary" id="terrainRuleSummary"></div>
+          </section>
+
           <section class="panel-section legend-section">
             <span class="eyebrow">LAYERS</span>
             <div class="legend-row"><i class="terrain-dot"></i> Terrain: 바닥과 벽</div>
@@ -250,7 +290,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=4"></script>
+    <script src="./app.js?v=5"></script>
   </body>
 </html>
 
