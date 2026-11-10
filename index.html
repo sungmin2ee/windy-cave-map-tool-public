@@ -95,29 +95,22 @@
             </select>
             <small class="rule-help">중력 방향이 아래/위면 좌우, 왼쪽/오른쪽이면 위아래 통로를 뜻합니다.</small>
 
+            <div class="objective-panel">
+              <div class="objective-header">
+                <div>
+                  <span class="field-label">클리어 목표</span>
+                  <small>Block · Terrain · Gimmick · Item을 최대 4개까지 조합합니다.</small>
+                </div>
+                <button class="button compact" id="addObjectiveButton">+ 목표</button>
+              </div>
+              <div class="objective-list" id="objectiveList"></div>
+            </div>
+
             <div class="field-row three">
-              <label>
-                <span class="field-label">목표</span>
-                <select class="field" id="targetType">
-                  <option value="red">Red</option>
-                  <option value="yellow">Yellow</option>
-                  <option value="blue">Blue</option>
-                  <option value="green">Green</option>
-                  <option value="orange">Orange</option>
-                  <option value="purple">Purple</option>
-                </select>
-              </label>
-              <label>
-                <span class="field-label">개수</span>
-                <input class="field" id="targetCount" type="number" min="1" max="999" />
-              </label>
               <label>
                 <span class="field-label">Moves</span>
                 <input class="field" id="moveLimit" type="number" min="1" max="999" />
               </label>
-            </div>
-
-            <div class="field-row">
               <label>
                 <span class="field-label">권장 클리어 Moves</span>
                 <input class="field" id="parMoves" type="number" min="1" max="999" />
@@ -127,6 +120,14 @@
                 <input class="field" id="testClearMoves" type="number" min="0" max="999" placeholder="미입력" />
               </label>
             </div>
+
+            <label class="field-label spaced" for="simulationRuns">자동 검증 횟수</label>
+            <select class="field" id="simulationRuns">
+              <option value="10">10회 · 빠름</option>
+              <option value="30">30회 · 권장</option>
+              <option value="100">100회 · 정밀</option>
+            </select>
+            <small class="rule-help">서로 다른 파생 시드로 휴리스틱 플레이를 반복해 클리어율과 Moves 분포를 계산합니다.</small>
 
             <div class="difficulty-summary" id="difficultySummary" aria-live="polite"></div>
 
@@ -290,7 +291,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=5"></script>
+    <script src="./app.js?v=8"></script>
   </body>
 </html>
 
