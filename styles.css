@@ -61,9 +61,15 @@ button { color: inherit; }
 
 .version-control { display: flex; align-items: center; gap: 9px; }
 .version-control label, .eyebrow { font-size: 10px; color: var(--muted); letter-spacing: .14em; font-weight: 800; }
+.version-control label { white-space: nowrap; }
 .version-control input {
   width: 90px; border: 1px solid var(--border); background: var(--panel-2);
   color: var(--text); border-radius: 8px; padding: 8px 10px; text-align: center;
+}
+.build-info { display: flex; align-items: center; gap: 5px; }
+.build-info span {
+  padding: 6px 7px; border: 1px solid var(--border); border-radius: 7px;
+  background: #0d1016; color: #8f99a8; font: 700 9px ui-monospace, monospace;
 }
 .top-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
@@ -137,6 +143,10 @@ h2 { font-size: 16px; margin-top: 3px; }
 .difficulty-normal strong { color: #78c9ff; }
 .difficulty-hard strong { color: #ffc05a; }
 .difficulty-expert strong { color: #ff7f8b; }
+.random-panel { margin-top: 13px; padding-top: 2px; border-top: 1px solid var(--border-soft); }
+.random-panel .field-label { margin-top: 10px; }
+.random-panel .randomize { color: #d7d0ff; border-color: #55449b; background: rgba(124, 92, 255, .12); }
+.random-panel small { display: block; margin-top: 7px; color: #778192; font-size: 9px; line-height: 1.4; }
 
 .editor-area { min-width: 0; display: grid; grid-template-rows: 58px minmax(0, 1fr) 104px; gap: 10px; }
 .editor-toolbar { border-radius: 14px; display: flex; align-items: center; padding: 8px; gap: 8px; }
@@ -223,7 +233,7 @@ h2 { font-size: 16px; margin-top: 3px; }
 .simulation-dialog::backdrop { background: rgba(2, 3, 6, .78); backdrop-filter: blur(7px); }
 .dialog-header, .dialog-footer { padding: 16px 18px; display: flex; justify-content: space-between; align-items: center; }
 .dialog-header { border-bottom: 1px solid var(--border); }
-.dialog-footer { border-top: 1px solid var(--border); justify-content: flex-end; }
+.dialog-footer { border-top: 1px solid var(--border); justify-content: flex-end; gap: 8px; }
 .simulation-result { margin: 16px; padding: 12px; border-radius: 10px; background: #0b0d12; color: #b9c1ce; font-size: 12px; line-height: 1.65; }
 .simulation-result.success { border: 1px solid #2a6e47; color: #76efa4; }
 .simulation-result.error { border: 1px solid #773943; color: #ff8d98; }
@@ -231,6 +241,15 @@ h2 { font-size: 16px; margin-top: 3px; }
 .simulation-result div { margin-top: 10px; color: inherit; }
 .simulation-grid { display: grid; gap: 2px; justify-content: center; margin: 18px auto 26px; max-height: 48vh; overflow: auto; }
 .simulation-grid .map-cell { width: 30px; height: 30px; }
+.simulation-grid button.map-cell { padding: 0; color: inherit; }
+.simulation-grid .map-cell.playable { cursor: pointer; }
+.simulation-grid .map-cell:not(.playable) { cursor: default; }
+.simulation-grid .map-cell.playable:hover { transform: scale(1.06); border-color: #d3c8ff; }
+.simulation-grid .map-cell.selected { border-color: #fff; box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(124, 92, 255, .7); z-index: 3; }
+.playtest-guide {
+  margin: 0 16px; padding: 9px 11px; border-radius: 8px; background: rgba(66, 165, 255, .1);
+  border: 1px solid #315878; color: #9ed2ff; font-size: 11px; line-height: 1.5;
+}
 
 @media (max-width: 1280px) {
   .workspace { grid-template-columns: 250px minmax(580px, 1fr) 275px; }
