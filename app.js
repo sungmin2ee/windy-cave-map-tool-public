@@ -3,8 +3,8 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.2.1";
-const SCHEMA_VERSION = 3;
+const CLIENT_VERSION = "2.3.0";
+const SCHEMA_VERSION = 4;
 const MIN_SCHEMA_VERSION = 1;
 
 const ASSETS = {
@@ -35,6 +35,16 @@ const ASSETS = {
   ],
 };
 
+const DEFAULT_TERRAIN_RULES = {
+  floor: { blocksFlow: false, reaction: "none", durability: 1 },
+  wall: { blocksFlow: true, reaction: "none", durability: 1 },
+  ice: { blocksFlow: false, reaction: "adjacent", durability: 2 },
+  pit: { blocksFlow: true, reaction: "none", durability: 1 },
+  conveyor: { blocksFlow: false, reaction: "none", durability: 1 },
+};
+
+const FLOW_RULES = ["left-first", "right-first", "alternate", "seeded-random", "none"];
+
 const STORAGE_KEY = "windy-cave-map-tool-v1";
 
 const deepCopy = (value) => JSON.parse(JSON.stringify(value));
@@ -60,6 +70,7 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
     usableBlocks: Object.keys(COLORS), targetType: "purple", targetCount: 8,
     moveLimit: 20, parMoves: 14, testClearMoves: 0,
     randomSeed: `CAVE-${String(number).padStart(4, "0")}`, randomDensity: 100,
+    flowRule: "left-first", terrainRules: deepCopy(DEFAULT_TERRAIN_RULES),
     failureBonus: true, note: "컬러 블록을 정리하고 출구까지 도달하는 기본 Cave입니다.",
   };
 }
@@ -76,6 +87,7 @@ let redoStack = [];
 let isPainting = false;
 let strokeSnapshotTaken = false;
 let playtestState = null;
+let selectedTerrainRule = "ice";
 
 const $ = (id) => document.getElementById(id);
 const activeCave = () => project.caves.find((c) => c.id === project.activeCaveId);
@@ -133,6 +145,16 @@ function normalizeCave(data, index = 0) {
   const targetCount = clampNumber(source.targetCount, 8, 1, 999);
   const moveLimit = clampNumber(source.moveLimit, 20, 1, 999);
   const estimatedPar = Math.max(1, Math.ceil(targetCount * 0.8 + usableBlocks.length * 0.7));
+  const terrainRules = {};
+  Object.keys(DEFAULT_TERRAIN_RULES).forEach((terrainId) => {
+    const rule = source.terrainRules?.[terrainId] || {};
+    const reaction = ["none", "under", "adjacent"].includes(rule.reaction) ? rule.reaction : DEFAULT_TERRAIN_RULES[terrainId].reaction;
+    terrainRules[terrainId] = {
+      blocksFlow: rule.blocksFlow == null ? DEFAULT_TERRAIN_RULES[terrainId].blocksFlow : Boolean(rule.blocksFlow),
+      reaction,
+      durability: clampNumber(rule.durability, DEFAULT_TERRAIN_RULES[terrainId].durability, 1, 99),
+    };
+  });
   return {
     ...source,
     id: source.id || crypto.randomUUID(),
@@ -144,6 +166,8 @@ function normalizeCave(data, index = 0) {
     testClearMoves: clampNumber(source.testClearMoves, 0, 0, 999),
     randomSeed: String(source.randomSeed || `CAVE-${String(index + 1).padStart(4, "0")}`),
     randomDensity: clampNumber(source.randomDensity, 100, 10, 100),
+    flowRule: FLOW_RULES.includes(source.flowRule) ? source.flowRule : "left-first",
+    terrainRules,
     failureBonus: Boolean(source.failureBonus),
     note: String(source.note || ""),
   };
@@ -231,6 +255,7 @@ function renderRules() {
   $("testClearMoves").value = cave.testClearMoves || "";
   $("randomSeed").value = cave.randomSeed;
   $("randomDensity").value = cave.randomDensity;
+  $("flowRule").value = cave.flowRule;
   $("failureBonus").checked = cave.failureBonus;
   $("noteInput").value = cave.note || "";
   document.querySelectorAll("[data-gravity]").forEach((button) => button.classList.toggle("active", button.dataset.gravity === cave.gravity));
@@ -239,6 +264,22 @@ function renderRules() {
   const arrows = { up: "↑", down: "↓", left: "←", right: "→" };
   $("gravityBadge").textContent = `GRAVITY ${arrows[cave.gravity]}`;
   renderDifficultySummary(cave);
+  renderTerrainRuleEditor();
+}
+
+function renderTerrainRuleEditor() {
+  const cave = activeCave();
+  const rule = cave.terrainRules[selectedTerrainRule] || DEFAULT_TERRAIN_RULES[selectedTerrainRule];
+  $("terrainRuleType").value = selectedTerrainRule;
+  $("terrainReaction").value = rule.reaction;
+  $("terrainDurability").value = rule.durability;
+  $("terrainBlocksFlow").checked = rule.blocksFlow;
+  $("terrainDurability").disabled = rule.reaction === "none";
+  const terrainName = getAsset("terrain", selectedTerrainRule)?.name || selectedTerrainRule;
+  const reactionLabel = rule.reaction === "none"
+    ? "3-Match로 제거할 수 없습니다."
+    : `${rule.durability}번 반응하면 사라집니다.`;
+  $("terrainRuleSummary").innerHTML = `<strong>${escapeHtml(terrainName)}</strong><span>${rule.blocksFlow ? "블록 흐름을 막습니다." : "블록이 통과할 수 있습니다."} ${reactionLabel}</span>`;
 }
 
 function renderDifficultySummary(cave) {
@@ -278,6 +319,10 @@ function renderPalette() {
     button.addEventListener("click", () => {
       const isSameSelection = activeTool !== "eraser" && selectedAssets[activeLayer] === asset.id;
       selectedAssets[activeLayer] = isSameSelection ? null : asset.id;
+      if (activeLayer === "terrain") {
+        selectedTerrainRule = asset.id;
+        renderTerrainRuleEditor();
+      }
       activeTool = "brush";
       syncToolButtons(); renderPalette();
     });
@@ -464,8 +509,7 @@ function randomizeBlocks() {
   const blocks = Array(cave.width * cave.height).fill(null);
   const eligible = [];
   for (let index = 0; index < blocks.length; index += 1) {
-    const terrain = cave.layers.terrain[index];
-    if (terrain === "wall" || terrain === "pit") continue;
+    if (isBarrier(cave, index)) continue;
     eligible.push(index);
     if (random() * 100 >= density) continue;
     const candidates = [...colors].sort(() => random() - 0.5).filter((color) => !wouldCreateMatch(blocks, index, color, cave));
@@ -558,6 +602,18 @@ function renderSimulationGrid(cave, interactive = false) {
     cell.className = `map-cell${interactive && cave.layers.block[index] ? " playable" : ""}${interactive && playtestState?.selectedIndex === index ? " selected" : ""}`;
     cell.type = interactive ? "button" : undefined;
     applyCellVisual(cell, cave, index);
+    if (playtestState?.cave === cave) {
+      const terrainId = cave.layers.terrain[index];
+      const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
+      if (rule && rule.reaction !== "none") {
+        const remaining = Math.max(0, rule.durability - (playtestState.terrainHits[index] || 0));
+        const badge = document.createElement("span");
+        badge.className = `terrain-hp${remaining < rule.durability ? " damaged" : ""}`;
+        badge.textContent = remaining;
+        badge.title = `${terrainId} 남은 내구도 ${remaining}`;
+        cell.appendChild(badge);
+      }
+    }
     if (interactive) cell.addEventListener("click", () => playtestCell(index));
     grid.appendChild(cell);
   }
@@ -574,7 +630,7 @@ function showSimulation(playMode) {
     playtestState = {
       cave: deepCopy(cave), movesLeft: cave.moveLimit, targetCleared: 0, selectedIndex: null,
       status: "playing", message: "교환할 첫 번째 블록을 선택하세요.", validation,
-      random: seededRandom(`${cave.randomSeed}|playtest`),
+      random: seededRandom(`${cave.randomSeed}|playtest`), terrainHits: Array(cave.width * cave.height).fill(0), flowTurn: 0,
     };
     renderPlaytest();
   } else {
@@ -646,7 +702,13 @@ function gravityLines(cave) {
   return lines;
 }
 
-function applyGravity(cave) {
+function isBarrier(cave, index) {
+  if (index < 0 || index >= cave.width * cave.height) return true;
+  const terrainId = cave.layers.terrain[index];
+  return terrainId ? Boolean(cave.terrainRules?.[terrainId]?.blocksFlow) : false;
+}
+
+function settleStraight(cave) {
   for (const line of gravityLines(cave)) {
     let segment = [];
     const settle = () => {
@@ -655,40 +717,131 @@ function applyGravity(cave) {
       segment = [];
     };
     for (const index of line) {
-      const terrain = cave.layers.terrain[index];
-      if (terrain === "wall" || terrain === "pit") settle();
+      if (isBarrier(cave, index)) settle();
       else segment.push(index);
     }
     settle();
   }
 }
 
+function flowOffsets(cave, state) {
+  const directions = {
+    down: [[-1, 1], [1, 1]],
+    up: [[-1, -1], [1, -1]],
+    left: [[-1, -1], [-1, 1]],
+    right: [[1, -1], [1, 1]],
+  };
+  const [first, second] = directions[cave.gravity];
+  if (cave.flowRule === "none") return [];
+  if (cave.flowRule === "right-first") return [second, first];
+  if (cave.flowRule === "alternate") {
+    const reverse = state.flowTurn % 2 === 1;
+    state.flowTurn += 1;
+    return reverse ? [second, first] : [first, second];
+  }
+  if (cave.flowRule === "seeded-random") return state.random() < 0.5 ? [first, second] : [second, first];
+  return [first, second];
+}
+
+function applyGravity(cave, state) {
+  settleStraight(cave);
+  if (!state || cave.flowRule === "none") return 0;
+  const directVectors = { down: [0, 1], up: [0, -1], left: [-1, 0], right: [1, 0] };
+  const [directX, directY] = directVectors[cave.gravity];
+  let flowMoves = 0;
+  for (let pass = 0; pass < cave.width * cave.height * 4; pass += 1) {
+    let moved = false;
+    const order = gravityLines(cave).flat();
+    for (const index of order) {
+      if (!cave.layers.block[index]) continue;
+      const x = index % cave.width;
+      const y = Math.floor(index / cave.width);
+      const nextX = x + directX;
+      const nextY = y + directY;
+      if (nextX < 0 || nextX >= cave.width || nextY < 0 || nextY >= cave.height) continue;
+      const directIndex = nextY * cave.width + nextX;
+      if (!isBarrier(cave, directIndex)) continue;
+      const offsets = flowOffsets(cave, state);
+      for (const [offsetX, offsetY] of offsets) {
+        const targetX = x + offsetX;
+        const targetY = y + offsetY;
+        if (targetX < 0 || targetX >= cave.width || targetY < 0 || targetY >= cave.height) continue;
+        const targetIndex = targetY * cave.width + targetX;
+        if (isBarrier(cave, targetIndex) || cave.layers.block[targetIndex]) continue;
+        cave.layers.block[targetIndex] = cave.layers.block[index];
+        cave.layers.block[index] = null;
+        flowMoves += 1;
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) break;
+    settleStraight(cave);
+  }
+  return flowMoves;
+}
+
 function refillBlocks(cave, random) {
   const colors = cave.usableBlocks.length ? cave.usableBlocks : Object.keys(COLORS);
   for (let index = 0; index < cave.layers.block.length; index += 1) {
-    const terrain = cave.layers.terrain[index];
-    if (!cave.layers.block[index] && terrain !== "wall" && terrain !== "pit") {
+    if (!cave.layers.block[index] && !isBarrier(cave, index)) {
       cave.layers.block[index] = colors[Math.floor(random() * colors.length)];
     }
   }
+}
+
+function damageTerrainFromMatches(state, matches) {
+  const cave = state.cave;
+  let damaged = 0;
+  let broken = 0;
+  for (let index = 0; index < cave.layers.terrain.length; index += 1) {
+    const terrainId = cave.layers.terrain[index];
+    const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
+    if (!rule || rule.reaction === "none") continue;
+    let affected = matches.has(index);
+    if (!affected && rule.reaction === "adjacent") {
+      const x = index % cave.width;
+      const neighbors = [];
+      if (x > 0) neighbors.push(index - 1);
+      if (x < cave.width - 1) neighbors.push(index + 1);
+      if (index >= cave.width) neighbors.push(index - cave.width);
+      if (index + cave.width < cave.layers.terrain.length) neighbors.push(index + cave.width);
+      affected = neighbors.some((neighbor) => matches.has(neighbor));
+    }
+    if (!affected) continue;
+    state.terrainHits[index] = (state.terrainHits[index] || 0) + 1;
+    damaged += 1;
+    if (state.terrainHits[index] >= rule.durability) {
+      cave.layers.terrain[index] = null;
+      state.terrainHits[index] = 0;
+      broken += 1;
+    }
+  }
+  return { damaged, broken };
 }
 
 function resolveMatches(state) {
   let matches = findMatches(state.cave);
   let cascade = 0;
   let removed = 0;
+  let terrainDamaged = 0;
+  let terrainBroken = 0;
+  let flowMoves = 0;
   while (matches.size && cascade < 20) {
+    const terrainResult = damageTerrainFromMatches(state, matches);
+    terrainDamaged += terrainResult.damaged;
+    terrainBroken += terrainResult.broken;
     matches.forEach((index) => {
       if (state.cave.layers.block[index] === state.cave.targetType) state.targetCleared += 1;
       state.cave.layers.block[index] = null;
       removed += 1;
     });
-    applyGravity(state.cave);
+    flowMoves += applyGravity(state.cave, state);
     refillBlocks(state.cave, state.random);
     cascade += 1;
     matches = findMatches(state.cave);
   }
-  return { cascade, removed, capped: matches.size > 0 };
+  return { cascade, removed, terrainDamaged, terrainBroken, flowMoves, capped: matches.size > 0 };
 }
 
 function hasPossibleSwap(cave) {
@@ -743,7 +896,7 @@ function playtestCell(index) {
   }
   state.movesLeft -= 1;
   const resolved = resolveMatches(state);
-  state.message = `${resolved.removed}개 제거 · ${resolved.cascade}연쇄${resolved.capped ? " · 연쇄 안전 제한 도달" : ""}`;
+  state.message = `${resolved.removed}개 제거 · ${resolved.cascade}연쇄 · Terrain 반응 ${resolved.terrainDamaged}회${resolved.terrainBroken ? ` · Terrain ${resolved.terrainBroken}개 파괴` : ""}${resolved.flowMoves ? ` · 우회 흐름 ${resolved.flowMoves}칸` : ""}${resolved.capped ? " · 연쇄 안전 제한 도달" : ""}`;
   if (state.targetCleared >= state.cave.targetCount) {
     state.status = "won";
     state.message = `${state.cave.moveLimit - state.movesLeft} Moves로 목표를 달성했습니다. ${state.message}`;
@@ -761,13 +914,15 @@ function renderPlaytest() {
   const state = playtestState;
   if (!state) return;
   const usedMoves = state.cave.moveLimit - state.movesLeft;
+  const flowLabels = { "left-first": "왼쪽/위 우선", "right-first": "오른쪽/아래 우선", alternate: "교대", "seeded-random": "시드 랜덤", none: "우회 없음" };
   const result = $("simulationResult");
   result.className = `simulation-result ${state.status === "won" ? "success" : ["lost", "stuck"].includes(state.status) ? "error" : "warning"}`;
   result.innerHTML = `
     <strong>${state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 종료" : "PLAYTEST 진행 중"}</strong><br>
     Moves <b>${state.movesLeft}</b> / ${state.cave.moveLimit} · 목표 ${state.cave.targetType} <b>${Math.min(state.targetCleared, state.cave.targetCount)}</b> / ${state.cave.targetCount} · 사용 ${usedMoves}회<br>
+    Gravity ${state.cave.gravity} · 막힘 우회 ${flowLabels[state.cave.flowRule]}<br>
     ${escapeHtml(state.message)}
-    ${state.cave.layers.gimmick.some(Boolean) ? "<div>※ 현재 플레이테스트는 3-Match·중력·리필·색상 목표만 계산합니다. 기믹과 아이템은 표시만 됩니다.</div>" : ""}
+    ${state.cave.layers.gimmick.some(Boolean) ? "<div>※ 3-Match·중력 우회·Terrain 내구도·리필·색상 목표를 계산합니다. 기믹과 아이템은 표시만 됩니다.</div>" : ""}
   `;
   $("usePlaytestResultButton").hidden = state.status !== "won";
   renderSimulationGrid(state.cave, state.status === "playing");
@@ -779,7 +934,7 @@ function resetPlaytest() {
   playtestState = {
     cave: deepCopy(cave), movesLeft: cave.moveLimit, targetCleared: 0, selectedIndex: null,
     status: "playing", message: "교환할 첫 번째 블록을 선택하세요.", validation: validateCave(cave),
-    random: seededRandom(`${cave.randomSeed}|playtest`),
+    random: seededRandom(`${cave.randomSeed}|playtest`), terrainHits: Array(cave.width * cave.height).fill(0), flowTurn: 0,
   };
   $("usePlaytestResultButton").hidden = true;
   renderPlaytest();
@@ -979,6 +1134,8 @@ function adaptExternalLevel(level, index, format, unknownTokens) {
     id: valueAt(source, ["id", "uuid", "levelId", "stageId"], crypto.randomUUID()),
     name: valueAt(source, ["name", "title", "levelName", "stageName"], `Imported Cave ${String(index + 1).padStart(4, "0")}`),
     width, height, gravity: valueAt(source, ["gravity", "gravityDirection", "direction"], "down"), layers,
+    flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "left-first"),
+    terrainRules: valueAt(source, ["terrainRules", "terrainBehavior", "terrainBehaviors"], undefined),
     usableBlocks, targetType, targetCount, moveLimit, parMoves, testClearMoves,
     failureBonus: Boolean(valueAt(source, ["failureBonus", "useFailureBonus"], false)),
     note: valueAt(source, ["note", "description", "memo"], ""),
@@ -1066,10 +1223,26 @@ function bindInputs() {
   $("moveLimit").addEventListener("change", updateRule);
   $("parMoves").addEventListener("change", updateRule);
   $("testClearMoves").addEventListener("change", updateRule);
+  $("flowRule").addEventListener("change", updateRule);
   $("randomSeed").addEventListener("change", updateRandomSettings);
   $("randomDensity").addEventListener("change", updateRandomSettings);
   $("failureBonus").addEventListener("change", updateRule);
+  $("terrainRuleType").addEventListener("change", (event) => { selectedTerrainRule = event.target.value; renderTerrainRuleEditor(); });
+  $("terrainReaction").addEventListener("change", updateTerrainRule);
+  $("terrainBlocksFlow").addEventListener("change", updateTerrainRule);
+  $("terrainDurability").addEventListener("input", updateTerrainRule);
   $("noteInput").addEventListener("change", (event) => { snapshot(); activeCave().note = event.target.value; persist(); });
+}
+
+function updateTerrainRule() {
+  snapshot();
+  const cave = activeCave();
+  cave.terrainRules[selectedTerrainRule] = {
+    blocksFlow: $("terrainBlocksFlow").checked,
+    reaction: $("terrainReaction").value,
+    durability: clampNumber($("terrainDurability").value, 1, 1, 99),
+  };
+  renderTerrainRuleEditor(); persist();
 }
 
 function updateRandomSettings() {
@@ -1086,6 +1259,7 @@ function updateRule() {
   cave.moveLimit = Math.max(1, Number($("moveLimit").value));
   cave.parMoves = Math.max(1, Number($("parMoves").value));
   cave.testClearMoves = Math.max(0, Number($("testClearMoves").value || 0));
+  cave.flowRule = FLOW_RULES.includes($("flowRule").value) ? $("flowRule").value : "left-first";
   cave.failureBonus = $("failureBonus").checked;
   renderDifficultySummary(cave); persist();
 }
