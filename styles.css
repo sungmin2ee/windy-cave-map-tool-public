@@ -129,6 +129,7 @@ h2 { font-size: 16px; margin-top: 3px; }
 .gravity-control { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .gravity-control button { padding: 8px 0; font-size: 16px; }
 .gravity-control button.active { color: #111; background: var(--warning); border-color: var(--warning); }
+.rule-help { display: block; margin-top: 6px; color: #778192; font-size: 9px; line-height: 1.45; }
 .check-field { display: flex; align-items: center; gap: 8px; margin-top: 15px; font-size: 12px; color: #c5ccd8; }
 .check-field input { accent-color: var(--accent); }
 .difficulty-summary {
@@ -218,6 +219,14 @@ h2 { font-size: 16px; margin-top: 3px; }
 .color-toggle { aspect-ratio: 1; border: 2px solid transparent; border-radius: 9px; cursor: pointer; opacity: .28; }
 .color-toggle.active { opacity: 1; border-color: white; box-shadow: 0 0 0 2px #ffffff18; }
 .legend-section { display: flex; flex-direction: column; gap: 9px; }
+.terrain-rule-section h2 { margin: 4px 0 13px; }
+.terrain-block-check { margin: 12px 0 2px; }
+.terrain-rule-summary {
+  display: flex; flex-direction: column; gap: 3px; margin-top: 10px; padding: 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: #0d1016; font-size: 10px;
+}
+.terrain-rule-summary strong { color: #d7d0ff; }
+.terrain-rule-summary span { color: #8e98a9; line-height: 1.45; }
 .legend-row { display: flex; align-items: center; gap: 8px; color: #99a3b1; font-size: 11px; }
 .legend-row i { width: 9px; height: 9px; border-radius: 50%; }
 .terrain-dot { background: #7e8797; } .block-dot { background: #44aaff; }
@@ -250,6 +259,12 @@ h2 { font-size: 16px; margin-top: 3px; }
 .simulation-grid .map-cell:not(.playable) { cursor: default; }
 .simulation-grid .map-cell.playable:hover { transform: scale(1.06); border-color: #d3c8ff; }
 .simulation-grid .map-cell.selected { border-color: #fff; box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(124, 92, 255, .7); z-index: 3; }
+.terrain-hp {
+  position: absolute; right: 1px; top: 1px; z-index: 8; min-width: 13px; height: 13px; padding: 0 3px;
+  display: grid; place-items: center; border-radius: 7px; background: #151922; border: 1px solid #d7dce5;
+  color: #fff; font: 800 8px ui-monospace, monospace; box-shadow: 0 1px 4px #000b;
+}
+.terrain-hp.damaged { background: #8d323d; border-color: #ff9ba5; }
 .playtest-guide {
   margin: 0 16px; padding: 9px 11px; border-radius: 8px; background: rgba(66, 165, 255, .1);
   border: 1px solid #315878; color: #9ed2ff; font-size: 11px; line-height: 1.5;
