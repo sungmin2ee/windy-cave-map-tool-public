@@ -3,8 +3,8 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.3.0";
-const SCHEMA_VERSION = 4;
+const CLIENT_VERSION = "2.4.0";
+const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
 const ASSETS = {
@@ -44,6 +44,13 @@ const DEFAULT_TERRAIN_RULES = {
 };
 
 const FLOW_RULES = ["left-first", "right-first", "alternate", "seeded-random", "none"];
+const MAX_OBJECTIVES = 4;
+const OBJECTIVE_ACTIONS = {
+  block: { action: "match", label: "매치해서 제거" },
+  terrain: { action: "destroy", label: "내구도 소진 후 파괴" },
+  gimmick: { action: "activate", label: "매치로 활성화" },
+  item: { action: "collect", label: "같은 칸 매치로 수집" },
+};
 
 const STORAGE_KEY = "windy-cave-map-tool-v1";
 
@@ -67,8 +74,11 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
   layers.gimmick[(height - 2) * width + width - 2] = "teleport-b";
   return {
     id: crypto.randomUUID(), name, width, height, gravity: "down", layers,
-    usableBlocks: Object.keys(COLORS), targetType: "purple", targetCount: 8,
+    usableBlocks: Object.keys(COLORS),
+    objectives: [{ id: crypto.randomUUID(), layer: "block", targetId: "purple", action: "match", countMode: "manual", count: 8 }],
+    targetType: "purple", targetCount: 8,
     moveLimit: 20, parMoves: 14, testClearMoves: 0,
+    simulationRuns: 30,
     randomSeed: `CAVE-${String(number).padStart(4, "0")}`, randomDensity: 100,
     flowRule: "left-first", terrainRules: deepCopy(DEFAULT_TERRAIN_RULES),
     failureBonus: true, note: "컬러 블록을 정리하고 출구까지 도달하는 기본 Cave입니다.",
@@ -119,6 +129,43 @@ function normalizeGravity(value) {
   return ["up", "down", "left", "right"].includes(normalized) ? normalized : "down";
 }
 
+function objectiveAssetExists(layer, targetId) {
+  return Boolean(ASSETS[layer]?.some((asset) => asset.id === targetId));
+}
+
+function normalizeObjective(value, fallback = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  const requestedLayer = String(source.layer || source.category || fallback.layer || "block").toLowerCase();
+  const layer = Object.prototype.hasOwnProperty.call(ASSETS, requestedLayer) ? requestedLayer : "block";
+  const fallbackTarget = ASSETS[layer][0]?.id || "red";
+  let targetId = source.targetId ?? source.objectId ?? source.type ?? source.target ?? source.color ?? fallback.targetId ?? fallbackTarget;
+  if (layer === "block") targetId = normalizeColor(targetId) || fallbackTarget;
+  else targetId = String(targetId || fallbackTarget).toLowerCase();
+  if (!objectiveAssetExists(layer, targetId)) targetId = fallbackTarget;
+  const defaultAction = OBJECTIVE_ACTIONS[layer].action;
+  const requestedAction = String(source.action || source.condition || defaultAction).toLowerCase();
+  const actionAliases = { clear: "match", remove: layer === "terrain" ? "destroy" : defaultAction, break: "destroy", pickup: "collect", trigger: "activate" };
+  const action = actionAliases[requestedAction] || requestedAction;
+  const countMode = String(source.countMode || source.count_mode || fallback.countMode || "manual").toLowerCase() === "auto-map" ? "auto-map" : "manual";
+  return {
+    id: String(source.id || fallback.id || crypto.randomUUID()),
+    layer,
+    targetId,
+    action: action === defaultAction ? action : defaultAction,
+    countMode,
+    count: clampNumber(source.count, fallback.count || 1, 1, 999),
+  };
+}
+
+function normalizeObjectives(source) {
+  const incoming = Array.isArray(source.objectives) ? source.objectives : [];
+  const legacyTarget = normalizeColor(source.targetType) || "purple";
+  const values = incoming.length
+    ? incoming
+    : [{ layer: "block", targetId: legacyTarget, action: "match", countMode: "manual", count: clampNumber(source.targetCount, 8, 1, 999) }];
+  return values.slice(0, MAX_OBJECTIVES).map((objective) => normalizeObjective(objective));
+}
+
 function normalizeProject(data) {
   const source = data && typeof data === "object" ? data : {};
   const rawCaves = Array.isArray(source.caves) ? source.caves : [];
@@ -141,10 +188,13 @@ function normalizeCave(data, index = 0) {
   const usableBlocks = Array.isArray(source.usableBlocks)
     ? source.usableBlocks.map(normalizeColor).filter(Boolean)
     : Object.keys(COLORS);
-  const targetType = normalizeColor(source.targetType) || "purple";
-  const targetCount = clampNumber(source.targetCount, 8, 1, 999);
+  const objectives = normalizeObjectives(source);
+  const primaryBlockObjective = objectives.find((objective) => objective.layer === "block") || objectives[0];
+  const targetType = primaryBlockObjective.layer === "block" ? primaryBlockObjective.targetId : "purple";
+  const targetCount = primaryBlockObjective.count;
   const moveLimit = clampNumber(source.moveLimit, 20, 1, 999);
-  const estimatedPar = Math.max(1, Math.ceil(targetCount * 0.8 + usableBlocks.length * 0.7));
+  const estimatedTargetCount = objectives.reduce((sum, objective) => sum + objective.count, 0);
+  const estimatedPar = Math.max(1, Math.ceil(estimatedTargetCount * 0.8 + usableBlocks.length * 0.7));
   const terrainRules = {};
   Object.keys(DEFAULT_TERRAIN_RULES).forEach((terrainId) => {
     const rule = source.terrainRules?.[terrainId] || {};
@@ -161,9 +211,10 @@ function normalizeCave(data, index = 0) {
     name: String(source.name || `Cave ${String(index + 1).padStart(4, "0")}`),
     width, height, gravity: normalizeGravity(source.gravity), layers,
     usableBlocks: [...new Set(usableBlocks.length ? usableBlocks : Object.keys(COLORS))],
-    targetType, targetCount, moveLimit,
+    objectives, targetType, targetCount, moveLimit,
     parMoves: clampNumber(source.parMoves, Math.min(moveLimit, estimatedPar), 1, 999),
     testClearMoves: clampNumber(source.testClearMoves, 0, 0, 999),
+    simulationRuns: [10, 30, 100].includes(Number(source.simulationRuns)) ? Number(source.simulationRuns) : 30,
     randomSeed: String(source.randomSeed || `CAVE-${String(index + 1).padStart(4, "0")}`),
     randomDensity: clampNumber(source.randomDensity, 100, 10, 100),
     flowRule: FLOW_RULES.includes(source.flowRule) ? source.flowRule : "left-first",
@@ -220,6 +271,84 @@ function updateUndoButtons() {
 
 function getAsset(layer, id) { return ASSETS[layer].find((asset) => asset.id === id); }
 
+function resolvedObjectiveCount(cave, objective) {
+  if (objective.countMode === "auto-map") return cave.layers[objective.layer].filter((value) => value === objective.targetId).length;
+  return objective.count;
+}
+
+function objectiveLabel(objective) {
+  const layer = objective.layer[0].toUpperCase() + objective.layer.slice(1);
+  const asset = getAsset(objective.layer, objective.targetId);
+  return `${layer} · ${asset?.name || objective.targetId}`;
+}
+
+function syncLegacyTarget(cave) {
+  const primary = cave.objectives.find((objective) => objective.layer === "block");
+  if (primary) {
+    cave.targetType = primary.targetId;
+    cave.targetCount = resolvedObjectiveCount(cave, primary);
+  }
+}
+
+function addObjective() {
+  const cave = activeCave();
+  if (cave.objectives.length >= MAX_OBJECTIVES) return toast(`목표는 최대 ${MAX_OBJECTIVES}개까지 설정할 수 있습니다.`);
+  snapshot();
+  cave.objectives.push(normalizeObjective({ layer: "terrain", targetId: "ice", action: "destroy", countMode: "auto-map", count: 1 }));
+  syncLegacyTarget(cave); renderRules(); persist();
+}
+
+function removeObjective(index) {
+  const cave = activeCave();
+  if (cave.objectives.length <= 1) return toast("목표는 하나 이상 필요합니다.");
+  snapshot(); cave.objectives.splice(index, 1); syncLegacyTarget(cave); renderRules(); persist();
+}
+
+function updateObjective(index, values) {
+  const cave = activeCave();
+  const current = cave.objectives[index];
+  if (!current) return;
+  snapshot();
+  cave.objectives[index] = normalizeObjective({ ...current, ...values }, current);
+  syncLegacyTarget(cave); renderRules(); persist();
+}
+
+function renderObjectives() {
+  const cave = activeCave();
+  const list = $("objectiveList");
+  list.innerHTML = "";
+  cave.objectives.forEach((objective, index) => {
+    const row = document.createElement("div");
+    row.className = "objective-row";
+    const targetOptions = ASSETS[objective.layer].map((asset) => `<option value="${asset.id}"${asset.id === objective.targetId ? " selected" : ""}>${escapeHtml(asset.name)}</option>`).join("");
+    const autoCount = resolvedObjectiveCount(cave, objective);
+    row.innerHTML = `
+      <div class="objective-row-top">
+        <label><span class="field-label">레이어</span><select class="field objective-layer">${Object.keys(ASSETS).map((layer) => `<option value="${layer}"${layer === objective.layer ? " selected" : ""}>${layer[0].toUpperCase() + layer.slice(1)}</option>`).join("")}</select></label>
+        <label><span class="field-label">대상</span><select class="field objective-target">${targetOptions}</select></label>
+        <button class="button objective-remove" title="목표 삭제" aria-label="목표 삭제">×</button>
+      </div>
+      <div class="objective-row-bottom">
+        <label><span class="field-label">완료 조건</span><div class="objective-auto-count">${escapeHtml(OBJECTIVE_ACTIONS[objective.layer].label)}</div></label>
+        <label><span class="field-label">수량 방식</span><select class="field objective-count-mode"><option value="manual"${objective.countMode === "manual" ? " selected" : ""}>직접 입력</option><option value="auto-map"${objective.countMode === "auto-map" ? " selected" : ""}>맵 개수 자동</option></select></label>
+      </div>
+      <div class="objective-row-bottom objective-count-row">
+        <label><span class="field-label">목표 수량</span>${objective.countMode === "auto-map" ? `<div class="objective-auto-count">현재 ${autoCount}개</div>` : `<input class="field objective-count" type="number" min="1" max="999" value="${objective.count}" />`}</label>
+        <div class="objective-auto-count">${escapeHtml(objectiveLabel(objective))}</div>
+      </div>`;
+    row.querySelector(".objective-layer").addEventListener("change", (event) => {
+      const layer = event.target.value;
+      updateObjective(index, { layer, targetId: ASSETS[layer][0].id, action: OBJECTIVE_ACTIONS[layer].action });
+    });
+    row.querySelector(".objective-target").addEventListener("change", (event) => updateObjective(index, { targetId: event.target.value }));
+    row.querySelector(".objective-count-mode").addEventListener("change", (event) => updateObjective(index, { countMode: event.target.value }));
+    row.querySelector(".objective-count")?.addEventListener("change", (event) => updateObjective(index, { count: clampNumber(event.target.value, 1, 1, 999) }));
+    row.querySelector(".objective-remove").addEventListener("click", () => removeObjective(index));
+    list.appendChild(row);
+  });
+  $("addObjectiveButton").disabled = cave.objectives.length >= MAX_OBJECTIVES;
+}
+
 function renderAll() {
   renderCaveList();
   renderRules();
@@ -248,11 +377,11 @@ function renderRules() {
   $("caveName").value = cave.name;
   $("mapWidth").value = cave.width;
   $("mapHeight").value = cave.height;
-  $("targetType").value = cave.targetType;
-  $("targetCount").value = cave.targetCount;
+  renderObjectives();
   $("moveLimit").value = cave.moveLimit;
   $("parMoves").value = cave.parMoves;
   $("testClearMoves").value = cave.testClearMoves || "";
+  $("simulationRuns").value = String(cave.simulationRuns);
   $("randomSeed").value = cave.randomSeed;
   $("randomDensity").value = cave.randomDensity;
   $("flowRule").value = cave.flowRule;
@@ -287,8 +416,8 @@ function renderDifficultySummary(cave) {
   const node = $("difficultySummary");
   node.className = `difficulty-summary difficulty-${analysis.key}`;
   node.innerHTML = `
-    <div><span>자동 난이도</span><strong>${analysis.label}</strong></div>
-    <small>점수 ${analysis.score} · 여유 ${analysis.slack >= 0 ? "+" : ""}${analysis.slack} Moves · 블록 ${analysis.totalBlocks} · 기믹 ${analysis.gimmickCount}</small>
+    <div><span>휴리스틱 난이도</span><strong>${analysis.label}</strong></div>
+    <small>점수 ${analysis.score} · 목표 작업량 ${analysis.objectiveWork} · 여유 ${analysis.slack >= 0 ? "+" : ""}${analysis.slack} Moves · 블록 ${analysis.totalBlocks}</small>
     <small>면적 + 사용 색상 + 기믹/아이템 + 목표 비율 + 클리어 기록 대비 Moves로 계산</small>
   `;
 }
@@ -404,7 +533,9 @@ function editCell(index, fillMode) {
   const value = activeTool === "eraser" ? null : selectedAssets[activeLayer];
   if (fillMode) floodFill(cave, activeLayer, index, value);
   else cave.layers[activeLayer][index] = value;
-  renderGrid(); persist(); showCellStatus(index);
+  renderGrid();
+  if (cave.objectives.some((objective) => objective.layer === activeLayer && objective.countMode === "auto-map")) renderObjectives();
+  persist(); showCellStatus(index);
 }
 
 function floodFill(cave, layer, start, replacement) {
@@ -515,23 +646,26 @@ function randomizeBlocks() {
     const candidates = [...colors].sort(() => random() - 0.5).filter((color) => !wouldCreateMatch(blocks, index, color, cave));
     blocks[index] = candidates[0] || null;
   }
-  const targetNeeded = Math.min(cave.targetCount, eligible.length);
-  let targetPlaced = blocks.filter((value) => value === cave.targetType).length;
-  const shuffled = [...eligible].sort(() => random() - 0.5);
-  for (const index of shuffled) {
-    if (targetPlaced >= targetNeeded) break;
-    if (blocks[index] !== cave.targetType && !wouldCreateMatch(blocks, index, cave.targetType, cave)) {
-      blocks[index] = cave.targetType;
-      targetPlaced += 1;
+  const shortfalls = [];
+  for (const objective of cave.objectives.filter((item) => item.layer === "block")) {
+    const targetNeeded = Math.min(resolvedObjectiveCount(cave, objective), eligible.length);
+    let targetPlaced = blocks.filter((value) => value === objective.targetId).length;
+    const shuffled = [...eligible].sort(() => random() - 0.5);
+    for (const index of shuffled) {
+      if (targetPlaced >= targetNeeded) break;
+      if (blocks[index] !== objective.targetId && !wouldCreateMatch(blocks, index, objective.targetId, cave)) {
+        blocks[index] = objective.targetId;
+        targetPlaced += 1;
+      }
     }
+    if (targetPlaced < targetNeeded) shortfalls.push(`${objective.targetId} ${targetNeeded - targetPlaced}개`);
   }
   snapshot();
   cave.layers.block = blocks;
   cave.randomSeed = seed;
   cave.randomDensity = density;
   renderAll(); persist();
-  const shortfall = Math.max(0, targetNeeded - targetPlaced);
-  toast(`시드 ${seed} · 시작 매치 0개 · 블록 ${blocks.filter(Boolean).length}개${shortfall ? ` · 목표색 ${shortfall}개 부족` : ""}`);
+  toast(`시드 ${seed} · 시작 매치 0개 · 블록 ${blocks.filter(Boolean).length}개${shortfalls.length ? ` · 목표색 부족 ${shortfalls.join(", ")}` : ""}`);
 }
 
 function analyzeDifficulty(cave) {
@@ -543,7 +677,13 @@ function analyzeDifficulty(cave) {
   const referenceMoves = cave.testClearMoves > 0 ? cave.testClearMoves : cave.parMoves;
   const slack = cave.moveLimit - referenceMoves;
   const budgetRatio = cave.moveLimit / Math.max(1, referenceMoves);
-  const targetPressure = cave.targetCount / Math.max(1, totalBlocks);
+  const objectiveWork = cave.objectives.reduce((sum, objective) => {
+    const count = resolvedObjectiveCount(cave, objective);
+    if (objective.layer !== "terrain") return sum + count;
+    const durability = cave.terrainRules?.[objective.targetId]?.durability || 1;
+    return sum + count * durability;
+  }, 0);
+  const targetPressure = objectiveWork / Math.max(1, totalBlocks);
   let score = 0;
   if (area >= 144) score += 2; else if (area >= 100) score += 1;
   if (usedColors.size >= 5) score += 2; else if (usedColors.size >= 3) score += 1;
@@ -558,7 +698,7 @@ function analyzeDifficulty(cave) {
       : score <= 8
         ? { key: "hard", label: "Hard" }
         : { key: "expert", label: "Expert" };
-  return { ...levels, score, slack, budgetRatio, totalBlocks, usedColors: usedColors.size, gimmickCount, itemCount, referenceMoves };
+  return { ...levels, score, slack, budgetRatio, totalBlocks, usedColors: usedColors.size, gimmickCount, itemCount, referenceMoves, objectiveWork };
 }
 
 function validateCave(cave) {
@@ -567,10 +707,26 @@ function validateCave(cave) {
   const analysis = analyzeDifficulty(cave);
   const teleportA = cave.layers.gimmick.filter((value) => value === "teleport-a").length;
   const teleportB = cave.layers.gimmick.filter((value) => value === "teleport-b").length;
-  const targetBlocks = cave.layers.block.filter((value) => value === cave.targetType).length;
   const initialMatches = findMatches(cave).size;
   if (!analysis.totalBlocks) errors.push("퍼즐 블록이 하나도 없습니다.");
-  if (cave.targetCount < 1) errors.push("목표 개수는 1 이상이어야 합니다.");
+  if (!cave.objectives.length) errors.push("목표를 하나 이상 설정해야 합니다.");
+  if (cave.objectives.length > MAX_OBJECTIVES) errors.push(`목표는 최대 ${MAX_OBJECTIVES}개까지 설정할 수 있습니다.`);
+  const objectiveKeys = new Set();
+  cave.objectives.forEach((objective) => {
+    const label = objectiveLabel(objective);
+    const key = `${objective.layer}:${objective.targetId}:${objective.action}`;
+    const placed = cave.layers[objective.layer].filter((value) => value === objective.targetId).length;
+    const target = resolvedObjectiveCount(cave, objective);
+    if (objectiveKeys.has(key)) errors.push(`${label} 목표가 중복되어 있습니다.`);
+    objectiveKeys.add(key);
+    if (!objectiveAssetExists(objective.layer, objective.targetId)) errors.push(`${label} 대상이 현재 팔레트에 없습니다.`);
+    if (target < 1) errors.push(`${label} 목표 수량은 1 이상이어야 합니다.`);
+    if (objective.countMode === "auto-map" && placed < 1) errors.push(`${label} 자동 수량 목표지만 맵에 배치된 대상이 없습니다.`);
+    if (objective.layer === "block" && !cave.usableBlocks.includes(objective.targetId)) errors.push(`${label} 색상이 사용 가능 블록에서 제외되어 있습니다.`);
+    if (objective.layer === "terrain" && cave.terrainRules?.[objective.targetId]?.reaction === "none") errors.push(`${label} 목표는 제거 불가 규칙입니다. Terrain 반응을 같은 칸 또는 인접 매치로 바꾸세요.`);
+    if (objective.countMode === "manual" && objective.layer !== "block" && target > placed) warnings.push(`${label} 목표 ${target}개보다 맵 배치 ${placed}개가 적습니다.`);
+    if (objective.layer === "block" && placed < target) warnings.push(`${label}은 현재 ${placed}개입니다. 리필에서 생성될 수 있지만 목표 달성 편차가 커질 수 있습니다.`);
+  });
   if (cave.moveLimit < 1) errors.push("Moves는 1 이상이어야 합니다.");
   if (cave.parMoves < 1) errors.push("권장 클리어 Moves는 1 이상이어야 합니다.");
   if (!cave.usableBlocks.length) errors.push("사용 가능한 블록 색상을 하나 이상 선택해야 합니다.");
@@ -580,8 +736,6 @@ function validateCave(cave) {
   if (cave.testClearMoves > cave.moveLimit) errors.push(`테스트 클리어 ${cave.testClearMoves}회가 제한 ${cave.moveLimit}회를 초과합니다.`);
   if (!cave.testClearMoves) warnings.push("테스트 클리어 Moves가 없습니다. 실제 플레이 기록을 입력하면 난이도 판정이 더 정확해집니다.");
   if (cave.moveLimit >= cave.parMoves * 2) warnings.push("허용 Moves가 권장 클리어 횟수의 2배 이상이라 난이도가 크게 낮아질 수 있습니다.");
-  if (cave.targetCount > analysis.totalBlocks) warnings.push(`목표 ${cave.targetCount}개가 현재 전체 블록 ${analysis.totalBlocks}개보다 많습니다.`);
-  if (targetBlocks < cave.targetCount) warnings.push(`현재 ${cave.targetType} 블록은 ${targetBlocks}개입니다. 생성/변환 규칙이 없다면 목표 달성이 어렵습니다.`);
   if (initialMatches) warnings.push(`시작 상태에 이미 3-Match 블록이 ${initialMatches}개 있습니다. 랜덤 재배치를 권장합니다.`);
   if (analysis.totalBlocks && !initialMatches && !hasPossibleSwap(cave)) warnings.push("시작 상태에서 가능한 3-Match 교환을 찾지 못했습니다.");
   return { errors, warnings, analysis };
@@ -627,20 +781,21 @@ function showSimulation(playMode) {
   $("playtestResetButton").hidden = !playMode || Boolean(validation.errors.length);
   $("usePlaytestResultButton").hidden = true;
   if (playMode && !validation.errors.length) {
-    playtestState = {
-      cave: deepCopy(cave), movesLeft: cave.moveLimit, targetCleared: 0, selectedIndex: null,
-      status: "playing", message: "교환할 첫 번째 블록을 선택하세요.", validation,
-      random: seededRandom(`${cave.randomSeed}|playtest`), terrainHits: Array(cave.width * cave.height).fill(0), flowTurn: 0,
-    };
+    playtestState = createPlayState(cave, "playtest");
+    playtestState.validation = validation;
     renderPlaytest();
   } else {
     playtestState = null;
+    const batch = validation.errors.length ? null : runBatchSimulation(cave, cave.simulationRuns);
+    const objectiveSummary = cave.objectives.map((objective) => `${escapeHtml(objectiveLabel(objective))} × ${resolvedObjectiveCount(cave, objective)}`).join(" · ");
     const result = $("simulationResult");
     result.className = `simulation-result ${validation.errors.length ? "error" : validation.warnings.length ? "warning" : "success"}`;
     result.innerHTML = `
       <strong>${validation.errors.length ? "검증 실패" : "검증 통과"}</strong><br>
-      난이도 ${validation.analysis.label} (${validation.analysis.score}점) · 목표 ${cave.targetType} × ${cave.targetCount} · 제한 ${cave.moveLimit} · 권장 ${cave.parMoves}${cave.testClearMoves ? ` · 테스트 ${cave.testClearMoves}` : ""}<br>
+      ${batch ? `자동 플레이 난이도 <b>${batch.label}</b> · 휴리스틱 ${validation.analysis.label} (${validation.analysis.score}점)<br>` : `휴리스틱 난이도 ${validation.analysis.label} (${validation.analysis.score}점)<br>`}
+      목표 ${objectiveSummary} · 제한 ${cave.moveLimit} · 권장 ${cave.parMoves}${cave.testClearMoves ? ` · 테스트 ${cave.testClearMoves}` : ""}<br>
       여유 Moves ${validation.analysis.slack >= 0 ? "+" : ""}${validation.analysis.slack} · Gravity ${cave.gravity}
+      ${batch ? `<div class="batch-summary"><span><b>${batch.clearRate}%</b>클리어율 (${batch.wins}/${batch.runs})</span><span><b>${batch.average || "-"}</b>평균 Moves</span><span><b>${batch.median || "-"} / ${batch.p90 || "-"}</b>중앙 / 90%</span></div><div>막힘 ${batch.stuck}회 · 목표 우선 휴리스틱 자동 플레이 결과이며 실제 유저 난이도와는 차이가 날 수 있습니다.</div>` : ""}
       ${issueHtml(validation)}
     `;
     renderSimulationGrid(cave, false);
@@ -680,6 +835,44 @@ function areAdjacent(cave, first, second) {
   const secondX = second % cave.width;
   const secondY = Math.floor(second / cave.width);
   return Math.abs(firstX - secondX) + Math.abs(firstY - secondY) === 1;
+}
+
+function neighborsOf(cave, index) {
+  const x = index % cave.width;
+  const neighbors = [];
+  if (x > 0) neighbors.push(index - 1);
+  if (x < cave.width - 1) neighbors.push(index + 1);
+  if (index >= cave.width) neighbors.push(index - cave.width);
+  if (index + cave.width < cave.width * cave.height) neighbors.push(index + cave.width);
+  return neighbors;
+}
+
+function createObjectiveProgress(cave) {
+  return cave.objectives.map((objective) => ({
+    id: objective.id,
+    current: 0,
+    target: resolvedObjectiveCount(cave, objective),
+  }));
+}
+
+function advanceObjectives(state, layer, targetId, amount = 1) {
+  state.cave.objectives.forEach((objective, index) => {
+    if (objective.layer !== layer || objective.targetId !== targetId) return;
+    const progress = state.objectiveProgress[index];
+    progress.current = Math.min(progress.target, progress.current + amount);
+  });
+}
+
+function allObjectivesComplete(state) {
+  return state.objectiveProgress.length > 0 && state.objectiveProgress.every((progress) => progress.current >= progress.target);
+}
+
+function objectiveProgressHtml(state) {
+  return `<div class="objective-progress">${state.cave.objectives.map((objective, index) => {
+    const progress = state.objectiveProgress[index];
+    const percent = Math.min(100, Math.round(progress.current / Math.max(1, progress.target) * 100));
+    return `<div class="objective-progress-row"><span>${escapeHtml(objectiveLabel(objective))}</span><i style="--progress:${percent}%"></i><b>${Math.min(progress.current, progress.target)} / ${progress.target}</b></div>`;
+  }).join("")}</div>`;
 }
 
 function gravityLines(cave) {
@@ -794,30 +987,26 @@ function damageTerrainFromMatches(state, matches) {
   const cave = state.cave;
   let damaged = 0;
   let broken = 0;
+  const brokenDetails = [];
   for (let index = 0; index < cave.layers.terrain.length; index += 1) {
     const terrainId = cave.layers.terrain[index];
     const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
     if (!rule || rule.reaction === "none") continue;
     let affected = matches.has(index);
     if (!affected && rule.reaction === "adjacent") {
-      const x = index % cave.width;
-      const neighbors = [];
-      if (x > 0) neighbors.push(index - 1);
-      if (x < cave.width - 1) neighbors.push(index + 1);
-      if (index >= cave.width) neighbors.push(index - cave.width);
-      if (index + cave.width < cave.layers.terrain.length) neighbors.push(index + cave.width);
-      affected = neighbors.some((neighbor) => matches.has(neighbor));
+      affected = neighborsOf(cave, index).some((neighbor) => matches.has(neighbor));
     }
     if (!affected) continue;
     state.terrainHits[index] = (state.terrainHits[index] || 0) + 1;
     damaged += 1;
     if (state.terrainHits[index] >= rule.durability) {
+      brokenDetails.push({ index, terrainId });
       cave.layers.terrain[index] = null;
       state.terrainHits[index] = 0;
       broken += 1;
     }
   }
-  return { damaged, broken };
+  return { damaged, broken, brokenDetails };
 }
 
 function resolveMatches(state) {
@@ -831,8 +1020,24 @@ function resolveMatches(state) {
     const terrainResult = damageTerrainFromMatches(state, matches);
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
+    terrainResult.brokenDetails.forEach(({ terrainId }) => advanceObjectives(state, "terrain", terrainId));
+    for (let index = 0; index < state.cave.layers.gimmick.length; index += 1) {
+      const gimmickId = state.cave.layers.gimmick[index];
+      if (!gimmickId || state.activatedGimmicks.has(index)) continue;
+      const affected = matches.has(index) || neighborsOf(state.cave, index).some((neighbor) => matches.has(neighbor));
+      if (affected) {
+        state.activatedGimmicks.add(index);
+        advanceObjectives(state, "gimmick", gimmickId);
+      }
+    }
     matches.forEach((index) => {
-      if (state.cave.layers.block[index] === state.cave.targetType) state.targetCleared += 1;
+      const blockId = state.cave.layers.block[index];
+      if (blockId) advanceObjectives(state, "block", blockId);
+      const itemId = state.cave.layers.item[index];
+      if (itemId) {
+        advanceObjectives(state, "item", itemId);
+        state.cave.layers.item[index] = null;
+      }
       state.cave.layers.block[index] = null;
       removed += 1;
     });
@@ -861,6 +1066,103 @@ function hasPossibleSwap(cave) {
     }
   }
   return false;
+}
+
+function scoreAutoMove(state, matches) {
+  let score = matches.size;
+  state.cave.objectives.forEach((objective) => {
+    if (objective.layer === "block") {
+      matches.forEach((index) => { if (state.cave.layers.block[index] === objective.targetId) score += 6; });
+    } else if (objective.layer === "item") {
+      matches.forEach((index) => { if (state.cave.layers.item[index] === objective.targetId) score += 10; });
+    } else if (objective.layer === "terrain") {
+      state.cave.layers.terrain.forEach((terrainId, index) => {
+        if (terrainId !== objective.targetId) return;
+        const reaction = state.cave.terrainRules?.[terrainId]?.reaction;
+        if (matches.has(index) || (reaction === "adjacent" && neighborsOf(state.cave, index).some((neighbor) => matches.has(neighbor)))) score += 8;
+      });
+    } else if (objective.layer === "gimmick") {
+      state.cave.layers.gimmick.forEach((gimmickId, index) => {
+        if (gimmickId !== objective.targetId || state.activatedGimmicks.has(index)) return;
+        if (matches.has(index) || neighborsOf(state.cave, index).some((neighbor) => matches.has(neighbor))) score += 7;
+      });
+    }
+  });
+  return score;
+}
+
+function listPossibleSwaps(state) {
+  const cave = state.cave;
+  const blocks = cave.layers.block;
+  const candidates = [];
+  for (let first = 0; first < blocks.length; first += 1) {
+    if (!blocks[first]) continue;
+    const x = first % cave.width;
+    const others = [];
+    if (x < cave.width - 1) others.push(first + 1);
+    if (first + cave.width < blocks.length) others.push(first + cave.width);
+    for (const second of others) {
+      if (!blocks[second] || blocks[first] === blocks[second]) continue;
+      [blocks[first], blocks[second]] = [blocks[second], blocks[first]];
+      const matches = findMatches(cave);
+      if (matches.size) candidates.push({ first, second, score: scoreAutoMove(state, matches) });
+      [blocks[first], blocks[second]] = [blocks[second], blocks[first]];
+    }
+  }
+  return candidates;
+}
+
+function createPlayState(cave, seedSuffix) {
+  const copy = deepCopy(cave);
+  return {
+    cave: copy,
+    movesLeft: copy.moveLimit,
+    selectedIndex: null,
+    status: "playing",
+    message: "교환할 첫 번째 블록을 선택하세요.",
+    random: seededRandom(`${copy.randomSeed}|${seedSuffix}`),
+    terrainHits: Array(copy.width * copy.height).fill(0),
+    activatedGimmicks: new Set(),
+    objectiveProgress: createObjectiveProgress(copy),
+    flowTurn: 0,
+  };
+}
+
+function runAutoGame(cave, runIndex) {
+  const state = createPlayState(cave, `batch-${runIndex}`);
+  while (state.movesLeft > 0 && !allObjectivesComplete(state)) {
+    const candidates = listPossibleSwaps(state);
+    if (!candidates.length) return { status: "stuck", moves: cave.moveLimit - state.movesLeft };
+    const bestScore = Math.max(...candidates.map((candidate) => candidate.score));
+    const best = candidates.filter((candidate) => candidate.score === bestScore);
+    const chosen = best[Math.floor(state.random() * best.length)];
+    const blocks = state.cave.layers.block;
+    [blocks[chosen.first], blocks[chosen.second]] = [blocks[chosen.second], blocks[chosen.first]];
+    state.movesLeft -= 1;
+    resolveMatches(state);
+  }
+  return { status: allObjectivesComplete(state) ? "won" : "lost", moves: cave.moveLimit - state.movesLeft };
+}
+
+function runBatchSimulation(cave, runs) {
+  const results = [];
+  for (let index = 0; index < runs; index += 1) results.push(runAutoGame(cave, index));
+  const wins = results.filter((result) => result.status === "won");
+  const moves = wins.map((result) => result.moves).sort((a, b) => a - b);
+  const average = moves.length ? moves.reduce((sum, value) => sum + value, 0) / moves.length : 0;
+  const percentile = (ratio) => moves.length ? moves[Math.min(moves.length - 1, Math.floor((moves.length - 1) * ratio))] : 0;
+  const clearRate = Math.round(wins.length / runs * 100);
+  const label = clearRate >= 80 ? "Easy" : clearRate >= 55 ? "Normal" : clearRate >= 30 ? "Hard" : clearRate > 0 ? "Expert" : "Impossible";
+  return {
+    runs,
+    wins: wins.length,
+    stuck: results.filter((result) => result.status === "stuck").length,
+    clearRate,
+    average: Number(average.toFixed(1)),
+    median: percentile(0.5),
+    p90: percentile(0.9),
+    label,
+  };
 }
 
 function playtestCell(index) {
@@ -897,7 +1199,7 @@ function playtestCell(index) {
   state.movesLeft -= 1;
   const resolved = resolveMatches(state);
   state.message = `${resolved.removed}개 제거 · ${resolved.cascade}연쇄 · Terrain 반응 ${resolved.terrainDamaged}회${resolved.terrainBroken ? ` · Terrain ${resolved.terrainBroken}개 파괴` : ""}${resolved.flowMoves ? ` · 우회 흐름 ${resolved.flowMoves}칸` : ""}${resolved.capped ? " · 연쇄 안전 제한 도달" : ""}`;
-  if (state.targetCleared >= state.cave.targetCount) {
+  if (allObjectivesComplete(state)) {
     state.status = "won";
     state.message = `${state.cave.moveLimit - state.movesLeft} Moves로 목표를 달성했습니다. ${state.message}`;
   } else if (state.movesLeft <= 0) {
@@ -919,10 +1221,11 @@ function renderPlaytest() {
   result.className = `simulation-result ${state.status === "won" ? "success" : ["lost", "stuck"].includes(state.status) ? "error" : "warning"}`;
   result.innerHTML = `
     <strong>${state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 종료" : "PLAYTEST 진행 중"}</strong><br>
-    Moves <b>${state.movesLeft}</b> / ${state.cave.moveLimit} · 목표 ${state.cave.targetType} <b>${Math.min(state.targetCleared, state.cave.targetCount)}</b> / ${state.cave.targetCount} · 사용 ${usedMoves}회<br>
+    Moves <b>${state.movesLeft}</b> / ${state.cave.moveLimit} · 사용 ${usedMoves}회<br>
+    ${objectiveProgressHtml(state)}
     Gravity ${state.cave.gravity} · 막힘 우회 ${flowLabels[state.cave.flowRule]}<br>
     ${escapeHtml(state.message)}
-    ${state.cave.layers.gimmick.some(Boolean) ? "<div>※ 3-Match·중력 우회·Terrain 내구도·리필·색상 목표를 계산합니다. 기믹과 아이템은 표시만 됩니다.</div>" : ""}
+    <div>※ Block 제거, Terrain 파괴, Gimmick 활성화, Item 수집 목표를 모두 계산합니다.</div>
   `;
   $("usePlaytestResultButton").hidden = state.status !== "won";
   renderSimulationGrid(state.cave, state.status === "playing");
@@ -931,11 +1234,8 @@ function renderPlaytest() {
 function resetPlaytest() {
   if (!playtestState) return;
   const cave = activeCave();
-  playtestState = {
-    cave: deepCopy(cave), movesLeft: cave.moveLimit, targetCleared: 0, selectedIndex: null,
-    status: "playing", message: "교환할 첫 번째 블록을 선택하세요.", validation: validateCave(cave),
-    random: seededRandom(`${cave.randomSeed}|playtest`), terrainHits: Array(cave.width * cave.height).fill(0), flowTurn: 0,
-  };
+  playtestState = createPlayState(cave, "playtest");
+  playtestState.validation = validateCave(cave);
   $("usePlaytestResultButton").hidden = true;
   renderPlaytest();
 }
@@ -1100,6 +1400,26 @@ function applyCellToken(layers, index, token, unknownTokens) {
   unknownTokens?.add(String(value));
 }
 
+function adaptExternalObjective(raw, fallbackTarget = "purple", fallbackCount = 1) {
+  const source = raw && typeof raw === "object" ? raw : { target: raw };
+  const rawTarget = valueAt(source, ["targetId", "objectId", "type", "target", "color", "id", "name"], fallbackTarget);
+  let layer = String(valueAt(source, ["layer", "category", "kind"], "")).toLowerCase();
+  if (!ASSETS[layer]) {
+    if (normalizeColor(rawTarget)) layer = "block";
+    else layer = Object.keys(ASSETS).find((candidate) => normalizeAssetId(candidate, rawTarget, null)) || "block";
+  }
+  const targetId = layer === "block" ? (normalizeColor(rawTarget) || "purple") : (normalizeAssetId(layer, rawTarget, null) || ASSETS[layer][0].id);
+  const countModeValue = valueAt(source, ["countMode", "count_mode", "quantityMode"], "manual");
+  return normalizeObjective({
+    id: source.id,
+    layer,
+    targetId,
+    action: valueAt(source, ["action", "condition", "operation"], OBJECTIVE_ACTIONS[layer].action),
+    countMode: String(countModeValue).toLowerCase().includes("auto") ? "auto-map" : "manual",
+    count: valueAt(source, ["count", "amount", "quantity", "required"], fallbackCount),
+  });
+}
+
 function adaptExternalLevel(level, index, format, unknownTokens) {
   const source = level && typeof level === "object" ? level : {};
   const grid = valueAt(source, ["grid", "board", "cells", "tiles", "map.grid", "map.cells", "map.tiles"], []);
@@ -1127,8 +1447,13 @@ function adaptExternalLevel(level, index, format, unknownTokens) {
   const usableBlocks = (Array.isArray(rawUsable) ? rawUsable : String(rawUsable).split(",")).map(normalizeColor).filter(Boolean);
   const targetType = normalizeColor(valueAt(source, ["targetType", "targetColor", "goalColor", "target.color", "goal.color", "objective.color", "objectives.0.color"], typeof target === "string" ? target : "purple")) || "purple";
   const targetCount = valueAt(source, ["targetCount", "goalCount", "collectCount", "target.count", "goal.count", "objective.count", "objectives.0.count"], 1);
+  const rawObjectives = valueAt(source, ["objectives", "targets", "goals"], []);
+  const objectives = Array.isArray(rawObjectives) && rawObjectives.length
+    ? rawObjectives.slice(0, MAX_OBJECTIVES).map((objective) => adaptExternalObjective(objective, targetType, targetCount))
+    : [adaptExternalObjective(target, targetType, targetCount)];
   const moveLimit = valueAt(source, ["moveLimit", "maxMoves", "moves", "turnLimit", "maxTurns"], 20);
-  const parMoves = valueAt(source, ["parMoves", "par", "recommendedMoves", "solutionMoves", "minMoves"], Math.max(1, Math.ceil(Number(targetCount) * 0.8)));
+  const objectiveCount = objectives.reduce((sum, objective) => sum + objective.count, 0);
+  const parMoves = valueAt(source, ["parMoves", "par", "recommendedMoves", "solutionMoves", "minMoves"], Math.max(1, Math.ceil(objectiveCount * 0.8)));
   const testClearMoves = valueAt(source, ["testClearMoves", "clearMoves", "bestMoves", "playtestMoves"], 0);
   return normalizeCave({
     id: valueAt(source, ["id", "uuid", "levelId", "stageId"], crypto.randomUUID()),
@@ -1136,7 +1461,7 @@ function adaptExternalLevel(level, index, format, unknownTokens) {
     width, height, gravity: valueAt(source, ["gravity", "gravityDirection", "direction"], "down"), layers,
     flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "left-first"),
     terrainRules: valueAt(source, ["terrainRules", "terrainBehavior", "terrainBehaviors"], undefined),
-    usableBlocks, targetType, targetCount, moveLimit, parMoves, testClearMoves,
+    usableBlocks, objectives, targetType, targetCount, moveLimit, parMoves, testClearMoves,
     failureBonus: Boolean(valueAt(source, ["failureBonus", "useFailureBonus"], false)),
     note: valueAt(source, ["note", "description", "memo"], ""),
     externalSource: { format, sourceId: valueAt(source, ["id", "levelId", "stageId"], null) },
@@ -1218,11 +1543,11 @@ function bindInputs() {
   $("importFile").addEventListener("change", (event) => importProject(event.target.files[0]));
   $("versionInput").addEventListener("change", (event) => { snapshot(); project.version = event.target.value.trim() || "V0001"; persist(); });
   $("caveName").addEventListener("change", (event) => { snapshot(); activeCave().name = event.target.value.trim() || "Untitled Cave"; renderAll(); persist(); });
-  $("targetType").addEventListener("change", updateRule);
-  $("targetCount").addEventListener("change", updateRule);
+  $("addObjectiveButton").addEventListener("click", addObjective);
   $("moveLimit").addEventListener("change", updateRule);
   $("parMoves").addEventListener("change", updateRule);
   $("testClearMoves").addEventListener("change", updateRule);
+  $("simulationRuns").addEventListener("change", updateRule);
   $("flowRule").addEventListener("change", updateRule);
   $("randomSeed").addEventListener("change", updateRandomSettings);
   $("randomDensity").addEventListener("change", updateRandomSettings);
@@ -1254,13 +1579,13 @@ function updateRandomSettings() {
 
 function updateRule() {
   snapshot(); const cave = activeCave();
-  cave.targetType = $("targetType").value;
-  cave.targetCount = Math.max(1, Number($("targetCount").value));
   cave.moveLimit = Math.max(1, Number($("moveLimit").value));
   cave.parMoves = Math.max(1, Number($("parMoves").value));
   cave.testClearMoves = Math.max(0, Number($("testClearMoves").value || 0));
+  cave.simulationRuns = [10, 30, 100].includes(Number($("simulationRuns").value)) ? Number($("simulationRuns").value) : 30;
   cave.flowRule = FLOW_RULES.includes($("flowRule").value) ? $("flowRule").value : "left-first";
   cave.failureBonus = $("failureBonus").checked;
+  syncLegacyTarget(cave);
   renderDifficultySummary(cave); persist();
 }
 
