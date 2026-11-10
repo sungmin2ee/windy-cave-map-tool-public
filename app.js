@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.2.0";
+const CLIENT_VERSION = "2.2.1";
 const SCHEMA_VERSION = 3;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -256,16 +256,37 @@ function renderPalette() {
   document.querySelectorAll("[data-layer]").forEach((button) => button.classList.toggle("active", button.dataset.layer === activeLayer));
   const assetGrid = $("assetGrid");
   assetGrid.innerHTML = "";
+  const eraseButton = document.createElement("button");
+  eraseButton.className = `asset-card erase-card${activeTool === "eraser" ? " active" : ""}`;
+  eraseButton.innerHTML = `<span class="asset-visual erase-visual">×</span><span>지우기</span>`;
+  eraseButton.title = `현재 ${activeLayer} 레이어만 지웁니다.`;
+  eraseButton.addEventListener("click", () => {
+    if (activeTool === "eraser") {
+      activeTool = "brush";
+      selectedAssets[activeLayer] = null;
+    } else {
+      activeTool = "eraser";
+    }
+    syncToolButtons(); renderPalette();
+  });
+  assetGrid.appendChild(eraseButton);
   ASSETS[activeLayer].forEach((asset) => {
     const button = document.createElement("button");
-    button.className = `asset-card${selectedAssets[activeLayer] === asset.id ? " active" : ""}`;
+    button.className = `asset-card${activeTool !== "eraser" && selectedAssets[activeLayer] === asset.id ? " active" : ""}`;
     const style = activeLayer === "block" ? `background:${COLORS[asset.id]}` : "";
     button.innerHTML = `<span class="asset-visual ${asset.className || ""}" style="${style}">${asset.visual}</span><span>${asset.name}</span>`;
-    button.addEventListener("click", () => { selectedAssets[activeLayer] = asset.id; renderPalette(); });
+    button.addEventListener("click", () => {
+      const isSameSelection = activeTool !== "eraser" && selectedAssets[activeLayer] === asset.id;
+      selectedAssets[activeLayer] = isSameSelection ? null : asset.id;
+      activeTool = "brush";
+      syncToolButtons(); renderPalette();
+    });
     assetGrid.appendChild(button);
   });
   const current = getAsset(activeLayer, selectedAssets[activeLayer]);
-  $("selectedAssetSummary").textContent = `${activeLayer.toUpperCase()} · ${current.name}`;
+  $("selectedAssetSummary").textContent = activeTool === "eraser"
+    ? `${activeLayer.toUpperCase()} · 지우기 (이 레이어만)`
+    : `${activeLayer.toUpperCase()} · ${current?.name || "선택 없음"}`;
   const colors = $("usableColors");
   colors.innerHTML = "";
   Object.entries(COLORS).forEach(([name, color]) => {
@@ -283,6 +304,10 @@ function renderPalette() {
   });
 }
 
+function syncToolButtons() {
+  document.querySelectorAll("[data-tool]").forEach((button) => button.classList.toggle("active", button.dataset.tool === activeTool));
+}
+
 function renderGrid() {
   const cave = activeCave();
   const grid = $("mapGrid");
@@ -296,10 +321,14 @@ function renderGrid() {
     cell.setAttribute("aria-label", cellDescription(cave, index));
     applyCellVisual(cell, cave, index);
     cell.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
       event.preventDefault(); isPainting = true; strokeSnapshotTaken = false;
       editCell(index, activeTool === "fill");
     });
-    cell.addEventListener("pointerenter", () => { if (isPainting && activeTool !== "fill") editCell(index, false); });
+    cell.addEventListener("pointerenter", (event) => {
+      if ((event.buttons & 1) === 0) { isPainting = false; strokeSnapshotTaken = false; return; }
+      if (isPainting && activeTool !== "fill") editCell(index, false);
+    });
     cell.addEventListener("mouseenter", () => showCellStatus(index));
     grid.appendChild(cell);
   }
@@ -321,6 +350,11 @@ function applyCellVisual(cell, cave, index) {
 
 function editCell(index, fillMode) {
   const cave = activeCave();
+  if (activeTool !== "eraser" && !selectedAssets[activeLayer]) {
+    isPainting = false; strokeSnapshotTaken = false;
+    toast("팔레트에서 추가할 항목을 먼저 선택하세요.");
+    return;
+  }
   if (!strokeSnapshotTaken) { snapshot(); strokeSnapshotTaken = true; }
   const value = activeTool === "eraser" ? null : selectedAssets[activeLayer];
   if (fillMode) floodFill(cave, activeLayer, index, value);
@@ -989,10 +1023,14 @@ function importProject(file) {
 }
 
 function bindInputs() {
-  window.addEventListener("pointerup", () => { isPainting = false; strokeSnapshotTaken = false; });
+  const stopPainting = () => { isPainting = false; strokeSnapshotTaken = false; };
+  window.addEventListener("pointerup", stopPainting);
+  window.addEventListener("pointercancel", stopPainting);
+  window.addEventListener("blur", stopPainting);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) stopPainting(); });
   $("toolGroup").addEventListener("click", (event) => {
     const button = event.target.closest("[data-tool]"); if (!button) return;
-    activeTool = button.dataset.tool; document.querySelectorAll("[data-tool]").forEach((node) => node.classList.toggle("active", node === button));
+    activeTool = button.dataset.tool; syncToolButtons(); renderPalette();
   });
   $("layerTabs").addEventListener("click", (event) => {
     const button = event.target.closest("[data-layer]"); if (!button) return;
