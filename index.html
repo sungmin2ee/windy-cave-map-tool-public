@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>Windy Cave Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=5" />
+    <link rel="stylesheet" href="./styles.css?v=11" />
   </head>
   <body>
     <div class="app-shell">
@@ -47,6 +47,11 @@
               </div>
               <button class="icon-button" id="newCaveButton" title="새 Cave">＋</button>
             </div>
+            <label class="cave-search" for="caveSearch">
+              <span class="visually-hidden">레벨 검색</span>
+              <input class="field" id="caveSearch" type="search" placeholder="레벨 번호 또는 이름 검색" autocomplete="off" />
+            </label>
+            <div class="cave-list-summary" id="caveListSummary"></div>
             <div id="caveList" class="cave-list"></div>
             <div class="cave-actions">
               <button class="button compact" id="duplicateCaveButton">복제</button>
@@ -235,13 +240,7 @@
             <h2>Terrain 반응 규칙</h2>
 
             <label class="field-label" for="terrainRuleType">Terrain 종류</label>
-            <select class="field" id="terrainRuleType">
-              <option value="floor">Floor</option>
-              <option value="wall">Wall</option>
-              <option value="ice">Ice</option>
-              <option value="pit">Pit</option>
-              <option value="conveyor">Conveyor</option>
-            </select>
+            <select class="field" id="terrainRuleType"></select>
 
             <label class="check-field terrain-block-check">
               <input id="terrainBlocksFlow" type="checkbox" />
@@ -291,7 +290,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=8"></script>
+    <script src="./app.js?v=11"></script>
   </body>
 </html>
 
