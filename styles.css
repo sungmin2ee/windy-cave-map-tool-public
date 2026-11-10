@@ -200,6 +200,7 @@ h2 { font-size: 16px; margin-top: 3px; }
 .layer-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .layer-tabs button { padding: 8px 2px; color: #939cad; font-size: 10px; }
 .layer-tabs button.active { color: white; border-color: var(--accent); background: rgba(124, 92, 255, .18); }
+.palette-help { margin: 10px 0 0; color: #7f8999; font-size: 9px; line-height: 1.5; }
 .selected-asset { margin: 12px 0; padding: 10px; border-radius: 8px; background: #0d1016; color: #aeb7c5; font-size: 11px; }
 .asset-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
 .asset-card {
@@ -208,6 +209,9 @@ h2 { font-size: 16px; margin-top: 3px; }
 }
 .asset-card:hover { border-color: #59657a; transform: translateY(-1px); }
 .asset-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(124, 92, 255, .18); }
+.asset-card.erase-card { color: #ff9ba5; border-style: dashed; }
+.asset-card.erase-card.active { border-style: solid; border-color: var(--danger); box-shadow: 0 0 0 2px rgba(255, 95, 109, .16); }
+.erase-visual { background: rgba(255, 95, 109, .12); border: 1px solid rgba(255, 95, 109, .38); color: #ff9ba5; font-weight: 900; }
 .asset-visual { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; font-size: 18px; }
 .asset-card span:last-child { font-size: 9px; color: #8f99a8; max-width: 55px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .color-toggles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 12px; }
