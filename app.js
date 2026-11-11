@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.2";
+const CLIENT_VERSION = "2.7.3";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -871,10 +871,31 @@ function nextCaveNumber() {
   return number;
 }
 
+function parseCaveNumber(input) {
+  const value = input.trim();
+  const number = Number(value);
+  return /^\d+$/.test(value) && Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+
 function addCave() {
-  snapshot();
-  const cave = createCave(nextCaveNumber());
-  project.caves.push(cave); project.activeCaveId = cave.id; renderAll(); persist(); toast("새 Cave를 만들었습니다.");
+  let message = "만들 Cave 번호를 입력하세요.";
+  const suggestedNumber = String(nextCaveNumber());
+  while (true) {
+    const input = window.prompt(message, suggestedNumber);
+    if (input === null) return;
+    const number = parseCaveNumber(input);
+    if (number === null) {
+      message = "Cave 번호는 1 이상의 정수로 입력하세요.";
+      continue;
+    }
+    if (project.caves.some((cave) => cave.number === number)) {
+      message = `Cave ${String(number).padStart(4, "0")}은 이미 있습니다. 다른 번호를 입력하세요.`;
+      continue;
+    }
+    const cave = createCave(number);
+    if (commitCaveSave([...project.caves, cave], cave.id)) toast(`${cave.name}을 만들었습니다.`);
+    return;
+  }
 }
 
 function duplicateCave() {
@@ -888,8 +909,8 @@ function saveCaveAs() {
   const source = activeCave();
   const input = window.prompt("저장할 Cave 번호를 입력하세요.", String(nextCaveNumber()));
   if (input === null) return;
-  const number = Number(input.trim());
-  if (!/^\d+$/.test(input.trim()) || !Number.isSafeInteger(number) || number < 1) {
+  const number = parseCaveNumber(input);
+  if (number === null) {
     toast("Cave 번호는 1 이상의 정수로 입력하세요.");
     return;
   }
@@ -905,14 +926,18 @@ function saveCaveAs() {
   const caves = [...project.caves];
   if (destination) caves[destinationIndex] = copy;
   else caves.push(copy);
-  const next = { ...project, caves, activeCaveId: copy.id };
-  if (!persist(false, next)) return;
+  if (commitCaveSave(caves, copy.id)) toast(`${label}에 저장했습니다.`);
+}
+
+function commitCaveSave(caves, activeCaveId) {
+  const next = { ...project, caves, activeCaveId };
+  if (!persist(false, next)) return false;
   snapshot();
   project = next;
   caveSearchQuery = "";
   $("caveSearch").value = "";
   renderAll();
-  toast(`${label}에 저장했습니다.`);
+  return true;
 }
 
 function deleteCave() {
