@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.40";
+const CLIENT_VERSION = "2.7.41";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2372,7 +2372,7 @@ function exportProject() {
 
 function describePatchChanges(previous, cave) {
   const groups = [
-    ["보드 배치", ["layers", "excludedCells", "width", "height"]],
+    ["보드 배치", ["layers", "excludedCells", "width", "height", "initialPieceTypes", "initialPieceDefinitions"]],
     ["클리어 목표", ["objectives", "targetType", "targetCount"]],
     ["이동 횟수", ["moveLimit", "parMoves", "testClearMoves"]],
   ];
@@ -3434,6 +3434,7 @@ function ddungInitialPiece(tile) {
 
 function initialPieceAt(cave, index) {
   const type = cave.initialPieceTypes?.[index];
+  if (cave.initialPieceTypes && Object.hasOwn(cave.initialPieceTypes, index) && type == null) return null;
   if (type) {
     const declared = cave.initialPieceDefinitions?.find((entry) => entry.id === type);
     return { type, symbol: declared?.symbol || "✦", name: declared?.name };
@@ -3472,9 +3473,67 @@ function describeCellProperties(cave, index) {
   return fields.join("\n");
 }
 
+const EDITABLE_INITIAL_PIECES = [
+  { id: "horizontal", name: "가로", symbol: "↔" },
+  { id: "vertical", name: "세로", symbol: "↕" },
+  { id: "bomb", name: "폭탄", symbol: "✹" },
+  { id: "bee", name: "벌", symbol: "◆" },
+  { id: "rainbow", name: "오색", symbol: "✦" },
+];
+
 function inspectCell(index) {
-  $("cellInspectorText").textContent = describeCellProperties(activeCave(), index);
-  $("cellInspector").showModal();
+  const cave = activeCave();
+  const dialog = $("cellInspector");
+  const details = $("cellInspectorText");
+  const form = $("initialPieceForm");
+  const color = $("initialPieceColor");
+  const type = $("initialPieceType");
+  details.textContent = describeCellProperties(cave, index);
+  form.hidden = isBarrier(cave, index);
+  form.onsubmit = null;
+  if (!form.hidden) {
+    const currentColor = cave.layers.block[index];
+    const current = initialPieceAt(cave, index);
+    const definitions = new Map(EDITABLE_INITIAL_PIECES.map((entry) => [entry.id, entry]));
+    for (const entry of cave.initialPieceDefinitions || []) definitions.set(entry.id, entry);
+    if (current && !definitions.has(String(current.type))) {
+      const id = String(current.type);
+      definitions.set(id, { id, name: current.name || "기존 타입 " + id, symbol: current.symbol });
+    }
+    color.replaceChildren(new Option("블록 없음", ""));
+    for (const id of new Set([...(project.paletteAssets.block || []), ...Object.keys(COLORS), currentColor].filter(Boolean))) {
+      color.add(new Option(getAsset("block", id)?.name || id, id));
+    }
+    color.value = currentColor || "";
+    type.replaceChildren(new Option("일반 블록 · 특수 타입 해제", ""));
+    for (const entry of definitions.values()) type.add(new Option(entry.symbol + " " + entry.name, entry.id));
+    type.value = current ? String(current.type) : "";
+    const refresh = () => {
+      $("initialPieceApply").disabled = Boolean(type.value && !color.value);
+    };
+    form.onchange = refresh;
+    refresh();
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const definition = definitions.get(type.value);
+      if (definition && !color.value) return;
+      snapshot();
+      cave.layers.block[index] = color.value || null;
+      cave.initialPieceTypes ??= {};
+      cave.initialPieceTypes[index] = definition?.id ?? null;
+      if (definition) {
+        cave.initialPieceDefinitions ??= [];
+        if (!cave.initialPieceDefinitions.some((entry) => entry.id === definition.id)) cave.initialPieceDefinitions.push(definition);
+      }
+      project.paletteAssets = collectPaletteAssets(project.caves, project.paletteAssets);
+      cave.testClearMoves = 0;
+      dialog.close();
+      renderAll();
+      persist();
+      toast("초기 피스 설정을 적용했습니다.");
+    };
+  }
+  dialog.showModal();
 }
 
 function showCellStatus(index) {
