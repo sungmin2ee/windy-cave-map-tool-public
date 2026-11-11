@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.19";
+const CLIENT_VERSION = "2.7.20";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2239,6 +2239,58 @@ function buildPatch(baseData) {
   return { payload, baseCaves, base };
 }
 
+function patchCellChanges(previous, cave, x, y) {
+  const read = (board, layer) => board.layers[layer][y * board.width + x] ?? null;
+  const exists = (board) => x < board.width && y < board.height;
+  const state = (board) => !exists(board) ? "보드 밖" : isExcluded(board, y * board.width + x) ? "비활성" : "활성";
+  const changes = [];
+  if (state(previous) !== state(cave)) changes.push(["칸 상태", state(previous), state(cave)]);
+  for (const layer of Object.keys(cave.layers)) {
+    const before = exists(previous) ? read(previous, layer) : null;
+    const after = exists(cave) ? read(cave, layer) : null;
+    if (before !== after) changes.push([layer, before ?? "비어 있음", after ?? "비어 있음"]);
+  }
+  return changes;
+}
+
+function renderPatchBoard(previous, cave) {
+  const panel = $("patchBoardPanel");
+  const grid = $("patchBoardGrid");
+  const detail = $("patchCellDetail");
+  const width = Math.max(previous.width, cave.width);
+  const height = Math.max(previous.height, cave.height);
+  grid.style.gridTemplateColumns = `repeat(${width}, 28px)`;
+  grid.replaceChildren();
+  panel.hidden = false;
+  let count = 0;
+  let firstChanged = null;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const changes = patchCellChanges(previous, cave, x, y);
+      const cell = document.createElement(changes.length ? "button" : "span");
+      cell.className = "patch-board-cell";
+      if (changes.length) {
+        count++;
+        firstChanged ??= cell;
+        cell.type = "button";
+        cell.textContent = "•";
+        cell.setAttribute("aria-label", `열 ${x + 1}, 행 ${y + 1} 변경 내용`);
+        cell.addEventListener("click", () => {
+          grid.querySelector('[aria-pressed="true"]')?.setAttribute("aria-pressed", "false");
+          cell.setAttribute("aria-pressed", "true");
+          detail.textContent = `열 ${x + 1}, 행 ${y + 1}\n` +
+            changes.map(([layer, before, after]) => `${layer}  ${before} → ${after}`).join("\n");
+        });
+        cell.setAttribute("aria-pressed", "false");
+      } else cell.setAttribute("aria-hidden", "true");
+      grid.appendChild(cell);
+    }
+  }
+  $("patchBoardTitle").textContent = `Cave ${cave.number} · ${cave.name} · 변경 ${count}칸`;
+  detail.textContent = "바뀐 칸이 없습니다.";
+  firstChanged?.click();
+}
+
 async function exportPatch(file) {
   if (!file) return;
   try {
@@ -2246,15 +2298,30 @@ async function exportPatch(file) {
     const dialog = $("patchPreview");
     const rows = $("patchPreviewRows");
     rows.replaceChildren();
+    $("patchBoardPanel").hidden = true;
     const counts = { "추가": 0, "수정": 0, "삭제": 0 };
-    const append = (status, cave, details) => {
+    const append = (status, cave, details, previous) => {
       counts[status]++;
       const row = rows.insertRow();
-      for (const value of [status, cave.number, cave.name, details]) row.insertCell().textContent = value;
+      row.insertCell().textContent = status;
+      row.insertCell().textContent = cave.number;
+      const name = row.insertCell();
+      if (previous) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "button ghost";
+        button.textContent = cave.name;
+        button.addEventListener("click", () => {
+          renderPatchBoard(previous, cave);
+          $("patchBoardPanel").scrollIntoView({ block: "nearest" });
+        });
+        name.appendChild(button);
+      } else name.textContent = cave.name;
+      row.insertCell().textContent = details;
     };
     for (const cave of payload.patch.upsertCaves) {
       const previous = baseCaves.get(String(cave.id));
-      append(previous ? "수정" : "추가", cave, previous ? describePatchChanges(previous, cave) : "새 Cave");
+      append(previous ? "수정" : "추가", cave, previous ? describePatchChanges(previous, cave) : "새 Cave", previous);
     }
     for (const id of payload.patch.removeCaveIds) append("삭제", baseCaves.get(id), "Cave 삭제");
     const assetsChanged = ["paletteAssets", "assetDefinitions"].some((key) => JSON.stringify(base[key]) !== JSON.stringify(payload[key]));

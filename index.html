@@ -32,6 +32,12 @@
       #assetReplaceCaves { max-height: 8rem; overflow: auto; }
     #assetReplaceCaves label { display: block; }
     #assetReplaceRange { width: auto; max-width: 100%; }
+      #patchBoardPanel { padding: 12px; }
+    #patchBoardGrid { display: grid; gap: 3px; overflow: auto; max-height: 40vh; }
+    .patch-board-cell { box-sizing: border-box; height: 28px; border: 1px solid #4e5064; border-radius: 4px; background: #202333; }
+    button.patch-board-cell { cursor: pointer; color: #15111d; background: #ffd166; }
+    button.patch-board-cell[aria-pressed="true"] { outline: 2px solid white; outline-offset: -3px; }
+    #patchCellDetail { white-space: pre-line; overflow-wrap: anywhere; }
   </style>
   </head>
   <body>
@@ -361,6 +367,11 @@
           <tbody id="patchPreviewRows"></tbody>
         </table>
       </div>
+      <section id="patchBoardPanel" hidden>
+        <h3 id="patchBoardTitle"></h3>
+        <div id="patchBoardGrid"></div>
+        <p id="patchCellDetail" role="status"></p>
+      </section>
       <form class="dialog-footer" method="dialog">
         <button class="button ghost">취소</button>
         <button type="button" class="button" id="patchPreviewDownload">패치 다운로드</button>
@@ -411,7 +422,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=37"></script>
+    <script src="./app.js?v=38"></script>
   </body>
 </html>
 
