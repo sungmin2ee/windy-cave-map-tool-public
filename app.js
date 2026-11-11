@@ -2250,7 +2250,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
   const newPieces = new Set();
   let protectedCells = new Set();
   while (matches.size && cascade < 20) {
-    const expanded = expandSpecialHits(state, matches, protectedCells);
+    const expanded = expandSpecialHits(state, matches, protectedCells, state.beeRandom);
     const created = createdSpecials(state.cave, runs, preferred, matches);
     const triggered = [...expanded.hits].some((index) => !isBarrier(state.cave, index) && specialEffect(state.cave, state.cave.playtestPieces[index]));
     matches = expanded.hits;
@@ -2389,7 +2389,7 @@ function listPossibleSwaps(state, firstOnly = false) {
 const SPECIAL_EFFECTS = {
   row: "가로 한 줄", column: "세로 한 줄", area: "주변 3×3", cross: "가로·세로 십자", color: "같은 색 전체",
   target: "목표 타일 1칸 제거",
-  fish: "물고기 · 목표 한 칸 타격",
+  fish: "벌 · 목표 한 칸 타격",
 };
 
 const SCRIPT_EFFECT_LABEL = "직접 작성한 스크립트";
@@ -2479,33 +2479,27 @@ function findRemainingTerrainTarget(state, origin, selected) {
   return nearest;
 }
 
-function findFishTarget(state, origin, hits, protectedCells) {
+function findBeeTarget(state, hits, protectedCells, random) {
   const { cave } = state;
   const goals = cave.objectives.filter((objective, index) => {
     const progress = state.objectiveProgress[index];
     return !state.goalLimitations[index] && progress.current < progress.target;
   });
-  const x = origin % cave.width;
-  const y = Math.floor(origin / cave.width);
-  let best = -1;
-  let bestScore = Infinity;
+  const targets = [];
+  const fallback = [];
   for (let index = 0; index < cave.layers.block.length; index += 1) {
     if (hits.has(index) || protectedCells.has(index) || isExcluded(cave, index)) continue;
-    const goal = goals.some((objective) => {
+    if (goals.some((objective) => {
       const id = cave.layers[objective.layer][index];
       return id && matchesObjectiveAsset(objective, id);
-    });
-    if (!goal && (!cave.layers.block[index] || isBarrier(cave, index))) continue;
-    const distance = Math.abs(index % cave.width - x) + Math.abs(Math.floor(index / cave.width) - y);
-    const score = distance + (goal ? 0 : cave.width + cave.height);
-    if (score >= bestScore) continue;
-    best = index;
-    bestScore = score;
+    })) targets.push(index);
+    else if (cave.layers.block[index] && !isBarrier(cave, index)) fallback.push(index);
   }
-  return best;
+  const candidates = targets.length ? targets : fallback;
+  return candidates.length ? candidates[Math.floor(random() * candidates.length)] : -1;
 }
 
-function expandSpecialHits(state, matches, protectedCells = new Set()) {
+function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom = () => 0.5) {
   const { cave } = state;
   const hits = new Set(matches);
   const targetedTerrain = new Set();
@@ -2520,7 +2514,7 @@ function expandSpecialHits(state, matches, protectedCells = new Set()) {
     const commands = effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }];
     for (const { op, radius = 1, cells } of commands) {
       if (op === "fish") {
-        const target = findFishTarget(state, index, hits, protectedCells);
+        const target = findBeeTarget(state, hits, protectedCells, beeRandom);
         if (target >= 0) hits.add(target);
         continue;
       }
@@ -2691,6 +2685,7 @@ function createPlayState(cave, seedSuffix, manual = false) {
     random: seededRandom(`${copy.randomSeed}|${seedSuffix}`),
     shuffleRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|shuffle`),
     shuffleCount: 0,
+    beeRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|bee`),
     terrainHits: Array(copy.width * copy.height).fill(0),
     gimmickHits: Array(copy.width * copy.height).fill(0),
     activatedGimmicks: new Set(),
@@ -4270,7 +4265,7 @@ function ddungCellSource(cave, index) {
 }
 
 // Display symbols distinguish original piece types without assigning gameplay effects.
-const DDUNG_PIECE_ICONS = Object.freeze({ 1: "◆", 2: "▲", 3: "■", 6: "✚", 8: "✦" });
+const DDUNG_PIECE_ICONS = Object.freeze({ 1: "◆", 2: "▲", 3: "■", 6: "✚", 8: "🐝" });
 
 function ddungInitialPiece(tile) {
   if (!tile) return null;
@@ -4290,7 +4285,7 @@ function initialPieceAt(cave, index) {
   }
   const original = ddungInitialPiece(ddungCellSource(cave, index)?.tile);
   const symbol = DDUNG_PIECE_ICONS[original?.type];
-  return symbol ? { ...original, symbol } : null;
+  return symbol ? { ...original, symbol, ...(original.type === 8 ? { name: "벌" } : {}) } : null;
 }
 
 function describeCellProperties(cave, index) {
