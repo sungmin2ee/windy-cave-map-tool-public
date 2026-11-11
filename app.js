@@ -1527,6 +1527,12 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     }
   }
 
+  for (let index = 0; index < cave.width; index += 1) {
+    if (!isBarrier(cave, index) && !cave.layers.gimmick[index]) {
+      cave.layers.gimmick[index] = "spawner";
+    }
+  }
+
   const free = cave.layers.block.flatMap((_, index) =>
     !isBarrier(cave, index) && Object.values(cave.layers).every((layer) => !layer[index]) ? [index] : []
   );
@@ -1604,6 +1610,7 @@ function renderDifficultyCandidates(source, candidates) {
       if (activeCave() !== source) return;
       snapshot();
       Object.assign(source, cave);
+      project.paletteAssets = collectPaletteAssets(project.caves, project.paletteAssets, project.assetDefinitions);
       $("difficultyDialog").close();
       renderAll();
       persist();
