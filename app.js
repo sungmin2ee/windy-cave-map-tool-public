@@ -133,17 +133,6 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
   const width = 10;
   const height = 12;
   const layers = emptyLayers(width * height);
-  for (let x = 0; x < width; x += 1) {
-    layers.terrain[x] = "wall";
-    layers.terrain[(height - 1) * width + x] = "wall";
-  }
-  for (let y = 0; y < height; y += 1) {
-    layers.terrain[y * width] = "wall";
-    layers.terrain[y * width + width - 1] = "wall";
-  }
-  [23, 24, 25, 34, 35, 44].forEach((i, idx) => { layers.block[i] = ["red", "yellow", "blue", "green", "orange", "purple"][idx]; });
-  layers.gimmick[width + 1] = "teleport-a";
-  layers.gimmick[(height - 2) * width + width - 2] = "teleport-b";
   return {
     id: crypto.randomUUID(), name, width, height, gravity: "down", layers,
     usableBlocks: Object.keys(COLORS),
@@ -153,17 +142,17 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
     simulationRuns: 30,
     randomSeed: `CAVE-${String(number).padStart(4, "0")}`, randomDensity: 100,
     flowRule: "left-first", terrainRules: deepCopy(DEFAULT_TERRAIN_RULES),
-    failureBonus: true, note: "컬러 블록을 정리하고 출구까지 도달하는 기본 Cave입니다.",
+    failureBonus: true, note: "",
   };
 }
 
-const defaultProject = () => ({ version: "V0001", caves: [createCave(1)], activeCaveId: null });
+const defaultProject = () => ({ version: "V0001", paletteAssets: {}, caves: [createCave(1)], activeCaveId: null });
 let project = loadProject();
 if (!project.activeCaveId || !project.caves.some((c) => c.id === project.activeCaveId)) project.activeCaveId = project.caves[0].id;
 
 let activeLayer = "terrain";
 let activeTool = "brush";
-let selectedAssets = { terrain: "floor", block: "red", gimmick: "teleport-a", item: "coin" };
+let selectedAssets = { terrain: null, block: null, gimmick: null, item: null };
 let undoStack = [];
 let redoStack = [];
 let isPainting = false;
@@ -239,13 +228,27 @@ function normalizeObjectives(source) {
   return values.slice(0, MAX_OBJECTIVES).map((objective) => normalizeObjective(objective));
 }
 
+function collectPaletteAssets(caves, saved = {}) {
+  const used = Object.fromEntries(Object.keys(ASSETS).map((layer) => [
+    layer, new Set(Array.isArray(saved?.[layer]) ? saved[layer] : []),
+  ]));
+  for (const cave of caves) {
+    for (const layer of Object.keys(ASSETS)) {
+      for (const id of cave.layers[layer]) used[layer].add(id);
+    }
+  }
+  return Object.fromEntries(Object.entries(ASSETS).map(([layer, assets]) => [
+    layer, assets.filter((asset) => used[layer].has(asset.id)).map((asset) => asset.id),
+  ]));
+}
+
 function normalizeProject(data) {
   const source = data && typeof data === "object" ? data : {};
   const rawCaves = Array.isArray(source.caves) ? source.caves : [];
   const caves = rawCaves.map((cave, index) => normalizeCave(cave, index));
   if (!caves.length) caves.push(createCave(1));
   const activeCaveId = caves.some((cave) => cave.id === source.activeCaveId) ? source.activeCaveId : caves[0].id;
-  return { ...source, version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId };
+  return { ...source, version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, paletteAssets: collectPaletteAssets(caves, source.paletteAssets) };
 }
 
 function normalizeCave(data, index = 0) {
@@ -551,7 +554,17 @@ function renderPalette() {
     syncToolButtons(); renderPalette();
   });
   assetGrid.appendChild(eraseButton);
-  ASSETS[activeLayer].forEach((asset) => {
+  const layer = activeLayer;
+  const paletteIds = project.paletteAssets[layer] || [];
+  if (!paletteIds.includes(selectedAssets[layer])) selectedAssets[layer] = null;
+
+  const addAsset = $("addPaletteAsset");
+  const available = ASSETS[layer].filter((asset) => !paletteIds.includes(asset.id));
+  addAsset.replaceChildren(new Option("오브젝트 종류 추가", ""));
+  for (const asset of available) addAsset.add(new Option(asset.name, asset.id));
+  addAsset.disabled = available.length === 0;
+
+  ASSETS[layer].filter((asset) => paletteIds.includes(asset.id)).forEach((asset) => {
     const button = document.createElement("button");
     button.className = `asset-card${activeTool !== "eraser" && selectedAssets[activeLayer] === asset.id ? " active" : ""}`;
     const style = activeLayer === "block" ? `background:${COLORS[asset.id]}` : "";
@@ -1792,6 +1805,17 @@ function bindInputs() {
   window.addEventListener("pointercancel", stopPainting);
   window.addEventListener("blur", stopPainting);
   document.addEventListener("visibilitychange", () => { if (document.hidden) stopPainting(); });
+  $("addPaletteAsset").addEventListener("change", (event) => {
+    const id = event.target.value;
+    if (!getAsset(activeLayer, id)) return;
+    snapshot();
+    project.paletteAssets[activeLayer] = [...(project.paletteAssets[activeLayer] || []), id];
+    selectedAssets[activeLayer] = id;
+    activeTool = "brush";
+    if (activeLayer === "terrain") selectedTerrainRule = id;
+    renderAll();
+    persist();
+  });
   $("toolGroup").addEventListener("click", (event) => {
     const button = event.target.closest("[data-tool]"); if (!button) return;
     activeTool = button.dataset.tool; syncToolButtons(); renderPalette();
