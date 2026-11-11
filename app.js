@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.33";
+const CLIENT_VERSION = "2.7.34";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2964,16 +2964,47 @@ function adaptImportedJson(data) {
   return { project: next, format, unknownTokens: [...unknownTokens] };
 }
 
+function previewImport(imported, filename) {
+  const dialog = $("importPreview");
+  const caves = imported.project.caves;
+  const sizes = new Map();
+  const pieces = new Set();
+  for (const cave of caves) {
+    const size = `${cave.width} × ${cave.height}`;
+    sizes.set(size, (sizes.get(size) || 0) + 1);
+    for (let index = 0; index < cave.width * cave.height; index++) {
+      if (!cave.layers.block[index]) continue;
+      const piece = initialPieceAt(cave, index);
+      if (piece && (!piece.color || piece.color === cave.layers.block[index])) {
+        pieces.add(piece.name || String(piece.type));
+      }
+    }
+  }
+  $("importPreviewFile").textContent = filename;
+  $("importPreviewLevels").textContent = `${caves.length}개`;
+  $("importPreviewSizes").textContent = [...sizes].map(([size, count]) => sizes.size === 1 ? size : `${size} (${count}개)`).join(", ");
+  $("importPreviewPieces").textContent = pieces.size ? `${pieces.size}종 · ${[...pieces].join(", ")}` : "없음";
+  const unknown = imported.unknownTokens;
+  $("importPreviewUnknown").textContent = unknown.length ? `${unknown.length}종 · ${unknown.join(", ")}` : "없음";
+  dialog.returnValue = "";
+  dialog.addEventListener("close", () => {
+    if (dialog.returnValue !== "import") return;
+    snapshot();
+    project = imported.project;
+    renderAll();
+    persist();
+    toast(`${imported.format}에서 Cave ${caves.length}개를 가져왔습니다.`);
+  }, { once: true });
+  dialog.showModal();
+}
+
 function importProject(file) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
     try {
       const imported = adaptImportedJson(JSON.parse(reader.result));
-      snapshot(); project = imported.project;
-      renderAll(); persist();
-      const unknown = imported.unknownTokens.length ? ` · 미매핑 값 ${imported.unknownTokens.length}개 제외` : "";
-      toast(`${imported.format}에서 Cave ${project.caves.length}개를 가져왔습니다${unknown}.`);
+      previewImport(imported, file.name);
     } catch (error) { toast(error.message || "지원되는 퍼즐 JSON이 아닙니다."); }
     $("importFile").value = "";
   };
