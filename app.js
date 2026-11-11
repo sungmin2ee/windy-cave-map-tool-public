@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.15";
+const CLIENT_VERSION = "2.7.16";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -704,7 +704,7 @@ function renderPalette() {
   $("selectedAssetSummary").textContent = activeTool === "eraser"
     ? `${activeLayer.toUpperCase()} · 지우기 (이 레이어만)`
     : `${activeLayer.toUpperCase()} · ${current?.name || "선택 없음"}`;
-  $("deleteSelectedAsset").hidden = !current || activeTool === "eraser";
+  $("deleteSelectedAsset").hidden = $("openAssetReplace").hidden = !current || activeTool === "eraser";
   const colors = $("usableColors");
   colors.innerHTML = "";
   const blockIds = project.paletteAssets.block || [];
@@ -829,6 +829,38 @@ function syncToolButtons() {
 }
 
 let assetLocator = null;
+let assetReplacement = null;
+
+function openAssetReplacement() {
+  const layer = activeLayer;
+  const id = selectedAssets[layer];
+  const cave = activeCave();
+  if (!id || !cave.layers[layer].includes(id)) return toast("현재 Cave에 배치된 오브젝트를 선택하세요.");
+  const alternatives = paletteOptions(layer).filter((asset) => asset.id !== id);
+  if (!alternatives.length) return toast("같은 레이어에 교체할 오브젝트를 먼저 추가하세요.");
+  const select = $("assetReplaceTarget");
+  select.replaceChildren(...alternatives.map(({ name, id }) => new Option(name, id)));
+  assetReplacement = { caveId: cave.id, layer, id };
+  renderGrid();
+  select.focus();
+}
+
+function applyAssetReplacement(event) {
+  event.preventDefault();
+  const cave = activeCave();
+  const change = assetReplacement;
+  const target = $("assetReplaceTarget").value;
+  if (!change || change.caveId !== cave.id || target === change.id ||
+      !project.paletteAssets[change.layer].includes(target)) return;
+  const cells = cave.layers[change.layer];
+  if (!cells.includes(change.id)) return;
+  snapshot();
+  cave.layers[change.layer] = cells.map((id) => id === change.id ? target : id);
+  cave.testClearMoves = 0;
+  assetReplacement = null;
+  renderAll();
+  persist();
+}
 
 function locatedAssetCells(cave) {
   if (assetLocator?.caveId !== cave.id) return [];
@@ -848,6 +880,17 @@ function stepLocatedAsset(delta) {
 function renderGrid() {
   const cave = activeCave();
   const grid = $("mapGrid");
+  if (assetReplacement && assetReplacement.caveId !== cave.id) assetReplacement = null;
+  const replacement = assetReplacement;
+  $("assetReplaceForm").hidden = !replacement;
+  if (replacement) {
+    const count = cave.layers[replacement.layer].filter((id) => id === replacement.id).length;
+    $("assetReplaceApply").textContent = `${count}칸 교체`;
+    $("assetReplaceApply").disabled = count === 0;
+    const goalUsed = cave.objectives.some((goal) => goal.layer === replacement.layer && matchesObjectiveAsset(goal, replacement.id));
+    $("assetReplaceStatus").textContent = getAsset(replacement.layer, replacement.id).name +
+      (goalUsed ? " · 기존 오브젝트가 클리어 목표에 포함돼 있습니다. 목표 설정을 확인하세요." : "");
+  }
   const located = locatedAssetCells(cave);
   const current = assetLocator?.caveId === cave.id ? assetLocator : null;
   if (current && !located.includes(current.index)) current.index = located[0];
@@ -869,6 +912,7 @@ function renderGrid() {
     cell.setAttribute("role", "button");
     cell.setAttribute("aria-label", cellDescription(cave, index));
     applyCellVisual(cell, cave, index);
+    if (replacement && cave.layers[replacement.layer][index] === replacement.id) cell.classList.add("asset-replace-preview");
     if (locatedSet.has(index)) {
       cell.classList.add("asset-located");
       if (current.index === index) cell.classList.add("asset-located-current");
@@ -2611,6 +2655,9 @@ function bindInputs() {
   $("assetLocatorPrev").addEventListener("click", () => stepLocatedAsset(-1));
   $("assetLocatorNext").addEventListener("click", () => stepLocatedAsset(1));
   $("assetLocatorClose").addEventListener("click", () => { assetLocator = null; renderGrid(); });
+  $("openAssetReplace").addEventListener("click", openAssetReplacement);
+  $("assetReplaceForm").addEventListener("submit", applyAssetReplacement);
+  $("assetReplaceCancel").addEventListener("click", () => { assetReplacement = null; renderGrid(); });
   $("deleteSelectedAsset").addEventListener("click", deleteSelectedAsset);
   $("showAssetDefinition").addEventListener("click", () => {
     $("assetDefinitionForm").reset();

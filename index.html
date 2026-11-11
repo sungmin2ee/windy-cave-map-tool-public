@@ -25,6 +25,10 @@
       #assetLocator { padding: 8px; flex-shrink: 0; }
     .map-cell.asset-located { outline: 2px solid #ffd166; outline-offset: -2px; }
     .map-cell.asset-located-current { outline: 3px solid #fff; outline-offset: -3px; }
+      #assetReplaceForm { padding: 8px; flex-shrink: 0; }
+    #assetReplaceStatus { display: block; }
+    #assetReplaceTarget { width: auto; max-width: 100%; }
+    .map-cell.asset-replace-preview { outline: 3px solid #58e3d0; outline-offset: -3px; }
   </style>
   </head>
   <body>
@@ -211,6 +215,13 @@
           </div>
 
           <div class="canvas-stage panel">
+            <form id="assetReplaceForm" hidden>
+              <span id="assetReplaceStatus" role="status"></span>
+              <label for="assetReplaceTarget">교체할 오브젝트</label>
+              <select class="field" id="assetReplaceTarget" required></select>
+              <button type="submit" class="button" id="assetReplaceApply">교체</button>
+              <button type="button" class="button ghost" id="assetReplaceCancel">취소</button>
+            </form>
             <div id="assetLocator" hidden>
               <span id="assetLocatorStatus" role="status"></span>
               <button type="button" class="button ghost" id="assetLocatorPrev">이전 칸</button>
@@ -269,6 +280,7 @@
             <div class="asset-grid" id="assetGrid"></div>
             <button type="button" class="button ghost" id="showAssetDefinition">오브젝트 만들기</button>
             <button type="button" class="button ghost" id="deleteSelectedAsset" hidden>선택 오브젝트 삭제</button>
+            <button type="button" class="button ghost" id="openAssetReplace" hidden>현재 Cave 일괄 교체</button>
             <form id="assetDefinitionForm" hidden>
               <label class="field-label" for="assetDefinitionName">오브젝트 이름</label>
               <input class="field" id="assetDefinitionName" required maxlength="80" />
@@ -377,7 +389,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=33"></script>
+    <script src="./app.js?v=34"></script>
   </body>
 </html>
 
