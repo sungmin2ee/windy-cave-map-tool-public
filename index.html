@@ -227,7 +227,21 @@
               <small>같은 시드·크기·색상이면 같은 결과이며, 시작 3-Match는 만들지 않습니다.</small>
             </div>
 
-            <div class="difficulty-summary" id="difficultySummary" aria-live="polite"></div>
+            <form id="levelSettingsForm">
+          <fieldset>
+            <legend>레벨별 설정</legend>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
+              <label>별 1개 점수<input class="field" id="levelStar1" type="number" min="0" step="1"></label>
+              <label>별 2개 점수<input class="field" id="levelStar2" type="number" min="0" step="1"></label>
+              <label>별 3개 점수<input class="field" id="levelStar3" type="number" min="0" step="1"></label>
+            </div>
+            <label>수동 난이도<select class="field" id="levelDifficulty"><option value="0">하</option><option value="1">중</option><option value="2">상</option></select></label>
+            <label>오브젝트 생성 방식<select class="field" id="levelSpawnMode"><option value="0">랜덤방식</option><option value="1">확률방식 1</option><option value="2">확률방식 2</option></select></label>
+            <button type="submit" class="button ghost">레벨 설정 적용</button>
+            <p id="levelSettingsStatus" role="status"></p>
+          </fieldset>
+        </form>
+        <div class="difficulty-summary" id="difficultySummary" aria-live="polite"></div>
 
             <label class="check-field">
               <input id="failureBonus" type="checkbox" />
@@ -531,7 +545,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=60"></script>
+    <script src="./app.js?v=61"></script>
   </body>
 </html>
 
