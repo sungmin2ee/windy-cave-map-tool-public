@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.8";
+const CLIENT_VERSION = "2.7.9";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1192,7 +1192,19 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = []) 
   }
 }
 
-function showSimulation(playMode) {
+function validationBaselineKey(cave) {
+  return `${STORAGE_KEY}:validation-v1:${cave.id}`;
+}
+
+function readValidationBaseline(cave) {
+  try {
+    return JSON.parse(localStorage.getItem(validationBaselineKey(cave)));
+  } catch {
+    return null;
+  }
+}
+
+function showSimulation(playMode, dialogAlreadyOpen = false) {
   const cave = activeCave();
   const validation = validateCave(cave);
   const blocked = validation.errors.length > 0 || validation.unsupported.length > 0;
@@ -1207,7 +1219,9 @@ function showSimulation(playMode) {
     renderPlaytest();
   } else {
     playtestState = null;
-    const batch = blocked ? null : runBatchSimulation(cave, cave.simulationRuns);
+    const baseline = blocked ? null : readValidationBaseline(cave);
+    const simulationCave = baseline ? { ...cave, randomSeed: baseline.seed } : cave;
+    const batch = blocked ? null : runBatchSimulation(simulationCave, baseline?.runs ?? cave.simulationRuns);
     const objectiveSummary = cave.objectives.map((objective) => `${escapeHtml(objectiveLabel(objective))} × ${resolvedObjectiveCount(cave, objective)}`).join(" · ");
     const result = $("simulationResult");
     result.className = `simulation-result ${blocked ? "error" : validation.warnings.length ? "warning" : "success"}`;
@@ -1219,17 +1233,43 @@ function showSimulation(playMode) {
       ${batch ? `<div class="batch-summary"><span><b>${batch.clearRate}%</b>클리어율 (${batch.wins}/${batch.runs})</span><span><b>${batch.average || "-"}</b>평균 Moves</span><span><b>${batch.median || "-"} / ${batch.p90 || "-"}</b>중앙 / 90%</span></div><div>${batch.runs}회 중 성공 ${batch.wins}회 · 이동 횟수 소진 ${batch.lost}회 · 가능한 매치 없음 ${batch.stuck}회</div><div>목표 우선 휴리스틱 자동 플레이 결과이며 실제 유저 난이도와는 차이가 날 수 있습니다.</div>` : ""}
       ${issueHtml(validation)}
     `;
+    if (batch) {
+      if (baseline) {
+        const comparison = document.createElement("p");
+        comparison.textContent = `기준 → 현재 · 같은 시드 ${batch.runs}회 · 클리어율 ${baseline.clearRate}% → ${batch.clearRate}% · 이동 횟수 소진 ${baseline.lost} → ${batch.lost}회 · 가능한 매치 없음 ${baseline.stuck} → ${batch.stuck}회`;
+        result.appendChild(comparison);
+      }
+      const baselineButton = document.createElement("button");
+      baselineButton.type = "button";
+      baselineButton.className = "button ghost";
+      baselineButton.textContent = baseline ? "비교 기준 지우기" : "비교 기준으로 저장";
+      baselineButton.addEventListener("click", () => {
+        try {
+          const key = validationBaselineKey(cave);
+          if (baseline) localStorage.removeItem(key);
+          else {
+            const { runs, clearRate, lost, stuck } = batch;
+            localStorage.setItem(key, JSON.stringify({ seed: simulationCave.randomSeed, runs, clearRate, lost, stuck }));
+          }
+        } catch {
+          toast("비교 기준을 변경할 수 없습니다.");
+          return;
+        }
+        showSimulation(false, true);
+      });
+      result.appendChild(baselineButton);
+    }
     for (const example of batch?.examples || []) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "button ghost";
       button.textContent = example.status === "lost" ? "이동 횟수 소진 판 다시 플레이" : "매치 없음 판 다시 플레이";
-      button.addEventListener("click", () => startBatchReplay(cave, validation, example));
+      button.addEventListener("click", () => startBatchReplay(simulationCave, validation, example));
       result.appendChild(button);
     }
     renderSimulationGrid(cave, false);
   }
-  $("simulationDialog").showModal();
+  if (!dialogAlreadyOpen) $("simulationDialog").showModal();
 }
 
 function findMatches(cave) {
