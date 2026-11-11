@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.39";
+const CLIENT_VERSION = "2.7.40";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1311,6 +1311,79 @@ function openBoardShapes() {
   $("boardShapeRefresh").onclick = refresh;
   $("boardShapeSymmetry").onchange = refresh;
   $("boardShapePercent").onchange = refresh;
+  refresh();
+  dialog.showModal();
+}
+
+function regionItemCells(cave, firstRow, lastRow, firstColumn, lastColumn) {
+  const cells = [];
+  for (let row = firstRow; row <= lastRow; row++) {
+    for (let column = firstColumn; column <= lastColumn; column++) {
+      const index = (row - 1) * cave.width + column - 1;
+      if (isBarrier(cave, index) || initialPieceAt(cave, index)) continue;
+      if (Object.values(cave.layers).some((layer) => layer[index])) continue;
+      cells.push(index);
+    }
+  }
+  return cells;
+}
+
+function openRegionItems() {
+  const cave = activeCave();
+  const dialog = $("regionItemDialog");
+  const form = $("regionItemForm");
+  const item = $("regionItemType");
+  const status = $("regionItemStatus");
+  const apply = $("regionItemApply");
+  item.replaceChildren();
+  for (const id of project.paletteAssets.item || []) {
+    const asset = getAsset("item", id);
+    if (asset) item.add(new Option(asset.name || id, id));
+  }
+  const bounds = [
+    ["regionFirstRow", cave.height, 1],
+    ["regionLastRow", cave.height, Math.min(3, cave.height)],
+    ["regionFirstColumn", cave.width, 1],
+    ["regionLastColumn", cave.width, Math.min(3, cave.width)],
+  ];
+  for (const [id, max, value] of bounds) {
+    $(id).max = max;
+    $(id).value = value;
+  }
+  $("regionItemCount").max = cave.width * cave.height;
+  $("regionItemCount").value = 1;
+
+  const readCells = () => {
+    if (!form.checkValidity() || !item.value) return [];
+    const [firstRow, lastRow, firstColumn, lastColumn] = bounds.map(([id]) => $(id).valueAsNumber);
+    return regionItemCells(cave, firstRow, lastRow, firstColumn, lastColumn);
+  };
+  const refresh = () => {
+    const available = readCells().length;
+    const count = $("regionItemCount").valueAsNumber;
+    apply.disabled = !item.value || !form.checkValidity() || available < count;
+    status.textContent = item.value
+      ? "배치 가능한 빈 칸 " + available + "개" + (available < count ? " · 요청한 수량을 배치할 수 없습니다." : "")
+      : "먼저 오른쪽 Item 탭에서 오브젝트를 만들어 주세요.";
+  };
+  form.oninput = refresh;
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    const cells = readCells();
+    const count = $("regionItemCount").valueAsNumber;
+    if (!form.checkValidity() || !item.value || cells.length < count) return refresh();
+    snapshot();
+    for (let placed = 0; placed < count; placed++) {
+      const randomIndex = Math.floor(Math.random() * cells.length);
+      const [index] = cells.splice(randomIndex, 1);
+      cave.layers.item[index] = item.value;
+    }
+    cave.testClearMoves = 0;
+    dialog.close();
+    renderAll();
+    persist();
+    toast("구역에 아이템 " + count + "개를 배치했습니다.");
+  };
   refresh();
   dialog.showModal();
 }
@@ -3244,6 +3317,8 @@ function bindInputs() {
   $("resizeButton").addEventListener("click", resizeMap);
   $("randomizeButton").addEventListener("click", randomizeBlocks);
   $("boardShapeButton").addEventListener("click", openBoardShapes);
+  $("regionItemButton").addEventListener("click", openRegionItems);
+  $("regionItemCancel").addEventListener("click", () => $("regionItemDialog").close());
   $("undoButton").addEventListener("click", undo);
   $("redoButton").addEventListener("click", redo);
   $("prevCaveButton").addEventListener("click", () => switchCave(-1));
