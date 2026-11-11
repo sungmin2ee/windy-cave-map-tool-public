@@ -1864,7 +1864,7 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
   $("playtestResetButton").hidden = !canPractice;
   $("usePlaytestResultButton").hidden = true;
   if (canPractice) {
-    playtestState = createPlayState(cave, `playtest-${crypto.randomUUID()}`);
+    playtestState = createPlayState(cave, `playtest-${crypto.randomUUID()}`, true);
     playtestState.validation = validation;
     renderPlaytest();
   } else {
@@ -1921,7 +1921,6 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
     renderSimulationGrid(cave, false);
   }
   if (!dialogAlreadyOpen) $("simulationDialog").showModal();
-  if (canPractice) runAnimatedPlaytest(playtestState);
 }
 
 function findMatches(cave, runs) {
@@ -2534,7 +2533,7 @@ function playSimulationTurn(state, action, captureFrame) {
   else if (!state.movesLeft) state.status = "lost";
 }
 
-function createPlayState(cave, seedSuffix) {
+function createPlayState(cave, seedSuffix, manual = false) {
   const copy = deepCopy(cave);
   copy.layers.block.forEach((id, index) => {
     if (id && ddungBoxDurability(copy, index)) copy.layers.block[index] = null;
@@ -2546,10 +2545,10 @@ function createPlayState(cave, seedSuffix) {
   return {
     cave: copy,
     movesLeft: copy.moveLimit,
-    paused: false,
+    paused: manual,
     selectedIndex: null,
     status: "playing",
-    message: "자동 플레이를 시작합니다.",
+    message: manual ? "교환할 인접 블록 두 개를 클릭하세요." : "자동 플레이를 시작합니다.",
     random: seededRandom(`${copy.randomSeed}|${seedSuffix}`),
     terrainHits: Array(copy.width * copy.height).fill(0),
     gimmickHits: Array(copy.width * copy.height).fill(0),
@@ -2807,7 +2806,8 @@ function togglePlaytestPause() {
   if (!state || state.status !== "playing") return;
   state.paused = !state.paused;
   state.selectedIndex = null;
-  $("playtestPauseButton").textContent = state.paused ? "자동 플레이 계속" : "일시정지";
+  state.message = state.paused ? "교환할 인접 블록 두 개를 클릭하세요." : "자동 플레이 중입니다.";
+  $("playtestPauseButton").textContent = state.paused ? "자동 플레이 시작" : "직접 플레이로 전환";
   if (!state.animating) renderPlaytest();
   if (!state.paused) runAnimatedPlaytest(state);
 }
@@ -2882,7 +2882,7 @@ function renderPlaytest() {
   $("usePlaytestResultButton").hidden = state.status !== "won";
   const pause = $("playtestPauseButton");
   pause.hidden = state.status !== "playing";
-  pause.textContent = state.paused ? "자동 플레이 계속" : "일시정지";
+  pause.textContent = state.paused ? "자동 플레이 시작" : "직접 플레이로 전환";
   renderSimulationGrid(state.cave, state.status === "playing", remainingTargets);
 }
 
@@ -2894,11 +2894,10 @@ function resetPlaytest() {
     return;
   }
   const cave = activeCave();
-  playtestState = createPlayState(cave, `playtest-${crypto.randomUUID()}`);
+  playtestState = createPlayState(cave, `playtest-${crypto.randomUUID()}`, true);
   playtestState.validation = validateCave(cave);
   $("usePlaytestResultButton").hidden = true;
   renderPlaytest();
-  runAnimatedPlaytest(playtestState);
 }
 
 function usePlaytestResult() {

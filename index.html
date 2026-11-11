@@ -588,11 +588,11 @@
         <button class="icon-button" id="closeSimulationButton">×</button>
       </div>
       <div id="simulationResult" class="simulation-result"></div>
-      <div id="playtestGuide" class="playtest-guide" hidden>자동으로 블록을 교환하고 특수 피스를 발동합니다. 특수 피스를 클릭하면 바로 발동합니다. 일시정지 중에는 인접한 일반 블록 두 개를 클릭해 직접 교환할 수 있습니다.</div>
+      <div id="playtestGuide" class="playtest-guide" hidden>인접 블록 두 개를 클릭해 교환하거나 특수 피스를 클릭해 발동하세요. 자동 플레이 시작 버튼으로 모드를 바꿀 수 있습니다.</div>
       <p id="playtestFrameStatus" role="status" style="min-height:1.3em;margin:4px 0;"></p>
       <div id="simulationGrid" class="simulation-grid"></div>
       <div class="dialog-footer">
-        <button class="button" id="playtestPauseButton" hidden>일시정지</button>
+        <button class="button" id="playtestPauseButton" hidden>자동 플레이 시작</button>
         <button class="button" id="playtestResetButton" hidden>다시 시작</button>
         <button class="button primary" id="usePlaytestResultButton" hidden>이 기록을 난이도에 사용</button>
         <button class="button" id="closeSimulationFooterButton">닫기</button>
@@ -634,7 +634,7 @@
         <details style="margin-block: .65rem;">
           <summary style="cursor: pointer; font-weight: 700;">플레이와 검증</summary>
           <ul>
-            <li><strong>Playtest</strong>는 블록 교환과 특수 피스 발동을 자동으로 진행합니다. <strong>일시정지</strong> 중에는 특수 피스를 클릭해 직접 발동할 수 있습니다. 발동에는 이동 1회를 사용합니다. 클리어 기록은 <strong>이 기록을 난이도에 사용</strong>으로 반영할 수 있습니다.</li>
+            <li><strong>Playtest</strong>를 열면 직접 플레이합니다. 인접 블록 두 개를 클릭해 교환하거나 특수 피스를 클릭해 발동하세요. <strong>자동 플레이 시작</strong>을 누르면 현재 보드에서 자동으로 진행하고, <strong>직접 플레이로 전환</strong>을 누르면 이어서 직접 조작할 수 있습니다. 발동에는 이동 1회를 사용합니다. 클리어 기록은 <strong>이 기록을 난이도에 사용</strong>으로 반영할 수 있습니다.</li>
             <li><strong>매치로 특수 피스 생성</strong>을 켜면 가로·세로 4매치에서 해당 방향의 줄 폭탄, 5매치에서 같은 색 제거 피스, T/L자 매치에서 주변 3×3 폭탄, 2×2 매치에서 목표 타일을 제거하는 벌이 생깁니다. 일자 3매치는 블록만 제거합니다. 기존 레벨에서 꺼져 있다면 Playtest 버튼 옆에서 켤 수 있습니다.</li>
             <li>오른쪽 오브젝트 패널의 <strong>특수 타입 관리</strong>에서 현재 Cave의 특수 타입 이름과 발동 효과를 설정합니다. 효과는 해당 Cave에서 같은 타입을 사용하는 모든 피스에 적용됩니다. <strong>칸 속성</strong>에서 블록 색과 등록된 특수 타입을 선택해 배치합니다.</li>
             <li>직접 작성한 스크립트를 선택하면 여러 효과를 조합할 수 있습니다. 예를 들어 <code>[{"op":"row"},{"op":"offsets","cells":[[-1,-1],[1,1]]}]</code>는 피스의 가로 한 줄과 대각선 두 칸을 터뜨립니다. Playtest와 자동 플레이에서 같은 효과가 적용됩니다. 스크립트는 지원 명령을 담은 JSON 배열입니다.</li>
@@ -663,7 +663,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=80"></script>
+    <script src="./app.js?v=81"></script>
   </body>
 </html>
 
