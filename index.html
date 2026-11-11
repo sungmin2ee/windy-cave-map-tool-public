@@ -61,6 +61,8 @@
       height: 48%;
       font-size: clamp(10px, 1.8vmin, 18px);
     }
+    .import-tile-cell { height: 28px; display: grid; place-items: center; background: #202634; border-radius: 4px; }
+  .import-tile-selected { outline: 2px solid #ffcf63; outline-offset: -2px; color: #fff; background: #382b15 !important; font-weight: bold; }
   </style>
   </head>
   <body>
@@ -387,6 +389,13 @@
           <dt>읽지 못한 타일 값</dt><dd id="importPreviewUnknown"></dd>
         </dl>
         <p id="importPreviewOtherWarnings"></p>
+        <section id="importTileBoard" hidden aria-labelledby="importTileTitle">
+          <h3 id="importTileTitle" tabindex="-1"></h3>
+          <p id="importTileValue"></p>
+          <div style="overflow: auto;" tabindex="0" aria-label="임시 보드">
+            <div id="importTileGrid" style="display: grid; gap: 2px; width: max-content; padding: 3px;"></div>
+          </div>
+        </section>
       </div>
       <form method="dialog" class="dialog-footer">
         <button class="button ghost" value="cancel" autofocus>취소</button>
@@ -480,7 +489,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=53"></script>
+    <script src="./app.js?v=54"></script>
   </body>
 </html>
 
