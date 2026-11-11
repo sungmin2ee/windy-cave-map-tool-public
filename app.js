@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.25";
+const CLIENT_VERSION = "2.7.26";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2354,6 +2354,7 @@ async function validatePatchCaves(dialog, entries) {
         edit.textContent = "Cave 편집 열기";
         edit.setAttribute("aria-label", `Cave ${cave.number} 편집 열기`);
         edit.addEventListener("click", () => {
+          lastPatchCaveId = cave.id;
           controller.abort();
           dialog.close();
           $("caveJump").value = String(cave.number);
@@ -2407,14 +2408,14 @@ async function exportPatch(file) {
       row.insertCell().textContent = status;
       row.insertCell().textContent = cave.number;
       const name = row.insertCell();
-      if (previous) {
+      if (status !== "삭제") {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "button ghost";
         button.textContent = cave.name;
         const openDetails = () => {
           lastPatchCaveId = cave.id;
-          renderPatchBoard(previous, cave);
+          renderPatchBoard(previous ?? { width: 0, height: 0, objectives: [], layers: {} }, cave);
           $("patchBoardPanel").scrollIntoView({ block: "nearest" });
         };
         button.addEventListener("click", openDetails);
