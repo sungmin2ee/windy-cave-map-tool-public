@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.30";
+const CLIENT_VERSION = "2.7.31";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1007,12 +1007,11 @@ function applyCellVisual(cell, cave, index) {
     if (layer === "block") {
       visual.style.background = blockColor(assetId);
       const initial = !playtestState || playtestState.cave !== cave || playtestState.movesLeft === cave.moveLimit;
-      const piece = initial ? ddungInitialPiece(ddungCellSource(cave, index)?.tile) : null;
-      const symbol = DDUNG_PIECE_ICONS[piece?.type];
-      if (symbol && piece.color === assetId) {
+      const piece = initial ? initialPieceAt(cave, index) : null;
+      if (piece && (!piece.color || piece.color === assetId)) {
         visual.classList.add("ddung-initial-special");
-        visual.textContent = symbol;
-        if (playtestState?.cave === cave) visual.title = `DDUNG 초기 피스 타입 ${piece.type}`;
+        visual.textContent = piece.symbol;
+        if (playtestState?.cave === cave) visual.title = `초기 피스 타입 ${piece.type}`;
       }
     }
     if (layer === "gimmick" || layer === "item" || (layer === "terrain" && !asset.className)) visual.textContent = asset.visual;
@@ -1081,6 +1080,13 @@ function resizeMap() {
   cave.excludedCells = (cave.excludedCells || []).map((index) => [index % cave.width, Math.floor(index / cave.width)])
     .filter(([x, y]) => x < width && y < height).map(([x, y]) => y * width + x);
   if (cave.excludedCells.length === width * height) cave.excludedCells.pop();
+  if (cave.initialPieceTypes) {
+    cave.initialPieceTypes = Object.fromEntries(Object.entries(cave.initialPieceTypes).flatMap(([index, type]) => {
+      const x = Number(index) % cave.width;
+      const y = Math.floor(Number(index) / cave.width);
+      return x < width && y < height ? [[y * width + x, type]] : [];
+    }));
+  }
   cave.width = width; cave.height = height; cave.layers = next;
   renderAll(); persist(); toast(`맵 크기를 ${width} × ${height}(으)로 변경했습니다.`);
 }
@@ -2834,6 +2840,29 @@ function adaptDdungMapInfo(source, index, format, unknownTokens) {
   return cave;
 }
 
+function externalInitialPieces(source, grid, size) {
+  const types = {};
+  const explicit = source.initialPieceTypes || {};
+  for (let index = 0; index < size; index++) {
+    const token = grid[index];
+    const raw = explicit[index] ?? token?.specialType ?? token?.pieceType ??
+      token?.block?.specialType ?? token?.block?.pieceType ??
+      token?.piece?.specialType ?? token?.piece?.pieceType;
+    if (typeof raw !== "string" && typeof raw !== "number") continue;
+    const type = String(raw).trim();
+    if (type && !/^(0|normal|none)$/i.test(type)) types[index] = type;
+  }
+  const definitions = Array.isArray(source.initialPieceDefinitions) ? source.initialPieceDefinitions : [];
+  const symbols = ["◆", "▲", "■", "✚", "✦", "●", "◇", "★"];
+  return {
+    initialPieceTypes: types,
+    initialPieceDefinitions: [...new Set(Object.values(types))].map((id, index) => {
+      const declared = definitions.find((entry) => entry && String(entry.id) === id);
+      return { id, name: String(declared?.name || id), symbol: String(declared?.symbol || symbols[index] || index + 1) };
+    }),
+  };
+}
+
 function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers) {
   if (/^DDUNG MapInfo/i.test(format)) return adaptDdungMapInfo(level, index, format, unknownTokens);
   const source = level && typeof level === "object" ? level : {};
@@ -2875,6 +2904,7 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers)
   return normalizeCave({
     id: valueAt(source, ["id", "uuid", "levelId", "stageId"], crypto.randomUUID()),
     name: valueAt(source, ["name", "title", "levelName", "stageName"], `Imported Cave ${String(index + 1).padStart(4, "0")}`),
+    ...externalInitialPieces(source, flatArray(grid), size),
     excludedCells: source.excludedCells,
     width, height, gravity: valueAt(source, ["gravity", "gravityDirection", "direction"], "down"), layers,
     flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "left-first"),
@@ -3106,17 +3136,30 @@ function ddungInitialPiece(tile) {
   return null;
 }
 
+function initialPieceAt(cave, index) {
+  const type = cave.initialPieceTypes?.[index];
+  if (type) {
+    const declared = cave.initialPieceDefinitions?.find((entry) => entry.id === type);
+    return { type, symbol: declared?.symbol || "✦", name: declared?.name };
+  }
+  const original = ddungInitialPiece(ddungCellSource(cave, index)?.tile);
+  const symbol = DDUNG_PIECE_ICONS[original?.type];
+  return symbol ? { ...original, symbol } : null;
+}
+
 function describeCellProperties(cave, index) {
   const fields = [cellDescription(cave, index)];
   for (const [layer, values] of Object.entries(cave.layers)) {
     if (values[index]) fields.push(`${layer} · ${getAsset(layer, values[index])?.name || values[index]} (${values[index]})`);
   }
+  const piece = initialPieceAt(cave, index);
+  if (piece) fields.push(`초기 피스 · ${piece.name || piece.type} · ${piece.symbol}`);
   const source = ddungCellSource(cave, index);
   if (source) {
     fields.push(`DDUNG 원본 타일 · ${source.tile ?? "없음"}`);
     if (source.gravity !== undefined) fields.push(`원본 칸 중력 · ${source.gravity}`);
-    const piece = ddungInitialPiece(source.tile);
-    if (piece) fields.push(`원본 초기 피스 · 색상 ${piece.color} · 타입 ${piece.type}${DDUNG_PIECE_ICONS[piece.type] ? ` (${DDUNG_PIECE_ICONS[piece.type]})` : ""}`);
+    const originalPiece = ddungInitialPiece(source.tile);
+    if (originalPiece) fields.push(`원본 초기 피스 · 색상 ${originalPiece.color} · 타입 ${originalPiece.type}`);
     for (const field of ["starts", "goals", "roads"]) {
       for (const token of ddungPositionGroups(source.raw[field], 6)) {
         if (Number(token.slice(2, 4)) === source.x && Number(token.slice(4, 6)) === source.y) fields.push(`${field} · ${token}`);
