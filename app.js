@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.35";
+const CLIENT_VERSION = "2.7.36";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2978,6 +2978,33 @@ function adaptImportedJson(data) {
   return { project: next, format, unknownTokens: [...unknownTokens], unknownTiles };
 }
 
+function showImportTile(cave, levelNumber, row, column, value) {
+  const panel = $("importTileBoard");
+  const grid = $("importTileGrid");
+  const selectedIndex = (row - 1) * cave.width + column - 1;
+  $("importTileTitle").textContent = `레벨 ${levelNumber} · ${cave.name} · ${row}행 ${column}열`;
+  $("importTileValue").textContent = `읽지 못한 값: ${value}`;
+  grid.style.gridTemplateColumns = `repeat(${cave.width}, 28px)`;
+  grid.replaceChildren();
+  for (let index = 0; index < cave.width * cave.height; index++) {
+    const cell = document.createElement("span");
+    cell.className = "import-tile-cell";
+    const block = cave.layers.block[index];
+    if (block) cell.style.backgroundColor = blockColor(block);
+    const piece = block ? initialPieceAt(cave, index) : null;
+    if (piece) cell.textContent = piece.symbol;
+    if (index === selectedIndex) {
+      cell.classList.add("import-tile-selected");
+      cell.textContent = "!";
+    }
+    cell.title = Object.entries(cave.layers).map(([layer, values]) => values[index] && `${layer}: ${values[index]}`).filter(Boolean).join(" · ");
+    grid.append(cell);
+  }
+  panel.hidden = false;
+  $("importTileTitle").focus({ preventScroll: true });
+  panel.scrollIntoView({ block: "nearest" });
+}
+
 function previewImport(imported, filename) {
   const dialog = $("importPreview");
   const caves = imported.project.caves;
@@ -3001,6 +3028,8 @@ function previewImport(imported, filename) {
   const unknown = imported.unknownTokens;
   const warnings = $("importPreviewUnknown");
   warnings.replaceChildren();
+  $("importTileBoard").hidden = true;
+  $("importTileGrid").replaceChildren();
   for (const [value, cells] of imported.unknownTiles || []) {
     const group = document.createElement("details");
     const summary = document.createElement("summary");
@@ -3009,7 +3038,14 @@ function previewImport(imported, filename) {
     const list = document.createElement("ul");
     for (const { levelIndex, row, column } of cells.values()) {
       const location = document.createElement("li");
-      location.textContent = `레벨 ${caves[levelIndex].number ?? levelIndex + 1} · ${row}행 ${column}열`;
+      const cave = caves[levelIndex];
+      const levelNumber = cave.number ?? levelIndex + 1;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button ghost";
+      button.textContent = `레벨 ${levelNumber} · ${row}행 ${column}열`;
+      button.addEventListener("click", () => showImportTile(cave, levelNumber, row, column, value));
+      location.append(button);
       list.append(location);
     }
     group.append(list);
