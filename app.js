@@ -1484,6 +1484,14 @@ function randomizeBlocks() {
 }
 
 
+function difficultyTerrainIds(cave) {
+  return (project.paletteAssets.terrain || []).filter((id) => {
+    const rule = cave.terrainRules[id];
+    return rule && rule.reaction !== "none" &&
+      (!id.startsWith("ddung-") || ["ddung-water", "ddung-ice", "ddung-web"].includes(id));
+  });
+}
+
 function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement) {
   const cave = deepCopy(source);
   const seed = source.randomSeed + "|difficulty-" + target + "-" + (attempt + 1);
@@ -1498,29 +1506,43 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   cave.usableBlocks = keepPlacement ? [...new Set([...source.usableBlocks, ...colors])] : colors;
   cave.testClearMoves = 0;
 
+  const terrain = cave.layers.terrain;
+  const terrainSlots = terrain.flatMap((id, index) => !id && !isBarrier(cave, index) ? [index] : []);
+  const terrainCounts = new Map();
+  terrain.forEach((id, index) => {
+    if (id && !isExcluded(cave, index)) terrainCounts.set(id, (terrainCounts.get(id) || 0) + 1);
+  });
+  const terrainIds = difficultyTerrainIds(cave).filter((id) =>
+    terrainCounts.has(id) || (terrainSlots.length && !cave.terrainRules[id].blocksFlow));
+  if (!terrainIds.length) return null;
+  const targetId = terrainIds[Math.floor(random() * terrainIds.length)];
+  const variation = 0.65 + random() * 0.7;
+  const existing = terrainCounts.get(targetId) || 0;
+  let terrainCount = Math.max(1, Math.min(existing, Math.round(existing * (0.2 + target * 0.008) * variation)));
+  if (!existing) {
+    terrainCount = Math.min(terrainSlots.length, Math.max(1, Math.round(terrainSlots.length * (0.05 + target * 0.002) * variation)));
+    for (let placed = 0; placed < terrainCount; placed += 1) {
+      const [index] = terrainSlots.splice(Math.floor(random() * terrainSlots.length), 1);
+      terrain[index] = targetId;
+    }
+  }
+
   const free = cave.layers.block.flatMap((_, index) =>
     !isBarrier(cave, index) && Object.values(cave.layers).every((layer) => !layer[index]) ? [index] : []
   );
-  const objectiveLayers = [];
   const eligibleAssets = {
-    terrain: (project.paletteAssets.terrain || []).filter((id) => {
-      const rule = cave.terrainRules[id];
-      return rule && !rule.blocksFlow && rule.reaction !== "none" &&
-        (!id.startsWith("ddung-") || ["ddung-water", "ddung-ice", "ddung-web"].includes(id));
-    }),
     item: (project.paletteAssets.item || []).filter((id) => !id.startsWith("ddung-")),
     gimmick: (project.paletteAssets.gimmick || []).filter((id) => id === "switch" ||
       (id === "ddung-box" && isDdungSource(cave.externalSource) && cave.externalSource.boxLayoutParsed)),
   };
   for (const [layer, assets] of Object.entries(eligibleAssets)) {
     if (!assets.length || !free.length) continue;
-    const targetId = assets[Math.floor(random() * assets.length)];
+    const id = assets[Math.floor(random() * assets.length)];
     const count = Math.min(free.length, Math.max(1, Math.round(free.length * (0.025 + target * 0.001) * (0.65 + random() * 0.7))));
     for (let placed = 0; placed < count; placed += 1) {
       const [index] = free.splice(Math.floor(random() * free.length), 1);
-      cave.layers[layer][index] = targetId;
+      cave.layers[layer][index] = id;
     }
-    objectiveLayers.push({ layer, targetId, count });
   }
 
   const blocks = cave.layers.block;
@@ -1532,15 +1554,11 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   }
   if (findMatches(cave).size || !hasPossibleSwap(cave)) return null;
 
-  const targetId = colors[Math.floor(random() * colors.length)];
-  const placed = blocks.filter((color) => color === targetId).length;
-  const blockCount = Math.max(1, Math.min(placed, Math.round(3 + target / 8 + random() * 5)));
-  cave.objectives = [{ layer: "block", targetId, count: blockCount }, ...objectiveLayers]
-    .map((goal, index) => normalizeObjective({ ...goal, id: "generated-goal-" + (index + 1), countMode: "manual" }));
-  cave.targetType = targetId;
-  cave.targetCount = blockCount;
+  cave.objectives = [normalizeObjective({ id: "generated-terrain-goal", layer: "terrain", targetId, count: terrainCount })];
+  cave.targetType = null;
+  cave.targetCount = terrainCount;
   const moveSpread = [-8, -4, 0, 4, 9, 15][attempt % 6];
-  cave.moveLimit = Math.max(2, Math.min(35, Math.round(17 - target / 8 + objectiveLayers.length * 3 + moveSpread)));
+  cave.moveLimit = Math.max(2, Math.min(35, Math.round(16 - target / 8 + Math.sqrt(terrainCount) * 3 + moveSpread)));
   cave.parMoves = Math.max(1, Math.floor(cave.moveLimit * 0.75));
   const validation = validateCave(cave);
   return validation.errors.length || validation.unsupported.length ? null : cave;
@@ -1617,6 +1635,10 @@ async function generateDifficultyCandidates(event) {
     .filter((id) => blockWeight(source, id) > 0);
   if (colors.length < 2) {
     status.textContent = "사용 색상에서 생성 가중치가 0보다 큰 블록을 2종 이상 선택하세요.";
+    return;
+  }
+  if (!difficultyTerrainIds(source).length) {
+    status.textContent = "Terrain 탭에서 매치로 제거할 수 있는 지형을 등록하고 반응 규칙을 설정하세요.";
     return;
   }
   const candidates = [];
