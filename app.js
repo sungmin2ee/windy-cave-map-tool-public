@@ -2295,13 +2295,14 @@ function listPossibleSwaps(state) {
   const blocks = cave.layers.block;
   const candidates = [];
   for (let first = 0; first < blocks.length; first += 1) {
-    if (!blocks[first] || isBarrier(cave, first)) continue;
+    if (!blocks[first] || isBarrier(cave, first) || specialEffect(cave, cave.playtestPieces[first])) continue;
     const x = first % cave.width;
     const others = [];
     if (x < cave.width - 1) others.push(first + 1);
     if (first + cave.width < blocks.length) others.push(first + cave.width);
     for (const second of others) {
-      if (!blocks[second] || blocks[first] === blocks[second] || isBarrier(cave, second)) continue;
+      if (!blocks[second] || blocks[first] === blocks[second] || isBarrier(cave, second) ||
+          specialEffect(cave, cave.playtestPieces[second])) continue;
       swapPlaytestBlocks(cave, first, second);
       const matches = findMatches(cave);
       if (matches.size) candidates.push({ first, second, score: scoreAutoMove(state, expandSpecialHits(cave, matches)) });
