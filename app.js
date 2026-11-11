@@ -2669,7 +2669,10 @@ async function runAnimatedPlaytest(state) {
   state.running = true;
   try {
     while (playtestState === state && $("simulationDialog").open && !state.paused && state.status === "playing") {
-      await animatePlaytestTurn(state, chooseAutoAction(state));
+      // Keep the settled board available for clicks before the next automatic turn.
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      if (playtestState !== state || !$("simulationDialog").open || state.paused || state.status !== "playing") break;
+      if (!state.animating) await animatePlaytestTurn(state, chooseAutoAction(state));
     }
   } finally {
     state.running = false;
@@ -2686,7 +2689,7 @@ function togglePlaytestPause() {
 
 function playtestCell(index) {
   const state = playtestState;
-  if (!state || state.status !== "playing" || !state.paused || state.animating ||
+  if (!state || state.status !== "playing" || state.animating ||
       isBarrier(state.cave, index) || !specialEffect(state.cave, state.cave.playtestPieces[index])) return;
   animatePlaytestTurn(state, { first: index });
 }
@@ -2723,7 +2726,7 @@ function renderPlaytest() {
   const pause = $("playtestPauseButton");
   pause.hidden = state.status !== "playing";
   pause.textContent = state.paused ? "자동 플레이 계속" : "일시정지";
-  renderSimulationGrid(state.cave, state.status === "playing" && state.paused, remainingTargets);
+  renderSimulationGrid(state.cave, state.status === "playing", remainingTargets);
 }
 
 function resetPlaytest() {
