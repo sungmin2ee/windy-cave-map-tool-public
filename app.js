@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.44";
+const CLIENT_VERSION = "2.7.45";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -298,7 +298,7 @@ function normalizeLevelSettings(source) {
     difficulty: [0, 1, 2].includes(settings?.difficulty) ? settings.difficulty
       : [0, 1, 2].includes(raw?.levelclass) ? raw.levelclass : 0,
     spawnMode: [0, 1, 2].includes(settings?.spawnMode) ? settings.spawnMode
-      : [0, 1, 2].includes(raw?.objectcreate) ? raw.objectcreate : 0,
+      : [0, 1, 2].includes(raw?.objectcreate) ? raw.objectcreate : raw ? 0 : 1,
   };
 }
 
@@ -1870,12 +1870,41 @@ function applyGravity(cave, state) {
   return flowMoves;
 }
 
-function refillBlocks(cave, random) {
+function chooseRefillColor(state, colors) {
+  const mode = state.cave.levelSettings?.spawnMode ?? 1;
+  if (mode === 0) return colors[Math.floor(state.random() * colors.length)];
+  const weights = colors.map((color) => blockWeight(state.cave, color));
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  if (!total) return null;
+  const offsets = state.spawnOffsets ??= {};
+  const roll = Math.floor(state.random() * 100);
+  let lower = 0;
+  let selected = -1;
+  for (const [index, color] of colors.entries()) {
+    const upper = lower + weights[index] * 100 / total + (mode === 2 ? offsets[color] || 0 : 0);
+    if (roll >= lower && roll < upper) {
+      selected = index;
+      break;
+    }
+    lower = upper;
+  }
+  // DDUNG falls back to the first color without adjusting probabilities.
+  if (selected < 0) return colors[0];
+  if (mode === 2) {
+    for (const [index, color] of colors.entries()) {
+      offsets[color] = (offsets[color] || 0) + (index === selected ? 1 - colors.length : 1);
+    }
+  }
+  return colors[selected];
+}
+
+function refillBlocks(state) {
+  const { cave } = state;
   const colors = cave.usableBlocks;
   if (!colors.length) return;
   for (let index = 0; index < cave.layers.block.length; index += 1) {
     if (!cave.layers.block[index] && !isBarrier(cave, index)) {
-      cave.layers.block[index] = chooseBlockColor(cave, colors, random);
+      cave.layers.block[index] = chooseRefillColor(state, colors);
     }
   }
 }
@@ -1948,7 +1977,7 @@ function resolveMatches(state, captureFrame) {
     });
     captureFrame?.("블록 제거", [...matches], "match");
     flowMoves += applyGravity(state.cave, state);
-    refillBlocks(state.cave, state.random);
+    refillBlocks(state);
     captureFrame?.("낙하 및 블록 채우기", [], "refill");
     cascade += 1;
     matches = findMatches(state.cave);
