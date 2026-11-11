@@ -441,6 +441,11 @@
     <dialog id="cellInspector" class="simulation-dialog" aria-labelledby="cellInspectorTitle">
       <div class="dialog-header"><h2 id="cellInspectorTitle">칸 속성</h2></div>
       <p id="cellInspectorText"></p>
+      <form id="initialPieceForm">
+        <label>블록 색<select class="field" id="initialPieceColor"></select></label>
+        <label>초기 특수 타입<select class="field" id="initialPieceType"></select></label>
+        <button class="button primary" id="initialPieceApply" type="submit">피스 설정 적용</button>
+      </form>
       <form method="dialog" class="dialog-footer"><button class="button ghost">닫기</button></form>
     </dialog>
 
@@ -525,7 +530,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=58"></script>
+    <script src="./app.js?v=59"></script>
   </body>
 </html>
 
