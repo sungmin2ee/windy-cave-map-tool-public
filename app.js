@@ -1910,6 +1910,7 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
     playtestState = null;
     $("playtestPauseButton").hidden = true;
     $("playtestHintButton").hidden = true;
+    $("playtestComboButton").hidden = true;
     const baseline = blocked ? null : readValidationBaseline(cave);
     const simulationCave = baseline ? { ...cave, randomSeed: baseline.seed } : cave;
     const batch = blocked ? null : runBatchSimulation(simulationCave, baseline?.runs ?? cave.simulationRuns);
@@ -2095,9 +2096,13 @@ function isSwapBlocked(cave, index) {
   return isBarrier(cave, index) || Boolean(cave.terrainRules?.[cave.layers.terrain[index]]?.blocksSwap);
 }
 
+function isDdungGimmickBarrier(cave, index) {
+  return isDdungSource(cave.externalSource) && ["ddung-mouse-panel", "ddung-dungs", "ddung-bulldozer"].includes(cave.layers.gimmick[index]);
+}
+
 function isBarrier(cave, index) {
   if (index < 0 || index >= cave.width * cave.height || isExcluded(cave, index)) return true;
-  if (ddungBoxDurability(cave, index)) return true;
+  if (ddungBoxDurability(cave, index) || isDdungGimmickBarrier(cave, index)) return true;
   const terrainId = cave.layers.terrain[index];
   const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
   return Boolean(rule?.blocksFlow || rule?.locksBlock);
@@ -2275,7 +2280,7 @@ function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), rem
   return { damaged, broken, brokenDetails };
 }
 
-function resolveMatches(state, captureFrame, activation = [], preferred = []) {
+function resolveMatches(state, captureFrame, activation = [], preferred = [], combo = null) {
   let runs = [];
   let matches = findMatches(state.cave, runs);
   activation.forEach((index) => matches.add(index));
@@ -2287,12 +2292,12 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
   const newPieces = new Set();
   let protectedCells = new Set();
   while (matches.size && cascade < 20) {
-    const expanded = expandSpecialHits(state, matches, protectedCells, state.beeRandom);
-    const created = createdSpecials(state.cave, runs, preferred, matches);
+    const expanded = cascade === 0 && combo ? combo : expandSpecialHits(state, matches, protectedCells, state.beeRandom);
+    const created = cascade === 0 && combo ? new Map() : createdSpecials(state.cave, runs, preferred, matches);
     const triggered = [...expanded.hits].some((index) => !isBarrier(state.cave, index) && specialEffect(state.cave, state.cave.playtestPieces[index]));
     matches = expanded.hits;
     const highlighted = new Set([...matches, ...expanded.targetedTerrain]);
-    captureFrame?.(triggered ? "특수 피스 폭발" : "매치", [...highlighted], "match");
+    captureFrame?.(cascade === 0 && combo ? combo.label : triggered ? "특수 피스 폭발" : "매치", [...highlighted], "match");
     // A blast can break an obstacle without clearing the piece it was protecting.
     const clearableCells = [...matches].filter((index) => !isBarrier(state.cave, index));
     const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
@@ -2303,9 +2308,11 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
     for (let index = 0; index < state.cave.layers.gimmick.length; index += 1) {
       const gimmickId = state.cave.layers.gimmick[index];
       if (!gimmickId || isExcluded(state.cave, index) || state.activatedGimmicks.has(index)) continue;
-      const affected = matches.has(index) || neighborsOf(state.cave, index).some((neighbor) => matches.has(neighbor));
+      const durability = ddungBoxDurability(state.cave, index);
+      if (isDdungSource(state.cave.externalSource) && !durability) continue;
+      const nearbyHits = durability ? removedBlocks : matches;
+      const affected = matches.has(index) || neighborsOf(state.cave, index).some((neighbor) => nearbyHits.has(neighbor));
       if (affected) {
-        const durability = ddungBoxDurability(state.cave, index);
         if (durability) {
           state.gimmickHits[index] += 1;
           if (state.gimmickHits[index] < durability) continue;
@@ -2403,12 +2410,20 @@ function listPossibleSwaps(state, firstOnly = false) {
   const blocks = cave.layers.block;
   const candidates = [];
   for (let first = 0; first < blocks.length; first += 1) {
-    if (!blocks[first] || isSwapBlocked(cave, first) || specialEffect(cave, cave.playtestPieces[first])) continue;
+    if (!blocks[first] || isSwapBlocked(cave, first)) continue;
+    const firstIsSpecial = specialEffect(cave, cave.playtestPieces[first]);
     const x = first % cave.width;
     const others = [];
     if (x < cave.width - 1) others.push(first + 1);
     if (first + cave.width < blocks.length) others.push(first + cave.width);
     for (const second of others) {
+      if (canCombineSpecials(cave, first, second)) {
+        const action = { first, second, combo: true };
+        if (firstOnly) return [action];
+        candidates.push({ ...action, score: scoreAutoMove(state, specialComboHits(state, first, second)) });
+        continue;
+      }
+      if (firstIsSpecial) continue;
       if (!blocks[second] || blocks[first] === blocks[second] || isSwapBlocked(cave, second) ||
           specialEffect(cave, cave.playtestPieces[second])) continue;
       swapPlaytestBlocks(cave, first, second);
@@ -2536,19 +2551,85 @@ function findBeeTarget(state, hits, protectedCells, random) {
   return candidates.length ? candidates[Math.floor(random() * candidates.length)] : -1;
 }
 
-function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom = () => 0.5) {
+function canCombineSpecials(cave, first, second) {
+  return neighborsOf(cave, first).includes(second) && [first, second].every((index) =>
+    cave.layers.block[index] && !isSwapBlocked(cave, index) && specialEffect(cave, cave.playtestPieces[index]));
+}
+
+function specialComboHits(state, first, second, random = () => 0.5) {
+  const { cave } = state;
+  const pair = [first, second];
+  const effects = pair.map((index) => specialEffect(cave, cave.playtestPieces[index]));
+  const lines = effects.filter((effect) => effect === "row" || effect === "column");
+  const bombs = effects.filter((effect) => effect === "area").length;
+  const bees = effects.filter((effect) => effect === "fish" || effect === "target").length;
+  const colors = effects.filter((effect) => effect === "color").length;
+  const hits = new Set(pair);
+  const commands = new Map();
+  const skip = new Set(pair);
+  const addShape = (origin, shape, radius = 0) => {
+    for (let index = 0; index < cave.layers.block.length; index += 1) {
+      if (isExcluded(cave, index)) continue;
+      const dx = Math.abs(index % cave.width - origin % cave.width);
+      const dy = Math.abs(Math.floor(index / cave.width) - Math.floor(origin / cave.width));
+      if ((shape === "row" && dy <= radius) || (shape === "column" && dx <= radius) ||
+          (shape === "cross" && (dx <= radius || dy <= radius)) ||
+          (shape === "area" && dx <= radius && dy <= radius)) hits.add(index);
+    }
+  };
+  let label;
+  if (colors === 2) {
+    cave.layers.block.forEach((_, index) => { if (!isExcluded(cave, index)) hits.add(index); });
+    label = "보드 전체 타격";
+  } else if (colors && (lines.length || bombs || bees)) {
+    const partner = pair[effects[0] === "color" ? 1 : 0];
+    const color = cave.layers.block[partner];
+    const converted = cave.layers.block.flatMap((block, index) =>
+      block === color && !skip.has(index) && !isSwapBlocked(cave, index) ? [index] : []);
+    for (const [order, index] of converted.entries()) {
+      hits.add(index);
+      commands.set(index, [{ op: bombs ? "area" : bees ? "fish" : order % 2 ? "column" : "row" }]);
+    }
+    label = "같은 색을 특수 피스로 바꿔 연쇄 발동";
+  } else if (bees && (lines.length || bombs || bees === 2)) {
+    const count = bees === 2 ? 3 : 1;
+    for (let flight = 0; flight < count; flight += 1) {
+      const target = findBeeTarget(state, hits, new Set(), random);
+      if (target < 0) break;
+      hits.add(target);
+      if (lines.length || bombs) addShape(target, lines[0] ?? "area", bombs ? 1 : 0);
+    }
+    label = bees === 2 ? "벌 3마리 출격" : lines.length ? "벌이 목표에서 줄 폭발" : "벌이 목표에서 폭탄 발동";
+  } else if (bombs === 2) {
+    pair.forEach((index) => addShape(index, "area", 2));
+    label = "두 위치에서 5×5 폭발";
+  } else if (lines.length && bombs) {
+    addShape(second, "cross", 1);
+    label = "가로 3줄·세로 3줄 타격";
+  } else if (lines.length === 2) {
+    addShape(second, "cross");
+    label = "가로·세로 십자 타격";
+  } else {
+    skip.clear();
+    label = "두 특수 효과 동시 발동";
+  }
+  return { ...expandSpecialHits(state, hits, new Set(), random, skip, commands), label };
+}
+
+function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom = () => 0.5, skip = new Set(), overrides = new Map()) {
   const { cave } = state;
   const hits = new Set(matches);
   const targetedTerrain = new Set();
   for (const index of hits) {
-    if (isBarrier(cave, index)) continue;
+    if (skip.has(index) || isBarrier(cave, index)) continue;
+    const override = overrides.get(index);
     const effect = specialEffect(cave, cave.playtestPieces[index]);
-    if (!effect) continue;
+    if (!effect && !override) continue;
     const x = index % cave.width;
     const y = Math.floor(index / cave.width);
     const color = cave.layers.block[index];
     const definition = effect === "script" && cave.initialPieceDefinitions.find((entry) => entry?.id === String(cave.playtestPieces[index].type));
-    const commands = effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }];
+    const commands = override ?? (effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }]);
     for (const { op, radius = 1, cells } of commands) {
       if (op === "fish") {
         const target = findBeeTarget(state, hits, protectedCells, beeRandom);
@@ -2662,6 +2743,7 @@ function showPlaytestHint() {
   const action = findPlayableAction(state);
   if (!action) return;
   state.selectedIndex = null;
+  state.comboMode = false;
   state.hint = action;
   state.message = action.second === undefined ? "강조된 특수 피스를 눌러 발동하세요." : "강조된 두 블록을 교환하세요.";
   renderPlaytest();
@@ -2688,16 +2770,20 @@ function playSimulationTurn(state, action, captureFrame) {
   }
   const { first, second } = action;
   const cave = state.cave;
+  if (action.combo && !canCombineSpecials(cave, first, second)) return;
+  const combo = action.combo ? specialComboHits(state, first, second, state.beeRandom) : null;
   const activation = second === undefined;
-  if (activation) {
+  if (combo) {
+    captureFrame?.("특수 피스 조합", [first, second], "swap", 250);
+  } else if (activation) {
     captureFrame?.("특수 피스 발동", [first], "match");
   } else {
     swapPlaytestBlocks(cave, first, second);
     captureFrame?.("블록 교환", [first, second], "swap", 250);
   }
   state.movesLeft -= 1;
-  const resolved = resolveMatches(state, captureFrame, activation ? [first] : [], activation ? [] : [second, first]);
-  state.message = resolved.removed + "개 제거 · " + resolved.cascade + "연쇄 · Terrain " + resolved.terrainBroken + "개 파괴";
+  const resolved = resolveMatches(state, captureFrame, combo ? [first, second] : activation ? [first] : [], activation || combo ? [] : [second, first], combo);
+  state.message = (combo ? combo.label + " · " : "") + resolved.removed + "개 제거 · " + resolved.cascade + "연쇄 · Terrain " + resolved.terrainBroken + "개 파괴";
   if (allObjectivesComplete(state)) state.status = "won";
   else if (!state.movesLeft) state.status = "lost";
   else ensurePlayableBoard(state, captureFrame);
@@ -2706,7 +2792,7 @@ function playSimulationTurn(state, action, captureFrame) {
 function createPlayState(cave, seedSuffix, manual = false) {
   const copy = deepCopy(cave);
   copy.layers.block.forEach((id, index) => {
-    if (id && ddungBoxDurability(copy, index)) copy.layers.block[index] = null;
+    if (id && (ddungBoxDurability(copy, index) || isDdungGimmickBarrier(copy, index))) copy.layers.block[index] = null;
   });
   copy.playtestPieces = copy.layers.block.map((block, index) => {
     const piece = block ? initialPieceAt(copy, index) : null;
@@ -2985,6 +3071,7 @@ function togglePlaytestPause() {
   const state = playtestState;
   if (!state || state.status !== "playing") return;
   state.paused = !state.paused;
+  state.comboMode = false;
   state.hint = null;
   state.selectedIndex = null;
   state.message = state.paused ? "교환할 인접 블록 두 개를 클릭하세요." : "자동 플레이 중입니다.";
@@ -2993,12 +3080,44 @@ function togglePlaytestPause() {
   if (!state.paused) runAnimatedPlaytest(state);
 }
 
+function togglePlaytestCombo() {
+  const state = playtestState;
+  if (!state?.paused || state.status !== "playing" || state.animating) return;
+  state.comboMode = !state.comboMode;
+  state.selectedIndex = null;
+  state.hint = null;
+  state.message = state.comboMode ? "서로 붙어 있는 특수 피스 두 개를 차례로 클릭하세요." : "교환할 인접 블록 두 개를 클릭하세요.";
+  renderPlaytest();
+}
+
 function playtestCell(index) {
   const state = playtestState;
   if (!state || state.status !== "playing" || state.animating) return;
   const cave = state.cave;
   if (isBarrier(cave, index) || !cave.layers.block[index]) return;
   state.hint = null;
+
+  if (state.comboMode) {
+    if (isSwapBlocked(cave, index) || !specialEffect(cave, cave.playtestPieces[index])) {
+      state.message = "조합할 수 있는 특수 피스를 선택하세요.";
+    } else if (state.selectedIndex === index) {
+      state.selectedIndex = null;
+      state.message = "선택을 취소했습니다.";
+    } else if (state.selectedIndex === null) {
+      state.selectedIndex = index;
+      state.message = "선택한 피스에 붙어 있는 특수 피스를 클릭하세요.";
+    } else if (canCombineSpecials(cave, state.selectedIndex, index)) {
+      const action = { first: state.selectedIndex, second: index, combo: true };
+      state.selectedIndex = null;
+      state.comboMode = false;
+      animatePlaytestTurn(state, action);
+      return;
+    } else {
+      state.message = "가로 또는 세로로 붙어 있는 특수 피스만 조합할 수 있습니다.";
+    }
+    renderPlaytest();
+    return;
+  }
 
   if (specialEffect(cave, cave.playtestPieces[index])) {
     state.selectedIndex = null;
@@ -3065,6 +3184,10 @@ function renderPlaytest() {
   const pause = $("playtestPauseButton");
   pause.hidden = state.status !== "playing";
   $("playtestHintButton").hidden = !state.paused || state.status !== "playing";
+  const comboButton = $("playtestComboButton");
+  comboButton.hidden = !state.paused || state.status !== "playing" || Boolean(state.replay);
+  comboButton.setAttribute("aria-pressed", Boolean(state.comboMode));
+  comboButton.textContent = state.comboMode ? "조합 취소" : "특수 피스 조합";
   pause.textContent = state.paused ? "자동 플레이 시작" : "직접 플레이로 전환";
   renderSimulationGrid(state.cave, state.status === "playing", remainingTargets);
 }
@@ -4216,6 +4339,7 @@ function bindInputs() {
   $("playtestResetButton").addEventListener("click", resetPlaytest);
   $("playtestPauseButton").addEventListener("click", togglePlaytestPause);
   $("playtestHintButton").addEventListener("click", showPlaytestHint);
+  $("playtestComboButton").addEventListener("click", togglePlaytestCombo);
   $("usePlaytestResultButton").addEventListener("click", usePlaytestResult);
   $("saveButton").addEventListener("click", () => persist(true));
   $("exportButton").addEventListener("click", exportProject);
