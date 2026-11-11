@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.12";
+const CLIENT_VERSION = "2.7.13";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1744,10 +1744,23 @@ async function validateCaveRange() {
         jumpToCave();
       });
       row.insertCell().appendChild(button);
-      const values = batch
-        ? [cave.name, `${batch.clearRate}% (${batch.wins}/${batch.runs})`, batch.lost, batch.stuck]
-        : [cave.name, validation.errors.length ? "검증 오류" : "판정 미지원", "—", "—"];
-      for (const value of values) row.insertCell().textContent = value;
+      row.insertCell().textContent = cave.name;
+      const clearCell = row.insertCell();
+      const outcome = batch ? `${batch.clearRate}% (${batch.wins}/${batch.runs})` : resultStatus;
+      const issues = issueHtml(validation);
+      if (issues) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = batch ? `${outcome} · 경고 ${validation.warnings.length}건` : outcome;
+        const messages = document.createElement("div");
+        messages.innerHTML = issues;
+        details.append(summary, messages);
+        clearCell.appendChild(details);
+      } else {
+        clearCell.textContent = outcome;
+      }
+      row.insertCell().textContent = batch?.lost ?? "—";
+      row.insertCell().textContent = batch?.stuck ?? "—";
       if (rows.dataset.sort !== "number") sortRangeRows(rows.dataset.sort);
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (canceled || !dialog.open) return;
