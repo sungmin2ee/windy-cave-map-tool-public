@@ -398,8 +398,19 @@ function normalizeCave(data, index = 0) {
       durability: clampNumber(rule.durability, fallback.durability, 1, 99),
     };
   });
+  const gimmickRules = Object.fromEntries(Object.entries(source.gimmickRules ?? {}).flatMap(([key, rule]) => {
+    const id = assetId(key);
+    if (!id || !rule || typeof rule !== "object") return [];
+    return [[id, {
+      durability: clampNumber(rule.durability, 1, 1, 99),
+      reaction: ["direct", "adjacent", "either"].includes(rule.reaction) ? rule.reaction : "direct",
+      blocksFlow: rule.blocksFlow === true,
+      nextId: assetId(rule.nextId),
+    }]];
+  }));
   const normalized = {
     ...source,
+    gimmickRules,
     id: source.id || crypto.randomUUID(),
     name: String(source.name || `Cave ${String(index + 1).padStart(4, "0")}`),
     width, height, gravity: normalizeGravity(source.gravity), layers, excludedCells,
@@ -1849,7 +1860,7 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
       }
       const terrainId = cave.layers.terrain[index];
       const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
-      const boxDurability = ddungBoxDurability(cave, index);
+      const boxDurability = ddungBoxDurability(cave, index) || cave.gimmickRules?.[cave.layers.gimmick[index]]?.durability;
       const hpIndex = terrainId === "ddung-heather-large" ? heatherGroup(cave, index)[0] : index;
       const durability = boxDurability || (rule && rule.reaction !== "none" ? terrainDurabilityAt(cave, hpIndex, rule) : 0);
       if (durability) {
@@ -2107,7 +2118,8 @@ function isDdungGimmickBarrier(cave, index) {
 
 function isBarrier(cave, index) {
   if (index < 0 || index >= cave.width * cave.height || isExcluded(cave, index)) return true;
-  if (ddungBoxDurability(cave, index) || isDdungGimmickBarrier(cave, index)) return true;
+  if (ddungBoxDurability(cave, index) || isDdungGimmickBarrier(cave, index) ||
+      cave.gimmickRules?.[cave.layers.gimmick[index]]?.blocksFlow) return true;
   const terrainId = cave.layers.terrain[index];
   const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
   return Boolean(rule?.blocksFlow || rule?.locksBlock);
@@ -2222,10 +2234,31 @@ function refillBlocks(state) {
   const { cave } = state;
   const colors = cave.usableBlocks;
   if (!colors.length) return;
-  for (let index = 0; index < cave.layers.block.length; index += 1) {
-    if (!cave.layers.block[index] && !isBarrier(cave, index)) {
-      cave.layers.block[index] = chooseRefillColor(state, colors);
+  const spawners = cave.layers.gimmick.flatMap((id, index) => id === SPAWNER_ID ? [index] : []);
+  const sourceSet = new Set(spawners);
+  const sources = isDdungSource(cave.externalSource)
+    ? gravityLines(cave).flatMap((line) => {
+        const marked = line.filter((index) => sourceSet.has(index));
+        return marked.length ? marked : [line.at(-1)];
+      }) : spawners.length ? spawners : null;
+  if (!sources) {
+    cave.layers.block.forEach((block, index) => {
+      if (!block && !isBarrier(cave, index)) cave.layers.block[index] = chooseRefillColor(state, colors);
+    });
+    return;
+  }
+  // Each pass inserts only at the sources, then moves the new blocks with normal gravity.
+  for (let pass = 0; pass < cave.layers.block.length; pass += 1) {
+    let spawned = false;
+    for (const index of sources) {
+      if (cave.layers.block[index] || isBarrier(cave, index)) continue;
+      const block = chooseRefillColor(state, colors);
+      if (!block) continue;
+      cave.layers.block[index] = block;
+      spawned = true;
     }
+    if (!spawned) break;
+    applyGravity(cave, state);
   }
 }
 
@@ -2296,13 +2329,18 @@ function* gimmickHitResults(state, matches, removedBlocks) {
   const { cave } = state;
   for (const [index, id] of cave.layers.gimmick.entries()) {
     if (!id || isExcluded(cave, index) || state.activatedGimmicks.has(index)) continue;
-    const durability = ddungBoxDurability(cave, index);
+    const boxDurability = ddungBoxDurability(cave, index);
+    const originId = state.gimmickOrigins.get(index);
+    const rule = cave.gimmickRules?.[id];
+    const durability = boxDurability || rule?.durability || (originId ? 1 : 0);
     if (isDdungSource(cave.externalSource) && !durability) continue;
     const nearbyHits = durability ? removedBlocks : matches;
-    if (matches.has(index) || neighborsOf(cave, index).some((neighbor) => nearbyHits.has(neighbor))) {
+    const reaction = boxDurability ? "either" : rule?.reaction ?? "either";
+    if ((reaction !== "adjacent" && matches.has(index)) ||
+        (reaction !== "direct" && neighborsOf(cave, index).some((neighbor) => nearbyHits.has(neighbor)))) {
       const exhausted = durability > 0 && state.gimmickHits[index] + 1 >= durability;
-      const replacement = exhausted && id === "ddung-iron-box" ? "ddung-box" : null;
-      yield { index, id, durability, replacement, broken: !durability || (exhausted && !replacement) };
+      const replacement = exhausted ? (boxDurability && id === "ddung-iron-box" ? "ddung-box" : rule?.nextId) : null;
+      yield { index, id, originId, durability, replacement, broken: !durability || (exhausted && !replacement) };
     }
   }
 }
@@ -2333,13 +2371,14 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     terrainBroken += terrainResult.broken;
     terrainResult.brokenDetails.forEach(({ terrainId }) => advanceObjectives(state, "terrain", terrainId));
     const convertedBoxes = [];
-    for (const { index, id, durability, replacement, broken } of gimmickHitResults(state, matches, removedBlocks)) {
+    for (const { index, id, originId, durability, replacement, broken } of gimmickHitResults(state, matches, removedBlocks)) {
       if (durability) {
         state.gimmickHits[index] += 1;
         if (replacement) {
           state.cave.layers.gimmick[index] = replacement;
           state.gimmickHits[index] = 0;
-          convertedBoxes.push(index);
+          if (id === "ddung-iron-box") convertedBoxes.push(index);
+          else if (!originId) state.gimmickOrigins.set(index, id);
           continue;
         }
         if (!broken) continue;
@@ -2348,7 +2387,8 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
       } else {
         state.activatedGimmicks.add(index);
       }
-      advanceObjectives(state, "gimmick", id);
+      advanceObjectives(state, "gimmick", originId ?? id);
+      state.gimmickOrigins.delete(index);
     }
     clearableCells.forEach((index) => {
       const blockId = state.cave.layers.block[index];
@@ -2427,7 +2467,7 @@ function scoreAutoMove(state, { hits, targetedTerrain }, goals, created = new Ma
     const { layer } = objective;
     if (layer === "terrain" || layer === "gimmick") {
       const relevant = layer === "terrain" ? terrain.filter((hit) => matchesId(hit.terrainId))
-        : gimmicks.filter((hit) => matchesId(hit.id));
+        : gimmicks.filter((hit) => matchesId(hit.originId ?? hit.id));
       const cleared = relevant.filter((hit) => hit.broken).length;
       progress += Math.min(remaining, cleared);
       if (cleared < remaining) {
@@ -2538,7 +2578,7 @@ function specialEffectLabel(effect) {
 
 const DEFAULT_SPECIAL_EFFECTS = Object.freeze({ horizontal: "row", vertical: "column", bomb: "area", rainbow: "color", bee: "target" });
 
-const DDUNG_SPECIAL_EFFECTS = Object.freeze({ 1: "row", 2: "column", 3: "area", 8: "fish" });
+const DDUNG_SPECIAL_EFFECTS = Object.freeze({ 1: "row", 2: "column", 3: "area", 5: "color", 8: "fish" });
 
 function specialEffect(cave, piece) {
   if (!piece) return null;
@@ -2592,8 +2632,12 @@ function findBeeTarget(state, hits, protectedCells, random) {
 }
 
 function canCombineSpecials(cave, first, second) {
-  return neighborsOf(cave, first).includes(second) && [first, second].every((index) =>
-    cave.layers.block[index] && !isSwapBlocked(cave, index) && specialEffect(cave, cave.playtestPieces[index]));
+  if (!neighborsOf(cave, first).includes(second)) return false;
+  const pair = [first, second];
+  if (pair.some((index) => !cave.layers.block[index] || isSwapBlocked(cave, index))) return false;
+  const effects = pair.map((index) => specialEffect(cave, cave.playtestPieces[index]));
+  return effects.every(Boolean) || (effects.includes("color") && pair.some((index) =>
+    !cave.playtestPieces[index] && cave.layers.block[index] !== "ddung-dust-piece"));
 }
 
 function specialComboHits(state, first, second, random = () => 0.5) {
@@ -2631,6 +2675,13 @@ function specialComboHits(state, first, second, random = () => 0.5) {
       commands.set(index, [{ op: bombs ? "area" : bees ? "fish" : order % 2 ? "column" : "row" }]);
     }
     label = "같은 색을 특수 피스로 바꿔 연쇄 발동";
+  } else if (colors && effects.includes(null)) {
+    const partner = pair[effects[0] === "color" ? 1 : 0];
+    const color = cave.layers.block[partner];
+    cave.layers.block.forEach((block, index) => {
+      if (block === color && !isSwapBlocked(cave, index)) hits.add(index);
+    });
+    label = "선택한 블록과 같은 색 제거";
   } else if (bees && (lines.length || bombs || bees === 2)) {
     const count = bees === 2 ? 3 : 1;
     for (let flight = 0; flight < count; flight += 1) {
@@ -2845,7 +2896,8 @@ function playSimulationTurn(state, action, captureFrame) {
 function createPlayState(cave, seedSuffix, manual = false) {
   const copy = deepCopy(cave);
   copy.layers.block.forEach((id, index) => {
-    if (id && (ddungBoxDurability(copy, index) || isDdungGimmickBarrier(copy, index))) copy.layers.block[index] = null;
+    if (id && (ddungBoxDurability(copy, index) || isDdungGimmickBarrier(copy, index) ||
+        copy.gimmickRules?.[copy.layers.gimmick[index]]?.blocksFlow)) copy.layers.block[index] = null;
   });
   copy.playtestPieces = copy.layers.block.map((block, index) => {
     const piece = block ? initialPieceAt(copy, index) : null;
@@ -2864,6 +2916,7 @@ function createPlayState(cave, seedSuffix, manual = false) {
     beeRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|bee`),
     terrainHits: Array(copy.width * copy.height).fill(0),
     gimmickHits: Array(copy.width * copy.height).fill(0),
+    gimmickOrigins: new Map(),
     activatedGimmicks: new Set(),
     objectiveProgress: createObjectiveProgress(copy),
     goalLimitations: copy.objectives.map((objective) => ddungGoalLimitation(copy, objective)),
@@ -3151,14 +3204,16 @@ function playtestCell(index) {
   state.hint = null;
 
   if (state.comboMode) {
-    if (isSwapBlocked(cave, index) || !specialEffect(cave, cave.playtestPieces[index])) {
-      state.message = "조합할 수 있는 특수 피스를 선택하세요.";
+    if (isSwapBlocked(cave, index)) {
+      state.message = "교환할 수 있는 칸을 선택하세요.";
     } else if (state.selectedIndex === index) {
       state.selectedIndex = null;
       state.message = "선택을 취소했습니다.";
     } else if (state.selectedIndex === null) {
-      state.selectedIndex = index;
-      state.message = "선택한 피스에 붙어 있는 특수 피스를 클릭하세요.";
+      const effect = specialEffect(cave, cave.playtestPieces[index]);
+      if (effect) state.selectedIndex = index;
+      state.message = effect === "color" ? "오색 피스에 붙어 있는 일반 블록이나 특수 피스를 클릭하세요."
+        : effect ? "선택한 피스에 붙어 있는 특수 피스를 클릭하세요." : "먼저 특수 피스를 선택하세요.";
     } else if (canCombineSpecials(cave, state.selectedIndex, index)) {
       const action = { first: state.selectedIndex, second: index, combo: true };
       state.selectedIndex = null;
@@ -3166,7 +3221,7 @@ function playtestCell(index) {
       animatePlaytestTurn(state, action);
       return;
     } else {
-      state.message = "가로 또는 세로로 붙어 있는 특수 피스만 조합할 수 있습니다.";
+      state.message = "가로·세로로 붙은 특수 피스끼리 또는 오색 피스와 일반 블록을 조합하세요.";
     }
     renderPlaytest();
     return;
@@ -4132,6 +4187,7 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers,
     width, height, gravity: valueAt(source, ["gravity", "gravityDirection", "direction"], "down"), layers,
     flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "left-first"),
     terrainRules: valueAt(source, ["terrainRules", "terrainBehavior", "terrainBehaviors"], undefined),
+    gimmickRules: source.gimmickRules,
     usableBlocks, objectives, targetType, targetCount, moveLimit, parMoves, testClearMoves,
     failureBonus: Boolean(valueAt(source, ["failureBonus", "useFailureBonus"], false)),
     note: valueAt(source, ["note", "description", "memo"], ""),
