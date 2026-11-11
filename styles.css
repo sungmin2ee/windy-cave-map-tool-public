@@ -65,6 +65,8 @@ button { color: inherit; }
 
 .version-control { display: flex; align-items: center; gap: 9px; }
 .version-control label, .eyebrow { font-size: 10px; color: var(--muted); letter-spacing: .14em; font-weight: 800; }
+.version-stepper { display: flex; align-items: center; gap: 4px; }
+.version-stepper .button { padding-inline: 8px; }
 .version-control label { white-space: nowrap; }
 .version-control input {
   width: 90px; border: 1px solid var(--border); background: var(--panel-2);

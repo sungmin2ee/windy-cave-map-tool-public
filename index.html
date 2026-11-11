@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>Windy Cave Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=11" />
+    <link rel="stylesheet" href="./styles.css?v=13" />
   </head>
   <body>
     <div class="app-shell">
@@ -21,7 +21,11 @@
 
         <div class="version-control">
           <label for="versionInput">CONTENT VERSION</label>
-          <input id="versionInput" value="V0001" maxlength="16" />
+          <div class="version-stepper">
+            <button type="button" class="button ghost" id="versionDown" aria-label="콘텐츠 버전 내리기">−</button>
+            <input id="versionInput" value="V0001" maxlength="16" />
+            <button type="button" class="button ghost" id="versionUp" aria-label="콘텐츠 버전 올리기">+</button>
+          </div>
         </div>
 
         <div class="build-info" title="클라이언트 버전은 실행 코드, 스키마 버전은 JSON 구조의 호환 기준입니다.">
@@ -33,6 +37,8 @@
           <button class="button ghost" id="importButton">JSON 가져오기</button>
           <button class="button ghost" id="exportButton">JSON 내보내기</button>
           <button class="button primary" id="saveButton">저장</button>
+          <button class="button ghost" id="exportPatchButton" title="기준 전체 JSON을 선택해 변경분을 내보냅니다">패치 내보내기</button>
+          <input id="patchBaseFile" type="file" accept=".json,application/json" hidden />
           <input id="importFile" type="file" accept="application/json" hidden />
         </div>
       </header>
@@ -134,8 +140,6 @@
             </select>
             <small class="rule-help">서로 다른 파생 시드로 휴리스틱 플레이를 반복해 클리어율과 Moves 분포를 계산합니다.</small>
 
-            <div class="difficulty-summary" id="difficultySummary" aria-live="polite"></div>
-
             <div class="random-panel">
               <span class="field-label">랜덤 배치</span>
               <div class="field-row">
@@ -151,6 +155,8 @@
               <button class="button full randomize" id="randomizeButton">시드로 블록 랜덤 배치</button>
               <small>같은 시드·크기·색상이면 같은 결과이며, 시작 3-Match는 만들지 않습니다.</small>
             </div>
+
+            <div class="difficulty-summary" id="difficultySummary" aria-live="polite"></div>
 
             <label class="check-field">
               <input id="failureBonus" type="checkbox" />
@@ -291,7 +297,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=12"></script>
+    <script src="./app.js?v=13"></script>
   </body>
 </html>
 

@@ -308,7 +308,7 @@ function normalizeCave(data, index = 0) {
 function loadProject() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (saved?.caves?.length) return normalizeProject(saved);
+    if (saved?.caves?.length) return normalizeProject({ ...saved, contentVersion: saved.version || saved.contentVersion });
   } catch (_) {}
   return defaultProject();
 }
@@ -786,6 +786,7 @@ function randomizeBlocks() {
   }
   snapshot();
   cave.layers.block = blocks;
+  project.paletteAssets = collectPaletteAssets(project.caves, project.paletteAssets);
   cave.randomSeed = seed;
   cave.randomDensity = density;
   renderAll(); persist();
@@ -1374,6 +1375,36 @@ function usePlaytestResult() {
   $("simulationDialog").close();
 }
 
+function setContentVersion(value) {
+  const version = value.trim() || "V0001";
+  if (version !== project.version) {
+    snapshot();
+    project.version = version;
+    persist();
+  }
+  $("versionInput").value = project.version;
+}
+
+function stepContentVersion(delta) {
+  const match = /^(.*?)(\d+)$/.exec(project.version);
+  if (!match) return toast("버전 끝에 숫자를 입력하세요.");
+  const [, prefix, digits] = match;
+  const number = BigInt(digits) + BigInt(delta);
+  if (number < 0n) return;
+  const version = prefix + String(number).padStart(digits.length, "0");
+  if (version.length <= $("versionInput").maxLength) setContentVersion(version);
+}
+
+function downloadJson(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function exportProject() {
   persist();
   const payload = {
@@ -1384,10 +1415,51 @@ function exportProject() {
     minimumClientVersion: CLIENT_VERSION,
     exportedAt: new Date().toISOString(),
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
-  anchor.href = url; anchor.download = `windy-caves-${project.version.toLowerCase()}.json`; anchor.click(); URL.revokeObjectURL(url);
+  downloadJson(payload, `windy-caves-${project.version.toLowerCase()}.json`);
   toast("프로젝트 JSON을 내보냈습니다.");
+}
+
+function buildPatch(baseData) {
+  if (!baseData?.caves?.length || baseData.type === "patch" || baseData.patch) {
+    throw new Error("기준으로 사용할 전체 Windy Cave JSON을 선택하세요.");
+  }
+  assertImportCompatibility(baseData);
+  const baseVersion = String(baseData.contentVersion || baseData.version || "").trim();
+  if (!baseVersion || baseVersion === project.version) {
+    throw new Error("기준 JSON과 현재 콘텐츠 버전은 서로 달라야 합니다.");
+  }
+  if (baseData.caves.some((cave) => !cave?.id) ||
+      new Set(baseData.caves.map((cave) => String(cave.id))).size !== baseData.caves.length) {
+    throw new Error("기준 JSON의 Cave마다 고유 ID가 필요합니다.");
+  }
+  const base = normalizeProject(baseData);
+  const baseCaves = new Map(base.caves.map((cave) => [String(cave.id), JSON.stringify(cave)]));
+  const currentCaves = project.caves.map(normalizeCave);
+  const currentIds = new Set(currentCaves.map((cave) => String(cave.id)));
+  return {
+    schema: `windy-cave-map-tool/v${SCHEMA_VERSION}`,
+    schemaVersion: SCHEMA_VERSION,
+    type: "patch",
+    baseContentVersion: baseVersion,
+    contentVersion: project.version,
+    minimumClientVersion: CLIENT_VERSION,
+    paletteAssets: project.paletteAssets,
+    patch: {
+      upsertCaves: currentCaves.filter((cave) => baseCaves.get(String(cave.id)) !== JSON.stringify(cave)),
+      removeCaveIds: [...baseCaves.keys()].filter((id) => !currentIds.has(id)),
+    },
+  };
+}
+
+async function exportPatch(file) {
+  if (!file) return;
+  try {
+    const patch = buildPatch(JSON.parse(await file.text()));
+    downloadJson(patch, `windy-patch-${patch.baseContentVersion}-to-${patch.contentVersion}.json`);
+    toast(`패치 ${patch.baseContentVersion} → ${patch.contentVersion} 내보내기 완료`);
+  } catch (error) {
+    toast(error.message || "패치 JSON을 만들 수 없습니다.");
+  }
 }
 
 function parseSchemaVersion(data) {
@@ -1441,6 +1513,8 @@ function applyPatchPayload(data) {
   });
   if (!next.caves.length) throw new Error("패치 적용 결과 Cave가 하나도 남지 않습니다.");
   next.version = String(data?.contentVersion || patch?.contentVersion || baseVersion);
+  next.contentVersion = next.version;
+  if (data.paletteAssets) next.paletteAssets = data.paletteAssets;
   if (!next.caves.some((cave) => cave.id === next.activeCaveId)) next.activeCaveId = next.caves[0].id;
   return { project: normalizeProject(next), format: `패치 ${baseVersion} → ${next.version}`, unknownTokens: [] };
 }
@@ -1848,7 +1922,15 @@ function bindInputs() {
   $("importButton").addEventListener("click", () => $("importFile").click());
   $("importFile").addEventListener("change", (event) => importProject(event.target.files[0]));
   $("caveSearch").addEventListener("input", (event) => { caveSearchQuery = event.target.value; renderCaveList(); });
-  $("versionInput").addEventListener("change", (event) => { snapshot(); project.version = event.target.value.trim() || "V0001"; persist(); });
+  $("versionInput").addEventListener("change", (event) => setContentVersion(event.target.value));
+  $("versionDown").addEventListener("click", () => stepContentVersion(-1));
+  $("versionUp").addEventListener("click", () => stepContentVersion(1));
+  $("exportPatchButton").addEventListener("click", () => $("patchBaseFile").click());
+  $("patchBaseFile").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    event.target.value = "";
+    exportPatch(file);
+  });
   $("caveName").addEventListener("change", (event) => { snapshot(); activeCave().name = event.target.value.trim() || "Untitled Cave"; renderAll(); persist(); });
   $("addObjectiveButton").addEventListener("click", addObjective);
   $("moveLimit").addEventListener("change", updateRule);
