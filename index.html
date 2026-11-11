@@ -63,7 +63,10 @@
     }
     .import-tile-cell { height: 28px; display: grid; place-items: center; background: #202634; border-radius: 4px; }
   .import-tile-selected { outline: 2px solid #ffcf63; outline-offset: -2px; color: #fff; background: #382b15 !important; font-weight: bold; }
-  </style>
+  .board-shape-grid { display: grid; gap: 2px; margin: 8px auto 0; width: max-content; }
+    .board-shape-grid > span { height: 10px; border-radius: 2px; background: #879ab9; }
+    .board-shape-grid > .board-shape-blocked { background: #191e2b; box-shadow: inset 0 0 0 1px #52617a; }
+    </style>
   </head>
   <body>
     <div class="app-shell">
@@ -218,6 +221,7 @@
                 </label>
               </div>
               <button class="button full randomize" id="randomizeButton">시드로 블록 랜덤 배치</button>
+                <button id="boardShapeButton" class="button ghost" type="button">보드 모양 후보</button>
               <small>같은 시드·크기·색상이면 같은 결과이며, 시작 3-Match는 만들지 않습니다.</small>
             </div>
 
@@ -378,6 +382,18 @@
 
     <div class="toast" id="toast" role="status"></div>
 
+    <dialog id="boardShapeDialog" class="simulation-dialog" aria-labelledby="boardShapeTitle">
+      <div class="dialog-header"><h2 id="boardShapeTitle">보드 모양 후보</h2></div>
+      <div style="max-height: 60vh; overflow: auto;">
+        <label>대칭 <select id="boardShapeSymmetry" class="field"><option value="none">없음</option><option value="horizontal">좌우 대칭</option><option value="vertical">상하 대칭</option></select></label>
+        <label>막힌 칸 (%) <input id="boardShapePercent" class="field" type="number" min="0" max="70" value="20"></label>
+        <button id="boardShapeRefresh" class="button ghost" type="button">후보 다시 생성</button>
+        <p id="boardShapeStatus" role="status"></p>
+        <p>어두운 칸은 막힌 칸입니다. 후보를 적용하면 현재 막힌 칸 배치가 바뀝니다.</p>
+        <div id="boardShapeOptions" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+      </div>
+      <form method="dialog" class="dialog-footer"><button class="button ghost">취소</button></form>
+    </dialog>
     <dialog id="importPreview" class="simulation-dialog" aria-labelledby="importPreviewTitle">
       <div class="dialog-header"><h2 id="importPreviewTitle">JSON 가져오기 미리보기</h2></div>
       <div style="max-height: 50vh; overflow: auto; overflow-wrap: anywhere;">
@@ -493,7 +509,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=56"></script>
+    <script src="./app.js?v=57"></script>
   </body>
 </html>
 
