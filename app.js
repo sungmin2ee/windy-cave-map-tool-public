@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.14";
+const CLIENT_VERSION = "2.7.15";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -764,7 +764,9 @@ function deleteSelectedAsset() {
       button.addEventListener("click", () => {
         dialog.close();
         $("caveJump").value = String(cave.number);
+        assetLocator = { caveId: cave.id, layer, id, name };
         jumpToCave();
+        stepLocatedAsset(0);
       });
       item.appendChild(button);
       list.appendChild(item);
@@ -826,9 +828,38 @@ function syncToolButtons() {
   document.querySelectorAll("[data-tool]").forEach((button) => button.classList.toggle("active", button.dataset.tool === activeTool));
 }
 
+let assetLocator = null;
+
+function locatedAssetCells(cave) {
+  if (assetLocator?.caveId !== cave.id) return [];
+  return cave.layers[assetLocator.layer].flatMap((id, index) => id === assetLocator.id ? [index] : []);
+}
+
+function stepLocatedAsset(delta) {
+  const cells = locatedAssetCells(activeCave());
+  if (!cells.length) return;
+  const current = cells.indexOf(assetLocator.index);
+  const next = current < 0 ? (delta < 0 ? cells.length - 1 : 0) : (current + delta + cells.length) % cells.length;
+  assetLocator.index = cells[next];
+  renderGrid();
+  $("mapGrid").querySelector(".asset-located-current")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
 function renderGrid() {
   const cave = activeCave();
   const grid = $("mapGrid");
+  const located = locatedAssetCells(cave);
+  const current = assetLocator?.caveId === cave.id ? assetLocator : null;
+  if (current && !located.includes(current.index)) current.index = located[0];
+  $("assetLocator").hidden = !current;
+  if (current) {
+    $("assetLocatorStatus").textContent = located.length
+      ? `${current.name} · ${located.indexOf(current.index) + 1} / ${located.length}칸`
+      : `${current.name} · 배치된 칸 없음`;
+    $("assetLocatorPrev").disabled = located.length < 2;
+    $("assetLocatorNext").disabled = located.length < 2;
+  }
+  const locatedSet = new Set(located);
   grid.style.gridTemplateColumns = `repeat(${cave.width}, var(--cell-size))`;
   grid.innerHTML = "";
   for (let index = 0; index < cave.width * cave.height; index += 1) {
@@ -838,6 +869,10 @@ function renderGrid() {
     cell.setAttribute("role", "button");
     cell.setAttribute("aria-label", cellDescription(cave, index));
     applyCellVisual(cell, cave, index);
+    if (locatedSet.has(index)) {
+      cell.classList.add("asset-located");
+      if (current.index === index) cell.classList.add("asset-located-current");
+    }
     cell.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
       event.preventDefault(); isPainting = true; strokeSnapshotTaken = false;
@@ -2573,6 +2608,9 @@ function bindInputs() {
     renderAll();
     persist();
   });
+  $("assetLocatorPrev").addEventListener("click", () => stepLocatedAsset(-1));
+  $("assetLocatorNext").addEventListener("click", () => stepLocatedAsset(1));
+  $("assetLocatorClose").addEventListener("click", () => { assetLocator = null; renderGrid(); });
   $("deleteSelectedAsset").addEventListener("click", deleteSelectedAsset);
   $("showAssetDefinition").addEventListener("click", () => {
     $("assetDefinitionForm").reset();

@@ -22,6 +22,9 @@
       .editor-area { grid-template-rows: auto minmax(280px, 55vh) 104px; }
       .left-panel, .right-panel { overflow: visible; }
     }
+      #assetLocator { padding: 8px; flex-shrink: 0; }
+    .map-cell.asset-located { outline: 2px solid #ffd166; outline-offset: -2px; }
+    .map-cell.asset-located-current { outline: 3px solid #fff; outline-offset: -3px; }
   </style>
   </head>
   <body>
@@ -208,6 +211,12 @@
           </div>
 
           <div class="canvas-stage panel">
+            <div id="assetLocator" hidden>
+              <span id="assetLocatorStatus" role="status"></span>
+              <button type="button" class="button ghost" id="assetLocatorPrev">이전 칸</button>
+              <button type="button" class="button ghost" id="assetLocatorNext">다음 칸</button>
+              <button type="button" class="button ghost" id="assetLocatorClose">강조 끄기</button>
+            </div>
             <div class="canvas-header">
               <div>
                 <span class="eyebrow">CURRENT CAVE</span>
@@ -368,7 +377,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=32"></script>
+    <script src="./app.js?v=33"></script>
   </body>
 </html>
 
