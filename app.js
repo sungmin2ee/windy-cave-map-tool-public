@@ -141,6 +141,7 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
   return {
     id: crypto.randomUUID(), number, name, width, height, gravity: "down", layers,
     usableBlocks: [],
+    levelSettings: normalizeLevelSettings({}),
     objectives: [],
     targetType: null, targetCount: 0,
     moveLimit: 20, parMoves: 14, testClearMoves: 0,
