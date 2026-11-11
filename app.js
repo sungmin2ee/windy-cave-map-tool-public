@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.6.0";
+const CLIENT_VERSION = "2.6.1";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -636,12 +636,20 @@ function renderPalette() {
     const color = blockColor(name);
     const button = document.createElement("button");
     button.className = `color-toggle${activeCave().usableBlocks.includes(name) ? " active" : ""}`;
-    button.style.background = color;
-    button.title = name;
+    button.setAttribute("aria-pressed", String(activeCave().usableBlocks.includes(name)));
+    button.title = getAsset("block", name).name;
+    const swatch = document.createElement("span");
+    swatch.className = "color-swatch";
+    swatch.style.background = color;
+    const label = document.createElement("span");
+    label.textContent = getAsset("block", name).name;
+    button.append(swatch, label);
     button.addEventListener("click", () => {
       snapshot();
       const usable = activeCave().usableBlocks;
-      activeCave().usableBlocks = usable.includes(name) ? usable.filter((value) => value !== name) : [...usable, name];
+      const enabling = !usable.includes(name);
+      activeCave().usableBlocks = enabling ? [...usable, name] : usable.filter((value) => value !== name);
+      if (enabling && activeCave().blockWeights?.[name] === 0) activeCave().blockWeights[name] = 1;
       renderPalette(); persist();
     });
     colors.appendChild(button);
@@ -814,8 +822,9 @@ function randomizeBlocks() {
     if (isBarrier(cave, index)) continue;
     eligible.push(index);
     if (random() * 100 >= density) continue;
-    const candidates = [...colors].sort(() => random() - 0.5).filter((color) => !wouldCreateMatch(blocks, index, color, cave));
-    blocks[index] = candidates[0] || null;
+    const enabled = colors.filter((color) => cave.blockWeights?.[color] !== 0);
+    const candidates = (enabled.length ? enabled : colors).filter((color) => !wouldCreateMatch(blocks, index, color, cave));
+    blocks[index] = candidates.length ? chooseBlockColor(cave, candidates, random) : null;
   }
   const shortfalls = [];
   for (const objective of cave.objectives.filter((item) => item.layer === "block")) {
@@ -1152,7 +1161,7 @@ function refillBlocks(cave, random) {
   if (!colors.length) return;
   for (let index = 0; index < cave.layers.block.length; index += 1) {
     if (!cave.layers.block[index] && !isBarrier(cave, index)) {
-      cave.layers.block[index] = colors[Math.floor(random() * colors.length)];
+      cave.layers.block[index] = chooseBlockColor(cave, colors, random);
     }
   }
 }
@@ -1768,19 +1777,19 @@ function applyDdungTile(layers, index, character, unknownTokens) {
   layers.gimmick[index] = "switch";
 }
 
-function ddungWeightedColor(source, usableBlocks, random) {
-  const text = String(source.objectpercent || "");
-  const weighted = usableBlocks.map((color) => {
-    const colorIndex = DDUNG_COLOR_IDS.indexOf(color);
-    return { color, weight: Number(text.slice(colorIndex * 2, colorIndex * 2 + 2)) || 1 };
+function chooseBlockColor(cave, colors, random) {
+  const weights = colors.map((color) => {
+    const value = cave.blockWeights?.[color];
+    return value == null ? 1 : Math.max(0, Number(value) || 0);
   });
-  const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  if (!total) return colors[Math.floor(random() * colors.length)];
   let cursor = random() * total;
-  for (const entry of weighted) {
-    cursor -= entry.weight;
-    if (cursor <= 0) return entry.color;
+  for (let index = 0; index < colors.length; index += 1) {
+    cursor -= weights[index];
+    if (cursor < 0) return colors[index];
   }
-  return usableBlocks[0];
+  return colors[colors.length - 1];
 }
 
 function adaptDdungMapInfo(source, index, format, unknownTokens) {
@@ -1813,10 +1822,16 @@ function adaptDdungMapInfo(source, index, format, unknownTokens) {
   });
   ddungPositionGroups(source.watercolors, 4).forEach((group) => {
     const cellIndex = ddungGridIndex(size, Number(group[0]), Number(group[1]));
-    const color = DDUNG_COLOR_IDS[Number(group[2])];
+    const color = DDUNG_COLOR_IDS[Number(group[2]) - 1];
     if (cellIndex >= 0 && color) layers.block[cellIndex] = color;
   });
-  const usableBlocks = String(source.colors || "").split(",").map((value) => DDUNG_COLOR_IDS[Number(value)]).filter(Boolean);
+  const usableBlocks = [...new Set(String(source.colors || "").split(",")
+    .map((value) => value.trim())
+    .filter((value) => /^\d+$/.test(value))
+    .map((value) => DDUNG_COLOR_IDS[Number(value)]).filter(Boolean))];
+  const blockWeights = Number(source.objectcreate) !== 0 && /^\d{12}$/.test(String(source.objectpercent || ""))
+    ? Object.fromEntries(usableBlocks.map((color, position) => [color, Number(source.objectpercent.slice(position * 2, position * 2 + 2))]))
+    : undefined;
   const objectives = (Array.isArray(source.targets) ? source.targets : []).slice(0, MAX_OBJECTIVES).map((target, targetIndex) => ddungObjective(target, targetIndex, unknownTokens));
   const gravity = ({ 0: "up", 1: "down", 2: "left", 3: "right" })[Number(source.GravityType)] || "down";
   const cave = normalizeCave({
@@ -1824,6 +1839,7 @@ function adaptDdungMapInfo(source, index, format, unknownTokens) {
     name: `DDUNG Level ${String(source.level ?? index + 1).padStart(4, "0")}`,
     width: size, height: size, gravity, layers,
     usableBlocks: usableBlocks.length ? usableBlocks : Object.keys(COLORS),
+    blockWeights,
     objectives: objectives.length ? objectives : undefined,
     moveLimit: clampNumber(source.count, 20, 1, 999),
     parMoves: Math.max(1, Math.ceil(clampNumber(source.count, 20, 1, 999) * 0.7)),
@@ -1838,10 +1854,10 @@ function adaptDdungMapInfo(source, index, format, unknownTokens) {
   const random = seededRandom(`${cave.randomSeed}|import`);
   for (let cellIndex = 0; cellIndex < cave.layers.block.length; cellIndex += 1) {
     if (cave.layers.block[cellIndex] || isBarrier(cave, cellIndex)) continue;
-    const candidates = [...cave.usableBlocks].sort(() => random() - 0.5);
-    let color = candidates.find((candidate) => !wouldCreateMatch(cave.layers.block, cellIndex, candidate, cave));
-    if (!color) color = ddungWeightedColor(source, cave.usableBlocks, random);
-    cave.layers.block[cellIndex] = color;
+    const enabled = cave.usableBlocks.filter((color) => cave.blockWeights?.[color] !== 0);
+    const colors = enabled.length ? enabled : cave.usableBlocks;
+    const candidates = colors.filter((color) => !wouldCreateMatch(cave.layers.block, cellIndex, color, cave));
+    cave.layers.block[cellIndex] = chooseBlockColor(cave, candidates.length ? candidates : colors, random);
   }
   syncLegacyTarget(cave);
   return cave;
