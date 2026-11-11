@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.1";
+const CLIENT_VERSION = "2.7.2";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -137,7 +137,7 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
   const height = 12;
   const layers = emptyLayers(width * height);
   return {
-    id: crypto.randomUUID(), name, width, height, gravity: "down", layers,
+    id: crypto.randomUUID(), number, name, width, height, gravity: "down", layers,
     usableBlocks: [],
     objectives: [],
     targetType: null, targetCount: 0,
@@ -265,6 +265,18 @@ function normalizeProject(data) {
   const rawCaves = Array.isArray(source.caves) ? source.caves : [];
   const caves = rawCaves.map((cave, index) => normalizeCave(cave, index));
   if (!caves.length) caves.push(createCave(1));
+  const usedNumbers = new Set();
+  for (const cave of caves) {
+    if (!Number.isSafeInteger(cave.number) || cave.number < 1 || usedNumbers.has(cave.number)) delete cave.number;
+    else usedNumbers.add(cave.number);
+  }
+  let nextNumber = 1;
+  for (const cave of caves) {
+    if (cave.number) continue;
+    while (usedNumbers.has(nextNumber)) nextNumber += 1;
+    cave.number = nextNumber;
+    usedNumbers.add(nextNumber);
+  }
   const activeCaveId = caves.some((cave) => cave.id === source.activeCaveId) ? source.activeCaveId : caves[0].id;
   const assetDefinitions = normalizeAssetDefinitions(source.assetDefinitions);
   return { ...source, version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets: collectPaletteAssets(caves, source.paletteAssets, assetDefinitions) };
@@ -352,12 +364,14 @@ function loadProject() {
   return defaultProject();
 }
 
-function persist(showMessage = false) {
+function persist(showMessage = false, value = project) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(packProjectForStorage(project)));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(packProjectForStorage(value)));
     if (showMessage) toast("브라우저에 저장했습니다.");
+    return true;
   } catch (_) {
     toast("프로젝트가 너무 커서 브라우저 저장 공간을 초과했습니다. JSON으로 내보내 백업하세요.");
+    return false;
   }
 }
 
@@ -557,8 +571,8 @@ function renderCaveList() {
   let visibleCaves;
   let summary;
   if (query) {
-    visibleCaves = indexedCaves.filter(({ cave, index }) => {
-      const number = String(index + 1);
+    visibleCaves = indexedCaves.filter(({ cave }) => {
+      const number = String(cave.number);
       return cave.name.toLocaleLowerCase().includes(query) || number === query || number.padStart(4, "0").includes(query);
     }).slice(0, 250);
     summary = `${visibleCaves.length}${visibleCaves.length === 250 ? "+" : ""}개 검색 결과 · 전체 ${project.caves.length}개`;
@@ -576,11 +590,10 @@ function renderCaveList() {
     list.innerHTML = `<div class="cave-empty">일치하는 레벨이 없습니다.</div>`;
     return;
   }
-  const digits = Math.max(2, String(project.caves.length).length);
-  visibleCaves.forEach(({ cave, index }) => {
+  visibleCaves.forEach(({ cave }) => {
     const button = document.createElement("button");
     button.className = `cave-item${cave.id === project.activeCaveId ? " active" : ""}`;
-    button.innerHTML = `<span class="cave-number">${String(index + 1).padStart(digits, "0")}</span><strong>${escapeHtml(cave.name)}</strong>`;
+    button.innerHTML = `<span class="cave-number">${String(cave.number).padStart(4, "0")}</span><strong>${escapeHtml(cave.name)}</strong>`;
     button.addEventListener("click", () => { project.activeCaveId = cave.id; undoStack = []; redoStack = []; renderAll(); persist(); });
     list.appendChild(button);
   });
@@ -851,17 +864,55 @@ function resizeMap() {
   renderAll(); persist(); toast(`맵 크기를 ${width} × ${height}(으)로 변경했습니다.`);
 }
 
+function nextCaveNumber() {
+  const used = new Set(project.caves.map((cave) => cave.number));
+  let number = project.caves.length + 1;
+  while (used.has(number)) number += 1;
+  return number;
+}
+
 function addCave() {
   snapshot();
-  const cave = createCave(project.caves.length + 1);
+  const cave = createCave(nextCaveNumber());
   project.caves.push(cave); project.activeCaveId = cave.id; renderAll(); persist(); toast("새 Cave를 만들었습니다.");
 }
 
 function duplicateCave() {
   snapshot();
-  const copy = deepCopy(activeCave()); copy.id = crypto.randomUUID(); copy.name = `${copy.name} Copy`;
+  const copy = deepCopy(activeCave()); copy.id = crypto.randomUUID(); copy.number = nextCaveNumber(); copy.name = `${copy.name} Copy`;
   const index = project.caves.findIndex((c) => c.id === project.activeCaveId);
   project.caves.splice(index + 1, 0, copy); project.activeCaveId = copy.id; renderAll(); persist(); toast("Cave를 복제했습니다.");
+}
+
+function saveCaveAs() {
+  const source = activeCave();
+  const input = window.prompt("저장할 Cave 번호를 입력하세요.", String(nextCaveNumber()));
+  if (input === null) return;
+  const number = Number(input.trim());
+  if (!/^\d+$/.test(input.trim()) || !Number.isSafeInteger(number) || number < 1) {
+    toast("Cave 번호는 1 이상의 정수로 입력하세요.");
+    return;
+  }
+  const label = `Cave ${String(number).padStart(4, "0")}`;
+  const destinationIndex = project.caves.findIndex((cave) => cave.number === number);
+  const destination = project.caves[destinationIndex];
+  if (destination && !window.confirm(`${label} (${destination.name})에 덮어쓸까요?`)) return;
+
+  const copy = deepCopy(source);
+  copy.id = destination?.id ?? crypto.randomUUID();
+  copy.number = number;
+  copy.name = label;
+  const caves = [...project.caves];
+  if (destination) caves[destinationIndex] = copy;
+  else caves.push(copy);
+  const next = { ...project, caves, activeCaveId: copy.id };
+  if (!persist(false, next)) return;
+  snapshot();
+  project = next;
+  caveSearchQuery = "";
+  $("caveSearch").value = "";
+  renderAll();
+  toast(`${label}에 저장했습니다.`);
 }
 
 function deleteCave() {
@@ -1705,7 +1756,10 @@ function applyPatchPayload(data) {
   upserts.forEach((rawCave, index) => {
     const cave = normalizeCave(rawCave, index);
     const existingIndex = next.caves.findIndex((item) => String(item.id) === String(cave.id));
-    if (existingIndex >= 0) next.caves[existingIndex] = cave;
+    if (existingIndex >= 0) {
+      cave.number ??= next.caves[existingIndex].number;
+      next.caves[existingIndex] = cave;
+    }
     else next.caves.push(cave);
   });
   if (!next.caves.length) throw new Error("패치 적용 결과 Cave가 하나도 남지 않습니다.");
@@ -2162,6 +2216,7 @@ function bindInputs() {
   });
   $("newCaveButton").addEventListener("click", addCave);
   $("duplicateCaveButton").addEventListener("click", duplicateCave);
+  $("saveCaveAsButton").addEventListener("click", saveCaveAs);
   $("deleteCaveButton").addEventListener("click", deleteCave);
   $("resizeButton").addEventListener("click", resizeMap);
   $("randomizeButton").addEventListener("click", randomizeBlocks);
