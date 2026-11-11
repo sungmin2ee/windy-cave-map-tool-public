@@ -386,7 +386,11 @@
           <dt>레벨 수</dt><dd id="importPreviewLevels"></dd>
           <dt>맵 크기</dt><dd id="importPreviewSizes"></dd>
           <dt>특수 피스 종류</dt><dd id="importPreviewPieces"></dd>
-          <dt>읽지 못한 타일 값</dt><dd id="importPreviewUnknown"></dd>
+          <dt>읽지 못한 타일 값</dt><dd>
+            <div id="importPreviewUnknown"></div>
+            <button id="importPreviewCopy" class="button ghost" type="button" hidden>목록 복사</button>
+            <span id="importPreviewCopyStatus" role="status"></span>
+          </dd>
         </dl>
         <p id="importPreviewOtherWarnings"></p>
         <section id="importTileBoard" hidden aria-labelledby="importTileTitle">
@@ -489,7 +493,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=54"></script>
+    <script src="./app.js?v=55"></script>
   </body>
 </html>
 
