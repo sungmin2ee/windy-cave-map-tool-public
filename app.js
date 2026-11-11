@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.41";
+const CLIENT_VERSION = "2.7.42";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2356,6 +2356,56 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+function isGridTilesProfile(source) {
+  return Array.isArray(source?.grid?.tiles) && source.grid.tiles.length > 0 &&
+    source.grid.tiles.every((row) => Array.isArray(row) && row.every((tile) => tile == null || typeof tile === "string")) &&
+    (source.specialTiles === undefined || Array.isArray(source.specialTiles));
+}
+
+function buildGridTilesExport(cave) {
+  const source = deepCopy(cave.externalSource.gridTilesTemplate);
+  if (cave.excludedCells?.length || ["terrain", "item", "gimmick"].some((layer) => cave.layers[layer].some(Boolean))) {
+    throw new Error("이 형식에는 비활성 칸, 지형, 아이템 및 기믹을 저장할 수 없습니다.");
+  }
+  if (cave.objectives.some((goal) => goal.layer !== "block")) {
+    throw new Error("이 형식에는 블록 수집 목표만 저장할 수 있습니다.");
+  }
+  source.grid.rows = cave.height;
+  source.grid.columns = cave.width;
+  const originalRows = source.grid.tiles;
+  source.grid.tiles = Array.from({ length: cave.height }, (_, row) =>
+    Array.from({ length: cave.width }, (_, col) => {
+      const tile = originalRows[row]?.[col];
+      const block = cave.layers.block[row * cave.width + col];
+      return block && normalizeAssetId("block", tile) === block ? tile : block ?? null;
+    })
+  );
+  const originalSpecials = new Map((source.specialTiles || []).map((tile) => [tile.row + ":" + tile.col, tile]));
+  source.specialTiles = [];
+  for (let index = 0; index < cave.width * cave.height; index++) {
+    const piece = initialPieceAt(cave, index);
+    if (!piece || !cave.layers.block[index]) continue;
+    const row = Math.floor(index / cave.width);
+    const col = index % cave.width;
+    source.specialTiles.push({ ...originalSpecials.get(row + ":" + col), row, col, type: piece.type });
+  }
+  const collect = {};
+  for (const goal of cave.objectives) collect[goal.targetId] = (collect[goal.targetId] || 0) + resolvedObjectiveCount(cave, goal);
+  source.goals = { ...source.goals, moves: cave.moveLimit, collect };
+  return source;
+}
+
+function exportGridTilesProfile() {
+  const cave = activeCave();
+  if (!cave.externalSource?.gridTilesTemplate) return toast("이 레벨은 grid.tiles 형식에서 가져오지 않았습니다.");
+  try {
+    const source = buildGridTilesExport(cave);
+    downloadJson(source, "grid-tiles-" + (cave.number ?? 1) + ".json");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
 function exportProject() {
   persist();
   const payload = {
@@ -3090,7 +3140,7 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers,
     usableBlocks, objectives, targetType, targetCount, moveLimit, parMoves, testClearMoves,
     failureBonus: Boolean(valueAt(source, ["failureBonus", "useFailureBonus"], false)),
     note: valueAt(source, ["note", "description", "memo"], ""),
-    externalSource: { format, sourceId: valueAt(source, ["id", "levelId", "stageId", "level"], null), goals: source.goals },
+    externalSource: { format, sourceId: valueAt(source, ["id", "levelId", "stageId", "level"], null), goals: source.goals, gridTilesTemplate: isGridTilesProfile(source) ? deepCopy(source) : undefined },
   }, index);
 }
 
@@ -3344,6 +3394,7 @@ function bindInputs() {
   $("usePlaytestResultButton").addEventListener("click", usePlaytestResult);
   $("saveButton").addEventListener("click", () => persist(true));
   $("exportButton").addEventListener("click", exportProject);
+  $("exportGridTiles").addEventListener("click", exportGridTilesProfile);
   $("importButton").addEventListener("click", () => $("importFile").click());
   $("importFile").addEventListener("change", (event) => importProject(event.target.files[0]));
   $("caveJumpForm").addEventListener("submit", (event) => {
