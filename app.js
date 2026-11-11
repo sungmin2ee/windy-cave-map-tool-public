@@ -1826,6 +1826,8 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = []) 
     }
     if (interactive) {
       cell.disabled ||= !canActivate;
+      const piece = cave.playtestPieces[index];
+      if (piece && !canActivate) cell.title = "발동 효과가 연결되지 않은 특수 피스";
       if (canActivate) {
         cell.setAttribute("aria-label", `특수 피스 발동 · ${SPECIAL_EFFECTS[canActivate]}`);
         cell.addEventListener("click", () => playtestCell(index));
@@ -2311,12 +2313,15 @@ const SPECIAL_EFFECTS = {
 
 const DEFAULT_SPECIAL_EFFECTS = Object.freeze({ horizontal: "row", vertical: "column", bomb: "area", rainbow: "color" });
 
+const DDUNG_SPECIAL_EFFECTS = Object.freeze({ 1: "row", 2: "column", 3: "area" });
+
 function specialEffect(cave, piece) {
   if (!piece) return null;
   const id = String(piece.type);
   const declared = cave.initialPieceDefinitions?.find((entry) => entry?.id === id);
   if (declared?.effect === "none") return null;
   if (Object.hasOwn(SPECIAL_EFFECTS, declared?.effect)) return declared.effect;
+  if (isDdungSource(cave.externalSource) && Object.hasOwn(DDUNG_SPECIAL_EFFECTS, id)) return DDUNG_SPECIAL_EFFECTS[id];
   return Object.hasOwn(DEFAULT_SPECIAL_EFFECTS, id) ? DEFAULT_SPECIAL_EFFECTS[id] : null;
 }
 
@@ -2637,9 +2642,9 @@ function startBatchReplay(cave, validation, example) {
   runAnimatedPlaytest(playtestState);
 }
 
-async function showPlaytestFrames(state, frames) {
+async function showPlaytestFrames(state, frames, stopOnPause) {
   for (const frame of frames) {
-    if (playtestState !== state || !$("simulationDialog").open) return;
+    if (playtestState !== state || !$("simulationDialog").open || (stopOnPause && state.paused)) return;
     renderSimulationGrid(frame.cave);
     const grid = $("simulationGrid");
     for (const index of frame.cells) grid.children[index]?.classList.add("playtest-frame-" + frame.kind);
@@ -2657,7 +2662,7 @@ async function animatePlaytestTurn(state, action) {
   state.animating = true;
   try {
     playSimulationTurn(state, action, capture);
-    await showPlaytestFrames(state, frames);
+    await showPlaytestFrames(state, frames, !state.paused);
   } finally {
     state.animating = false;
     if (playtestState === state && $("simulationDialog").open) renderPlaytest();
@@ -2683,6 +2688,7 @@ function togglePlaytestPause() {
   const state = playtestState;
   if (!state || state.status !== "playing") return;
   state.paused = !state.paused;
+  $("playtestPauseButton").textContent = state.paused ? "자동 플레이 계속" : "일시정지";
   if (!state.animating) renderPlaytest();
   if (!state.paused) runAnimatedPlaytest(state);
 }
