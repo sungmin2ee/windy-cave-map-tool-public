@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.6";
+const CLIENT_VERSION = "2.7.7";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1216,7 +1216,7 @@ function showSimulation(playMode) {
       ${batch ? `자동 플레이 난이도 <b>${batch.label}</b> · 휴리스틱 ${validation.analysis.label} (${validation.analysis.score}점)<br>` : `휴리스틱 난이도 ${validation.analysis.label} (${validation.analysis.score}점)<br>`}
       목표 ${objectiveSummary} · 제한 ${cave.moveLimit} · 권장 ${cave.parMoves}${cave.testClearMoves ? ` · 테스트 ${cave.testClearMoves}` : ""}<br>
       여유 Moves ${validation.analysis.slack >= 0 ? "+" : ""}${validation.analysis.slack} · Gravity ${cave.gravity}
-      ${batch ? `<div class="batch-summary"><span><b>${batch.clearRate}%</b>클리어율 (${batch.wins}/${batch.runs})</span><span><b>${batch.average || "-"}</b>평균 Moves</span><span><b>${batch.median || "-"} / ${batch.p90 || "-"}</b>중앙 / 90%</span></div><div>막힘 ${batch.stuck}회 · 목표 우선 휴리스틱 자동 플레이 결과이며 실제 유저 난이도와는 차이가 날 수 있습니다.</div>` : ""}
+      ${batch ? `<div class="batch-summary"><span><b>${batch.clearRate}%</b>클리어율 (${batch.wins}/${batch.runs})</span><span><b>${batch.average || "-"}</b>평균 Moves</span><span><b>${batch.median || "-"} / ${batch.p90 || "-"}</b>중앙 / 90%</span></div><div>${batch.runs}회 중 성공 ${batch.wins}회 · 이동 횟수 소진 ${batch.lost}회 · 가능한 매치 없음 ${batch.stuck}회</div><div>목표 우선 휴리스틱 자동 플레이 결과이며 실제 유저 난이도와는 차이가 날 수 있습니다.</div>` : ""}
       ${issueHtml(validation)}
     `;
     renderSimulationGrid(cave, false);
@@ -1606,6 +1606,7 @@ function runBatchSimulation(cave, runs) {
   return {
     runs,
     wins: wins.length,
+    lost: results.filter((result) => result.status === "lost").length,
     stuck: results.filter((result) => result.status === "stuck").length,
     clearRate,
     average: Number(average.toFixed(1)),
