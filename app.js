@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.7";
+const CLIENT_VERSION = "2.7.8";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1219,6 +1219,14 @@ function showSimulation(playMode) {
       ${batch ? `<div class="batch-summary"><span><b>${batch.clearRate}%</b>클리어율 (${batch.wins}/${batch.runs})</span><span><b>${batch.average || "-"}</b>평균 Moves</span><span><b>${batch.median || "-"} / ${batch.p90 || "-"}</b>중앙 / 90%</span></div><div>${batch.runs}회 중 성공 ${batch.wins}회 · 이동 횟수 소진 ${batch.lost}회 · 가능한 매치 없음 ${batch.stuck}회</div><div>목표 우선 휴리스틱 자동 플레이 결과이며 실제 유저 난이도와는 차이가 날 수 있습니다.</div>` : ""}
       ${issueHtml(validation)}
     `;
+    for (const example of batch?.examples || []) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button ghost";
+      button.textContent = example.status === "lost" ? "이동 횟수 소진 판 다시 플레이" : "매치 없음 판 다시 플레이";
+      button.addEventListener("click", () => startBatchReplay(cave, validation, example));
+      result.appendChild(button);
+    }
     renderSimulationGrid(cave, false);
   }
   $("simulationDialog").showModal();
@@ -1579,19 +1587,21 @@ function createPlayState(cave, seedSuffix) {
 
 function runAutoGame(cave, runIndex) {
   const state = createPlayState(cave, `batch-${runIndex}`);
+  const swaps = [];
   if (state.goalLimitations.some(Boolean)) return { status: "unsupported", moves: 0 };
   while (state.movesLeft > 0 && !allObjectivesComplete(state)) {
     const candidates = listPossibleSwaps(state);
-    if (!candidates.length) return { status: "stuck", moves: cave.moveLimit - state.movesLeft };
+    if (!candidates.length) return { status: "stuck", moves: cave.moveLimit - state.movesLeft, runIndex, swaps };
     const bestScore = Math.max(...candidates.map((candidate) => candidate.score));
     const best = candidates.filter((candidate) => candidate.score === bestScore);
     const chosen = best[Math.floor(state.random() * best.length)];
+    swaps.push([chosen.first, chosen.second]);
     const blocks = state.cave.layers.block;
     [blocks[chosen.first], blocks[chosen.second]] = [blocks[chosen.second], blocks[chosen.first]];
     state.movesLeft -= 1;
     resolveMatches(state);
   }
-  return { status: allObjectivesComplete(state) ? "won" : "lost", moves: cave.moveLimit - state.movesLeft };
+  return { status: allObjectivesComplete(state) ? "won" : "lost", moves: cave.moveLimit - state.movesLeft, runIndex, swaps };
 }
 
 function runBatchSimulation(cave, runs) {
@@ -1605,6 +1615,7 @@ function runBatchSimulation(cave, runs) {
   const label = clearRate >= 80 ? "Easy" : clearRate >= 55 ? "Normal" : clearRate >= 30 ? "Hard" : clearRate > 0 ? "Expert" : "미클리어";
   return {
     runs,
+    examples: ["lost", "stuck"].map((status) => results.find((result) => result.status === status)).filter(Boolean),
     wins: wins.length,
     lost: results.filter((result) => result.status === "lost").length,
     stuck: results.filter((result) => result.status === "stuck").length,
@@ -1614,6 +1625,16 @@ function runBatchSimulation(cave, runs) {
     p90: percentile(0.9),
     label,
   };
+}
+
+function startBatchReplay(cave, validation, example) {
+  playtestState = createPlayState(cave, `batch-${example.runIndex}`);
+  playtestState.validation = validation;
+  playtestState.replay = { cave, example, following: true };
+  if (!example.swaps.length && example.status === "stuck") playtestState.status = "stuck";
+  $("playtestGuide").hidden = false;
+  $("playtestResetButton").hidden = false;
+  renderPlaytest();
 }
 
 function playtestCell(index) {
@@ -1646,6 +1667,12 @@ function playtestCell(index) {
     state.message = "3-Match가 생기지 않아 교환을 되돌렸습니다. Moves는 차감하지 않았습니다.";
     renderPlaytest();
     return;
+  }
+  if (state.replay) {
+    const recorded = state.replay.example.swaps[state.cave.moveLimit - state.movesLeft];
+    state.replay.following &&= Boolean(recorded && recorded.includes(first) && recorded.includes(index));
+    // Automatic play consumes one draw when it chooses a swap.
+    state.random();
   }
   state.movesLeft -= 1;
   const resolved = resolveMatches(state);
@@ -1691,11 +1718,34 @@ function renderPlaytest() {
     ${practice ? issueHtml({ errors: [], warnings: [], unsupported: state.validation.unsupported }) : ""}
   `;
   $("usePlaytestResultButton").hidden = state.status !== "won";
+  if (state.replay) {
+    const used = state.cave.moveLimit - state.movesLeft;
+    const label = document.createElement("p");
+    label.textContent = `자동 검증 ${state.replay.example.runIndex + 1}번째 판 · ${state.replay.following ? "기록된 수 따라가기" : "다른 수로 플레이 중"}`;
+    result.appendChild(label);
+    const next = state.replay.example.swaps[used];
+    if (next && state.replay.following && state.status === "playing") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button ghost";
+      button.textContent = "자동 플레이 다음 수";
+      button.addEventListener("click", () => {
+        state.selectedIndex = next[0];
+        playtestCell(next[1]);
+      });
+      result.appendChild(button);
+    }
+  }
   renderSimulationGrid(state.cave, state.status === "playing", remainingTargets);
 }
 
 function resetPlaytest() {
   if (!playtestState) return;
+  if (playtestState.replay) {
+    const { cave, example } = playtestState.replay;
+    startBatchReplay(cave, playtestState.validation, example);
+    return;
+  }
   const cave = activeCave();
   playtestState = createPlayState(cave, `playtest-${crypto.randomUUID()}`);
   playtestState.validation = validateCave(cave);
