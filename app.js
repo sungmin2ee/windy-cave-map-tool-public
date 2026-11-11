@@ -1831,7 +1831,7 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = []) 
       const piece = cave.playtestPieces[index];
       if (piece && !canActivate) cell.title = "발동 효과가 연결되지 않은 특수 피스";
       if (canActivate) {
-        cell.setAttribute("aria-label", `특수 피스 발동 · ${SPECIAL_EFFECTS[canActivate]}`);
+        cell.setAttribute("aria-label", `특수 피스 발동 · ${specialEffectLabel(canActivate)}`);
       } else if (canSwap) {
         cell.setAttribute("aria-label", cellDescription(cave, index));
         cell.setAttribute("aria-pressed", String(selected));
@@ -2317,6 +2317,56 @@ const SPECIAL_EFFECTS = {
   row: "가로 한 줄", column: "세로 한 줄", area: "주변 3×3", cross: "가로·세로 십자", color: "같은 색 전체",
 };
 
+const SCRIPT_EFFECT_LABEL = "직접 작성한 스크립트";
+const MAX_EFFECT_SCRIPT_LENGTH = 4000;
+const effectScriptCache = new Map();
+
+function parseEffectScript(source) {
+  if (typeof source !== "string" || source.length > MAX_EFFECT_SCRIPT_LENGTH) {
+    throw new Error("스크립트는 4,000자 이내로 입력하세요.");
+  }
+  let commands;
+  try { commands = JSON.parse(source); }
+  catch { throw new Error("스크립트를 JSON 배열로 입력하세요. 따옴표와 쉼표를 확인하세요."); }
+  if (!Array.isArray(commands) || commands.length < 1 || commands.length > 16) {
+    throw new Error("스크립트에는 명령을 1~16개 넣으세요.");
+  }
+  return commands.map((command, index) => {
+    const fail = (message) => { throw new Error((index + 1) + "번째 명령: " + message); };
+    const op = command?.op;
+    if (typeof op !== "string" || !(Object.hasOwn(SPECIAL_EFFECTS, op) || op === "offsets")) {
+      fail("지원 명령은 row, column, cross, area, color, offsets입니다.");
+    }
+    const keys = op === "area" ? ["op", "radius"] : op === "offsets" ? ["op", "cells"] : ["op"];
+    if (Object.keys(command).some((key) => !keys.includes(key))) fail("지원하지 않는 옵션이 있습니다.");
+    if (op === "area" && Object.hasOwn(command, "radius") &&
+        (!Number.isInteger(command.radius) || command.radius < 1 || command.radius > 5)) {
+      fail("radius는 1~5 사이의 정수여야 합니다.");
+    }
+    if (op === "offsets" && (!Array.isArray(command.cells) || command.cells.length < 1 || command.cells.length > 64 ||
+        !command.cells.every((pair) => Array.isArray(pair) && pair.length === 2 &&
+          pair.every((value) => Number.isInteger(value) && Math.abs(value) <= 19)))) {
+      fail("cells에 [가로, 세로] 정수 좌표를 1~64개 입력하세요. 각 값은 -19~19입니다.");
+    }
+    return command;
+  });
+}
+
+function getEffectCommands(source) {
+  if (typeof source !== "string" || source.length > MAX_EFFECT_SCRIPT_LENGTH) return null;
+  if (!effectScriptCache.has(source)) {
+    let commands = null;
+    try { commands = parseEffectScript(source); } catch { /* Invalid imported effects stay inactive. */ }
+    if (effectScriptCache.size >= 64) effectScriptCache.clear();
+    effectScriptCache.set(source, commands);
+  }
+  return effectScriptCache.get(source);
+}
+
+function specialEffectLabel(effect) {
+  return effect === "script" ? SCRIPT_EFFECT_LABEL : SPECIAL_EFFECTS[effect];
+}
+
 const DEFAULT_SPECIAL_EFFECTS = Object.freeze({ horizontal: "row", vertical: "column", bomb: "area", rainbow: "color" });
 
 const DDUNG_SPECIAL_EFFECTS = Object.freeze({ 1: "row", 2: "column", 3: "area" });
@@ -2326,6 +2376,7 @@ function specialEffect(cave, piece) {
   const id = String(piece.type);
   const declared = cave.initialPieceDefinitions?.find((entry) => entry?.id === id);
   if (declared?.effect === "none") return null;
+  if (declared?.effect === "script") return getEffectCommands(declared.effectScript) ? "script" : null;
   if (Object.hasOwn(SPECIAL_EFFECTS, declared?.effect)) return declared.effect;
   if (isDdungSource(cave.externalSource) && Object.hasOwn(DDUNG_SPECIAL_EFFECTS, id)) return DDUNG_SPECIAL_EFFECTS[id];
   return Object.hasOwn(DEFAULT_SPECIAL_EFFECTS, id) ? DEFAULT_SPECIAL_EFFECTS[id] : null;
@@ -2339,13 +2390,27 @@ function expandSpecialHits(cave, matches) {
     const x = index % cave.width;
     const y = Math.floor(index / cave.width);
     const color = cave.layers.block[index];
-    for (let other = 0; other < cave.layers.block.length; other += 1) {
-      const dx = Math.abs(other % cave.width - x);
-      const dy = Math.abs(Math.floor(other / cave.width) - y);
-      const affected = (effect === "row" && dy === 0) || (effect === "column" && dx === 0) ||
-        (effect === "cross" && (dx === 0 || dy === 0)) || (effect === "area" && dx <= 1 && dy <= 1) ||
-        (effect === "color" && color && cave.layers.block[other] === color);
-      if (affected && !isExcluded(cave, other)) hits.add(other);
+    const definition = effect === "script" && cave.initialPieceDefinitions.find((entry) => entry?.id === String(cave.playtestPieces[index].type));
+    const commands = effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }];
+    for (const { op, radius = 1, cells } of commands) {
+      if (op === "offsets") {
+        for (const [dx, dy] of cells) {
+          const targetX = x + dx;
+          const targetY = y + dy;
+          if (targetX < 0 || targetX >= cave.width || targetY < 0 || targetY >= cave.height) continue;
+          const other = targetY * cave.width + targetX;
+          if (!isExcluded(cave, other)) hits.add(other);
+        }
+        continue;
+      }
+      for (let other = 0; other < cave.layers.block.length; other += 1) {
+        const dx = Math.abs(other % cave.width - x);
+        const dy = Math.abs(Math.floor(other / cave.width) - y);
+        const affected = (op === "row" && dy === 0) || (op === "column" && dx === 0) ||
+          (op === "cross" && (dx === 0 || dy === 0)) || (op === "area" && dx <= radius && dy <= radius) ||
+          (op === "color" && color && cave.layers.block[other] === color);
+        if (affected && !isExcluded(cave, other)) hits.add(other);
+      }
     }
   }
   return hits;
@@ -3589,9 +3654,9 @@ function externalInitialPieces(source, grid, width, height) {
   const symbols = ["◆", "▲", "■", "✚", "✦", "●", "◇", "★"];
   return {
     initialPieceTypes: types,
-    initialPieceDefinitions: [...new Set(Object.values(types))].map((id, index) => {
+    initialPieceDefinitions: [...new Set([...Object.values(types), ...definitions.filter((entry) => entry?.id).map((entry) => String(entry.id))])].map((id, index) => {
       const declared = definitions.find((entry) => entry && String(entry.id) === id);
-      return { id, name: String(declared?.name || id), symbol: String(declared?.symbol || symbols[index] || index + 1), effect: declared?.effect };
+      return { id, name: String(declared?.name || id), symbol: String(declared?.symbol || symbols[index] || index + 1), effect: declared?.effect, ...(typeof declared?.effectScript === "string" ? { effectScript: declared.effectScript } : {}) };
     }),
   };
 }
@@ -4084,22 +4149,29 @@ function openSpecialTypeManager() {
   const name = $("specialTypeName");
   const effect = $("specialTypeEffect");
   const status = $("specialTypeStatus");
+  const scriptField = $("specialTypeScriptField");
+  const script = $("specialTypeScript");
+  const showScript = () => { scriptField.hidden = effect.value !== "script"; };
+  effect.onchange = showScript;
   let definitions;
 
   effect.replaceChildren(new Option("발동 효과 없음", "none"));
   for (const [id, label] of Object.entries(SPECIAL_EFFECTS)) effect.add(new Option(label, id));
+  effect.add(new Option(SCRIPT_EFFECT_LABEL, "script"));
 
   const showType = () => {
     const definition = definitions.get(select.value);
     name.value = definition?.name || "";
-    effect.value = specialEffect(cave, definition ? { type: definition.id } : null) || "none";
+    effect.value = definition?.effect === "script" ? "script" : specialEffect(cave, definition ? { type: definition.id } : null) || "none";
+    script.value = definition?.effectScript || "";
+    showScript();
     status.textContent = "";
   };
   const refresh = (selected) => {
     definitions = specialTypeOptions(cave);
     select.replaceChildren(new Option("새 특수 타입", ""));
     for (const entry of definitions.values()) {
-      const label = SPECIAL_EFFECTS[specialEffect(cave, { type: entry.id })] || "발동 효과 없음";
+      const label = (entry.effect === "script" ? SCRIPT_EFFECT_LABEL : specialEffectLabel(specialEffect(cave, { type: entry.id }))) || "발동 효과 없음";
       select.add(new Option(entry.name + " · " + label, entry.id));
     }
     select.value = selected;
@@ -4114,6 +4186,15 @@ function openSpecialTypeManager() {
     const current = definitions.get(select.value);
     const id = current?.id || "custom-" + crypto.randomUUID();
     const updated = { ...current, id, name: label, symbol: current?.symbol || "✦", effect: effect.value };
+    if (updated.effect === "script") {
+      try { parseEffectScript(script.value); }
+      catch (error) {
+        status.textContent = error.message;
+        script.focus();
+        return;
+      }
+      updated.effectScript = script.value.trim();
+    }
     snapshot();
     cave.initialPieceDefinitions = (cave.initialPieceDefinitions || []).filter((entry) => String(entry?.id) !== id);
     cave.initialPieceDefinitions.push(updated);

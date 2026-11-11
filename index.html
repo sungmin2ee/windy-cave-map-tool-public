@@ -495,6 +495,10 @@
         <label>특수 타입<select class="field" id="specialTypeSelect"></select></label>
         <label>이름<input class="field" id="specialTypeName" maxlength="40" required></label>
         <label>발동 효과<select class="field" id="specialTypeEffect"></select></label>
+        <div id="specialTypeScriptField" hidden>
+          <label>발동 스크립트<textarea class="field" id="specialTypeScript" rows="6" maxlength="4000" spellcheck="false" aria-describedby="specialTypeScriptHelp"></textarea></label>
+          <p id="specialTypeScriptHelp">예: <code>[{"op":"row"},{"op":"offsets","cells":[[-1,-1],[1,1]]}]</code>는 가로 한 줄과 대각선 두 칸을 터뜨립니다. 좌표는 피스 기준 [가로, 세로]이며 오른쪽과 아래가 양수입니다. 지원 명령: row, column, cross, area (radius 1~5), color, offsets.</p>
+        </div>
         <button class="button primary" type="submit">타입 저장</button>
         <p id="specialTypeStatus" role="status"></p>
       </form>
@@ -632,6 +636,7 @@
             <li><strong>Playtest</strong>는 블록 교환과 특수 피스 발동을 자동으로 진행합니다. <strong>일시정지</strong> 중에는 특수 피스를 클릭해 직접 발동할 수 있습니다. 발동에는 이동 1회를 사용합니다. 클리어 기록은 <strong>이 기록을 난이도에 사용</strong>으로 반영할 수 있습니다.</li>
             <li><strong>매치로 특수 피스 생성</strong>을 켜면 가로·세로 4매치에서 해당 방향의 줄 폭탄, 5매치에서 같은 색 제거 피스, T/L자 매치에서 주변 3×3 폭탄이 생깁니다. DDUNG에서 가져온 레벨은 이 설정을 켜서 사용할 수 있습니다.</li>
             <li>오른쪽 오브젝트 패널의 <strong>특수 타입 관리</strong>에서 현재 Cave의 특수 타입 이름과 발동 효과를 설정합니다. 효과는 해당 Cave에서 같은 타입을 사용하는 모든 피스에 적용됩니다. <strong>칸 속성</strong>에서 블록 색과 등록된 특수 타입을 선택해 배치합니다.</li>
+            <li>직접 작성한 스크립트를 선택하면 여러 효과를 조합할 수 있습니다. 예를 들어 <code>[{"op":"row"},{"op":"offsets","cells":[[-1,-1],[1,1]]}]</code>는 피스의 가로 한 줄과 대각선 두 칸을 터뜨립니다. Playtest와 자동 플레이에서 같은 효과가 적용됩니다. 스크립트는 지원 명령을 담은 JSON 배열입니다.</li>
             <li><strong>검증</strong>은 현재 Cave를, <strong>범위 검증</strong>은 지정한 번호 범위를 자동으로 검사합니다. 자동 플레이의 클리어율과 Moves는 레벨 밸런스를 비교하는 참고 지표입니다.</li>
             <li><strong>Failure Bonus 사용</strong>은 Cave의 설정값으로 저장됩니다. 현재 Playtest와 자동 검증에서는 이 값을 사용하지 않습니다. DDUNG 원본 JSON에는 해당 항목이 없습니다.</li>
           </ul>
@@ -657,7 +662,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=77"></script>
+    <script src="./app.js?v=78"></script>
   </body>
 </html>
 
