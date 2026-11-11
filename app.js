@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.31";
+const CLIENT_VERSION = "2.7.32";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1009,9 +1009,12 @@ function applyCellVisual(cell, cave, index) {
       const initial = !playtestState || playtestState.cave !== cave || playtestState.movesLeft === cave.moveLimit;
       const piece = initial ? initialPieceAt(cave, index) : null;
       if (piece && (!piece.color || piece.color === assetId)) {
-        visual.classList.add("ddung-initial-special");
-        visual.textContent = piece.symbol;
-        if (playtestState?.cave === cave) visual.title = `초기 피스 타입 ${piece.type}`;
+        const badge = document.createElement("span");
+        badge.className = "initial-piece-badge";
+        badge.textContent = piece.symbol;
+        badge.title = `초기 피스 · ${piece.name || piece.type}`;
+        cell.classList.add("has-initial-piece");
+        cell.appendChild(badge);
       }
     }
     if (layer === "gimmick" || layer === "item" || (layer === "terrain" && !asset.className)) visual.textContent = asset.visual;
@@ -2840,7 +2843,8 @@ function adaptDdungMapInfo(source, index, format, unknownTokens) {
   return cave;
 }
 
-function externalInitialPieces(source, grid, size) {
+function externalInitialPieces(source, grid, width, height) {
+  const size = width * height;
   const types = {};
   const explicit = source.initialPieceTypes || {};
   for (let index = 0; index < size; index++) {
@@ -2851,6 +2855,14 @@ function externalInitialPieces(source, grid, size) {
     if (typeof raw !== "string" && typeof raw !== "number") continue;
     const type = String(raw).trim();
     if (type && !/^(0|normal|none)$/i.test(type)) types[index] = type;
+  }
+  const specialTiles = Array.isArray(source.specialTiles) ? source.specialTiles : [];
+  for (const tile of specialTiles) {
+    const { row, col, type } = tile || {};
+    if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || row >= height || col < 0 || col >= width) continue;
+    if (typeof type === "string" && type.trim() && !/^(0|normal|none)$/i.test(type.trim())) {
+      types[row * width + col] ??= type.trim();
+    }
   }
   const definitions = Array.isArray(source.initialPieceDefinitions) ? source.initialPieceDefinitions : [];
   const symbols = ["◆", "▲", "■", "✚", "✦", "●", "◇", "★"];
@@ -2866,10 +2878,10 @@ function externalInitialPieces(source, grid, size) {
 function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers) {
   if (/^DDUNG MapInfo/i.test(format)) return adaptDdungMapInfo(level, index, format, unknownTokens);
   const source = level && typeof level === "object" ? level : {};
-  const grid = valueAt(source, ["grid", "board", "cells", "tiles", "map.grid", "map.cells", "map.tiles"], []);
+  const grid = valueAt(source, ["grid.tiles", "grid.cells", "grid", "board", "cells", "tiles", "map.grid", "map.cells", "map.tiles"], []);
   const gridRows = Array.isArray(grid) && Array.isArray(grid[0]) ? grid : null;
-  const width = clampNumber(valueAt(source, ["width", "cols", "columns", "boardWidth", "size.width", "map.width"], gridRows?.[0]?.length || 10), 10, 4, 20);
-  const height = clampNumber(valueAt(source, ["height", "rows", "boardHeight", "size.height", "map.height"], gridRows?.length || 12), 12, 4, 20);
+  const width = clampNumber(valueAt(source, ["width", "cols", "columns", "boardWidth", "grid.columns", "size.width", "map.width"], gridRows?.[0]?.length || 10), 10, 4, 20);
+  const height = clampNumber(valueAt(source, ["height", "rows", "boardHeight", "grid.rows", "size.height", "map.height"], gridRows?.length || 12), 12, 4, 20);
   const size = width * height;
   const layers = emptyLayers(size);
   const layerAliases = {
@@ -2893,18 +2905,22 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers)
   const targetType = normalizeColor(valueAt(source, ["targetType", "targetColor", "goalColor", "target.color", "goal.color", "objective.color", "objectives.0.color"], typeof target === "string" ? target : "purple")) || "purple";
   const targetCount = valueAt(source, ["targetCount", "goalCount", "collectCount", "target.count", "goal.count", "objective.count", "objectives.0.count"], 1);
   const rawObjectives = valueAt(source, ["objectives", "targets", "goals"], []);
+  const collectObjectives = Object.entries(source.goals?.collect || {})
+    .filter(([color, count]) => Number(count) > 0 && usableBlocks.includes(normalizeAssetId("block", color, true)))
+    .slice(0, MAX_OBJECTIVES)
+    .map(([color, count]) => ({ layer: "block", targetId: normalizeAssetId("block", color, true), count }));
   const objectives = Array.isArray(rawObjectives) && rawObjectives.length
     ? rawObjectives.slice(0, MAX_OBJECTIVES).map((objective) => adaptExternalObjective(objective, targetType, targetCount))
     : target != null || source.targetType || source.targetColor || source.goalColor
-      ? [adaptExternalObjective(target, targetType, targetCount)] : [];
-  const moveLimit = valueAt(source, ["moveLimit", "maxMoves", "moves", "turnLimit", "maxTurns"], 20);
+      ? [adaptExternalObjective(target, targetType, targetCount)] : collectObjectives;
+  const moveLimit = valueAt(source, ["moveLimit", "maxMoves", "moves", "turnLimit", "maxTurns", "goals.moves"], 20);
   const objectiveCount = objectives.reduce((sum, objective) => sum + objective.count, 0);
   const parMoves = valueAt(source, ["parMoves", "par", "recommendedMoves", "solutionMoves", "minMoves"], Math.max(1, Math.ceil(objectiveCount * 0.8)));
   const testClearMoves = valueAt(source, ["testClearMoves", "clearMoves", "bestMoves", "playtestMoves"], 0);
   return normalizeCave({
     id: valueAt(source, ["id", "uuid", "levelId", "stageId"], crypto.randomUUID()),
     name: valueAt(source, ["name", "title", "levelName", "stageName"], `Imported Cave ${String(index + 1).padStart(4, "0")}`),
-    ...externalInitialPieces(source, flatArray(grid), size),
+    ...externalInitialPieces(source, flatArray(grid), width, height),
     excludedCells: source.excludedCells,
     width, height, gravity: valueAt(source, ["gravity", "gravityDirection", "direction"], "down"), layers,
     flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "left-first"),
@@ -2912,7 +2928,7 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers)
     usableBlocks, objectives, targetType, targetCount, moveLimit, parMoves, testClearMoves,
     failureBonus: Boolean(valueAt(source, ["failureBonus", "useFailureBonus"], false)),
     note: valueAt(source, ["note", "description", "memo"], ""),
-    externalSource: { format, sourceId: valueAt(source, ["id", "levelId", "stageId"], null) },
+    externalSource: { format, sourceId: valueAt(source, ["id", "levelId", "stageId", "level"], null), goals: source.goals },
   }, index);
 }
 
