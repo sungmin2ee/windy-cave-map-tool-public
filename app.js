@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.10";
+const CLIENT_VERSION = "2.7.11";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1654,6 +1654,30 @@ function cavesInRange(input) {
     .sort((a, b) => a.number - b.number);
 }
 
+function sortRangeRows(key) {
+  const rows = $("rangeRows");
+  const headers = $("rangeDialog").querySelectorAll("[data-range-sort]");
+  for (const button of headers) {
+    const header = button.closest("th");
+    if (button.dataset.rangeSort === key) header.setAttribute("aria-sort", key === "stuck" ? "descending" : "ascending");
+    else header.removeAttribute("aria-sort");
+  }
+  rows.dataset.sort = key;
+  const ordered = Array.from(rows.rows).sort((a, b) => {
+    if (key !== "number") {
+      const first = a.dataset[key];
+      const second = b.dataset[key];
+      if (first === undefined && second !== undefined) return 1;
+      if (second === undefined && first !== undefined) return -1;
+      if (first !== undefined && second !== undefined && first !== second) {
+        return key === "stuck" ? Number(second) - Number(first) : Number(first) - Number(second);
+      }
+    }
+    return Number(a.dataset.number) - Number(b.dataset.number);
+  });
+  rows.append(...ordered);
+}
+
 async function validateCaveRange() {
   const start = $("rangeStart");
   if (start.disabled) return;
@@ -1667,6 +1691,7 @@ async function validateCaveRange() {
   const dialog = $("rangeDialog");
   const rows = $("rangeRows");
   rows.replaceChildren();
+  sortRangeRows("number");
   start.disabled = true;
   let canceled = false;
   dialog.addEventListener("close", () => { canceled = true; }, { once: true });
@@ -1685,6 +1710,11 @@ async function validateCaveRange() {
       }
       const batch = blocked ? null : summarizeBatch(results);
       const row = rows.insertRow();
+      row.dataset.number = cave.number;
+      if (batch) {
+        row.dataset.clear = batch.wins / batch.runs;
+        row.dataset.stuck = batch.stuck;
+      }
       const button = document.createElement("button");
       button.type = "button";
       button.className = "button ghost";
@@ -1700,6 +1730,7 @@ async function validateCaveRange() {
         ? [cave.name, `${batch.clearRate}% (${batch.wins}/${batch.runs})`, batch.lost, batch.stuck]
         : [cave.name, validation.errors.length ? "검증 오류" : "판정 미지원", "—", "—"];
       for (const value of values) row.insertCell().textContent = value;
+      if (rows.dataset.sort !== "number") sortRangeRows(rows.dataset.sort);
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (canceled || !dialog.open) return;
     }
@@ -2482,6 +2513,9 @@ function bindInputs() {
   $("rangeButton").addEventListener("click", () => {
     $("rangeInput").value ||= String(activeCave().number);
     $("rangeDialog").showModal();
+  });
+  $("rangeDialog").querySelectorAll("[data-range-sort]").forEach((button) => {
+    button.addEventListener("click", () => sortRangeRows(button.dataset.rangeSort));
   });
   $("rangeForm").addEventListener("submit", (event) => {
     event.preventDefault();

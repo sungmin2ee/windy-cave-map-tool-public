@@ -315,7 +315,7 @@
       <p id="rangeStatus" role="status"></p>
       <div style="overflow:auto; max-height:50vh">
         <table style="width:100%; text-align:left">
-          <thead><tr><th scope="col">번호</th><th scope="col">이름</th><th scope="col">클리어율</th><th scope="col">이동 횟수 소진</th><th scope="col">매치 없음</th></tr></thead>
+          <thead><tr><th scope="col" aria-sort="ascending"><button type="button" class="button ghost" data-range-sort="number">번호 ↑</button></th><th scope="col">이름</th><th scope="col"><button type="button" class="button ghost" data-range-sort="clear">클리어율 ↑</button></th><th scope="col">이동 횟수 소진</th><th scope="col"><button type="button" class="button ghost" data-range-sort="stuck">매치 없음 ↓</button></th></tr></thead>
           <tbody id="rangeRows"></tbody>
         </table>
       </div>
@@ -340,7 +340,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=28"></script>
+    <script src="./app.js?v=29"></script>
   </body>
 </html>
 
