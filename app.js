@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.32";
+const CLIENT_VERSION = "2.7.33";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2878,7 +2878,9 @@ function externalInitialPieces(source, grid, width, height) {
 function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers) {
   if (/^DDUNG MapInfo/i.test(format)) return adaptDdungMapInfo(level, index, format, unknownTokens);
   const source = level && typeof level === "object" ? level : {};
-  const grid = valueAt(source, ["grid.tiles", "grid.cells", "grid", "board", "cells", "tiles", "map.grid", "map.cells", "map.tiles"], []);
+  const gridPaths = ["grid.tiles", "grid.cells", "grid", "board", "cells", "tiles", "map.grid", "map.cells", "map.tiles"];
+  const grid = gridPaths.map((path) => valueAt(source, [path])).find((value) => flatArray(value).length) || [];
+  const tiles = flatArray(grid);
   const gridRows = Array.isArray(grid) && Array.isArray(grid[0]) ? grid : null;
   const width = clampNumber(valueAt(source, ["width", "cols", "columns", "boardWidth", "grid.columns", "size.width", "map.width"], gridRows?.[0]?.length || 10), 10, 4, 20);
   const height = clampNumber(valueAt(source, ["height", "rows", "boardHeight", "grid.rows", "size.height", "map.height"], gridRows?.length || 12), 12, 4, 20);
@@ -2890,14 +2892,18 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers)
     gimmick: ["gimmick", "gimmicks", "mechanics", "objects"],
     item: ["item", "items", "collectibles", "rewards"],
   };
+  let hasLayerTiles = false;
   Object.entries(layerAliases).forEach(([layer, aliases]) => {
     const rawLayer = valueAt(source.layers || {}, aliases, valueAt(source, aliases.map((alias) => `${alias}Layer`), []));
-    flatArray(rawLayer).slice(0, size).forEach((value, cellIndex) => {
+    const layerTiles = flatArray(rawLayer);
+    hasLayerTiles ||= layerTiles.length > 0;
+    layerTiles.slice(0, size).forEach((value, cellIndex) => {
       const normalized = normalizeAssetId(layer, value, true);
       if (normalized) layers[layer][cellIndex] = normalized;
     });
   });
-  flatArray(grid).slice(0, size).forEach((token, cellIndex) => applyCellToken(layers, cellIndex, token, unknownTokens, declaredLayers));
+  if (!tiles.length && !hasLayerTiles) throw new Error("타일 배열을 찾지 못했습니다.");
+  tiles.slice(0, size).forEach((token, cellIndex) => applyCellToken(layers, cellIndex, token, unknownTokens, declaredLayers));
   const target = valueAt(source, ["target", "goal", "objective", "objectives.0"], null);
   const rawUsable = valueAt(source, ["usableBlocks", "availableColors", "colors", "palette"], layers.block.filter(Boolean));
   const usableBlocks = (Array.isArray(rawUsable) ? rawUsable : String(rawUsable).split(","))
@@ -2920,7 +2926,7 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers)
   return normalizeCave({
     id: valueAt(source, ["id", "uuid", "levelId", "stageId"], crypto.randomUUID()),
     name: valueAt(source, ["name", "title", "levelName", "stageName"], `Imported Cave ${String(index + 1).padStart(4, "0")}`),
-    ...externalInitialPieces(source, flatArray(grid), width, height),
+    ...externalInitialPieces(source, tiles, width, height),
     excludedCells: source.excludedCells,
     width, height, gravity: valueAt(source, ["gravity", "gravityDirection", "direction"], "down"), layers,
     flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "left-first"),
