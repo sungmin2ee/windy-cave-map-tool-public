@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.42";
+const CLIENT_VERSION = "2.7.43";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -282,6 +282,55 @@ function normalizeProject(data) {
   return { ...source, version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets: collectPaletteAssets(caves, source.paletteAssets, assetDefinitions) };
 }
 
+function normalizeLevelSettings(source) {
+  const raw = source.externalSource?.rawMap;
+  const scores = [null, null, null];
+  for (const entry of String(raw?.starscores ?? "").match(/\d{8}/g) || []) {
+    const star = Number(entry.slice(0, 2));
+    if (star >= 1 && star <= 3) scores[star - 1] = Number(entry.slice(2));
+  }
+  const settings = source.levelSettings;
+  return {
+    starScores: scores.map((fallback, index) => {
+      const score = settings?.starScores ? settings.starScores[index] : fallback;
+      return Number.isSafeInteger(score) && score >= 0 ? score : null;
+    }),
+    difficulty: [0, 1, 2].includes(settings?.difficulty) ? settings.difficulty
+      : [0, 1, 2].includes(raw?.levelclass) ? raw.levelclass : 0,
+    spawnMode: [0, 1, 2].includes(settings?.spawnMode) ? settings.spawnMode
+      : [0, 1, 2].includes(raw?.objectcreate) ? raw.objectcreate : 0,
+  };
+}
+
+function renderLevelSettings(cave) {
+  const settings = cave.levelSettings;
+  for (const [index, score] of settings.starScores.entries()) {
+    $("levelStar" + (index + 1)).value = score ?? "";
+  }
+  $("levelDifficulty").value = settings.difficulty;
+  $("levelSpawnMode").value = settings.spawnMode;
+}
+
+function saveLevelSettings(event) {
+  event.preventDefault();
+  const starScores = [1, 2, 3].map((star) => $("levelStar" + star).valueAsNumber).map((score) =>
+    Number.isNaN(score) ? null : score
+  );
+  const specified = starScores.filter((score) => score !== null);
+  if (specified.some((score, index) => !Number.isSafeInteger(score) || (index > 0 && score < specified[index - 1]))) {
+    $("levelSettingsStatus").textContent = "별 점수는 낮은 별부터 오름차순으로 입력하세요.";
+    return;
+  }
+  snapshot();
+  activeCave().levelSettings = {
+    starScores,
+    difficulty: Number($("levelDifficulty").value),
+    spawnMode: Number($("levelSpawnMode").value),
+  };
+  persist();
+  $("levelSettingsStatus").textContent = "레벨 설정을 저장했습니다.";
+}
+
 function normalizeCave(data, index = 0) {
   const source = data && typeof data === "object" ? data : {};
   const width = clampNumber(source.width, 10, 4, 20);
@@ -341,6 +390,7 @@ function normalizeCave(data, index = 0) {
     id: source.id || crypto.randomUUID(),
     name: String(source.name || `Cave ${String(index + 1).padStart(4, "0")}`),
     width, height, gravity: normalizeGravity(source.gravity), layers, excludedCells,
+    levelSettings: normalizeLevelSettings(source),
     usableBlocks: [...new Set(usableBlocks)],
     blockWeights: normalizeBlockWeights(source.blockWeights),
     objectives, targetType, targetCount, moveLimit,
@@ -564,6 +614,8 @@ function renderAll() {
   $("versionInput").value = project.version;
   $("clientVersionBadge").textContent = `CLIENT ${CLIENT_VERSION}`;
   $("schemaVersionBadge").textContent = `SCHEMA ${SCHEMA_VERSION}`;
+  renderLevelSettings(activeCave());
+  $("levelSettingsStatus").textContent = "";
 }
 
 function renderCaveList() {
@@ -3302,6 +3354,7 @@ function importProject(file) {
 }
 
 function bindInputs() {
+  $("levelSettingsForm").addEventListener("submit", saveLevelSettings);
   const stopPainting = () => { isPainting = false; strokeSnapshotTaken = false; };
   window.addEventListener("pointerup", stopPainting);
   window.addEventListener("pointercancel", stopPainting);
