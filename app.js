@@ -21,6 +21,7 @@ const ASSETS = {
     { id: "ddung-oak", name: "DDUNG Oak", className: "terrain-ddung-oak", visual: "♣" },
     { id: "ddung-stone", name: "DDUNG Stone", className: "terrain-ddung-stone", visual: "▰" },
     { id: "ddung-water", name: "DDUNG Water", className: "terrain-ddung-water", visual: "≈" },
+    { id: "ddung-frost", name: "DDUNG Frost", className: "terrain-ddung-ice", visual: "❅" },
     { id: "ddung-ice", name: "DDUNG Ice", className: "terrain-ddung-ice", visual: "❅" },
     { id: "ddung-heather-small", name: "DDUNG Heather Small", className: "terrain-ddung-heather", visual: "♨" },
     { id: "ddung-heather-large", name: "DDUNG Heather Large", className: "terrain-ddung-heather", visual: "♨" },
@@ -80,6 +81,7 @@ const DEFAULT_TERRAIN_RULES = {
   "ddung-oak": { blocksFlow: true, reaction: "adjacent", durability: 2 },
   "ddung-stone": { blocksFlow: true, reaction: "adjacent", durability: 2 },
   "ddung-water": { blocksFlow: false, reaction: "under", durability: 1 },
+  "ddung-frost": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 1 },
   "ddung-ice": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 1 },
   "ddung-heather-small": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 1 },
   "ddung-heather-large": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 2 },
@@ -519,10 +521,10 @@ function ddungGoalLimitation(cave, objective) {
     return specialColors.includes(objective.targetId) ? "특수 블록 목표" : null;
   }
   if (type === 11 || type === 12) return "보물 생성과 출구 도달";
+  if (type === 9 && objective.targetId !== "ddung-dust-piece") return "먼지 목표를 판정하려면 원본 JSON을 다시 가져오세요.";
   if (type === 36) return "여러 칸으로 구성된 젤리 그룹 제거";
-  if (type === 9) return "더스트 블록의 이동과 파괴";
   if (type === 7) return cave.externalSource.boxLayoutParsed ? null : "철 상자 배치를 확인하려면 원본 JSON을 다시 가져오세요.";
-  if ([8, 10, 13, 14, 24, 34, 35].includes(type)) return null;
+  if ([8, 9, 10, 13, 14, 24, 34, 35].includes(type)) return null;
   return "원본 전용 오브젝트 동작";
 }
 
@@ -594,7 +596,7 @@ function renderObjectives() {
         <button class="button objective-remove" title="목표 삭제" aria-label="목표 삭제">×</button>
       </div>
       <div class="objective-row-bottom">
-        <label><span class="field-label">완료 조건</span><div class="objective-auto-count">${escapeHtml(ddungObjectiveType(objective) === 7 ? "내구도 소진 후 파괴" : OBJECTIVE_ACTIONS[objective.layer].label)}</div></label>
+        <label><span class="field-label">완료 조건</span><div class="objective-auto-count">${escapeHtml(objective.targetId === "ddung-dust-piece" ? "특수 피스로 먼지 제거" : ddungObjectiveType(objective) === 7 ? "내구도 소진 후 파괴" : OBJECTIVE_ACTIONS[objective.layer].label)}</div></label>
         <label><span class="field-label">수량 방식</span><select class="field objective-count-mode"><option value="manual"${objective.countMode === "manual" ? " selected" : ""}>직접 입력</option><option value="auto-map"${objective.countMode === "auto-map" ? " selected" : ""}>맵 개수 자동</option></select></label>
       </div>
       <div class="objective-row-bottom objective-count-row">
@@ -3608,7 +3610,7 @@ const DDUNG_BLOCK_CHARACTERS = {
 const DDUNG_TARGETS = {
   1: ["block", "yellow"], 2: ["block", "blue"], 3: ["block", "orange"],
   4: ["block", "green"], 5: ["block", "red"], 6: ["block", "purple"],
-  7: ["gimmick", "ddung-box"], 8: ["terrain", "ddung-web"], 9: ["terrain", "ddung-dust"],
+  7: ["gimmick", "ddung-box"], 8: ["terrain", "ddung-web"], 9: ["block", "ddung-dust-piece"],
   10: ["terrain", "ddung-oak"], 11: ["item", "ddung-treasure-1"], 12: ["item", "ddung-treasure-2"],
   13: ["terrain", "ddung-stone"], 14: ["terrain", "ddung-water"], 15: ["item", "bomb"],
   16: ["gimmick", "ddung-mouse-panel"], 17: ["gimmick", "ddung-dungs"], 18: ["gimmick", "ddung-bulldozer"],
@@ -3657,13 +3659,14 @@ function applyDdungTile(layers, index, character, unknownTokens) {
     if (characters.includes(character)) { layers.block[index] = color; return; }
   }
   if (".ㄱㄲㄳ⑴ㄴy".includes(character)) return;
-  if (character === "E") {
-    layers.terrain[index] = "ddung-ice";
+  const dustTerrain = { D: "floor", C: "ddung-frost", V: "ddung-web", E: "ddung-ice" };
+  if (Object.hasOwn(dustTerrain, character)) {
+    layers.terrain[index] = dustTerrain[character];
     layers.block[index] = "ddung-dust-piece";
     return;
   }
   const terrainCharacters = [
-    ["ddung-web", "WV"], ["ddung-dust", "D"], ["ddung-oak", "IC⒝⒞⒟⒠⒣⒤⒥!@#$"],
+    ["ddung-web", "W"], ["ddung-oak", "I⒝⒞⒟⒠⒣⒤⒥!@#$"],
     ["ddung-stone", "FG78"], ["ddung-water", "U6⒦⒧⒨⒩⒪⒫⒬⒭⒮⒯"],
     ["ddung-ice", "N"], ["ddung-heather-small", "s"], ["ddung-heather-large", "tuvw"],
     ["ddung-jelly", "①②③④⑤⑥⑦⑧⑨⑩ⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ"],
