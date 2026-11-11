@@ -220,8 +220,9 @@
                   <input class="field" id="randomDensity" type="number" min="10" max="100" />
                 </label>
               </div>
-              <button class="button full randomize" id="randomizeButton">시드로 블록 랜덤 배치</button>
+              <button class="button full randomize" id="randomizeButton">랜덤 채우기 · 시드로 블록 배치</button>
                 <button id="boardShapeButton" class="button ghost" type="button">보드 모양 후보</button>
+                <button id="regionItemButton" class="button ghost" type="button">구역 아이템 랜덤 배치</button>
               <small>같은 시드·크기·색상이면 같은 결과이며, 시작 3-Match는 만들지 않습니다.</small>
             </div>
 
@@ -382,6 +383,21 @@
 
     <div class="toast" id="toast" role="status"></div>
 
+    <dialog id="regionItemDialog" class="simulation-dialog" aria-labelledby="regionItemTitle">
+      <div class="dialog-header"><h2 id="regionItemTitle">구역 아이템 랜덤 배치</h2></div>
+      <form id="regionItemForm">
+        <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;">
+          <label>시작 행<input id="regionFirstRow" class="field" type="number" min="1" step="1" required></label>
+          <label>끝 행<input id="regionLastRow" class="field" type="number" min="1" step="1" required></label>
+          <label>시작 열<input id="regionFirstColumn" class="field" type="number" min="1" step="1" required></label>
+          <label>끝 열<input id="regionLastColumn" class="field" type="number" min="1" step="1" required></label>
+          <label>개수<input id="regionItemCount" class="field" type="number" min="1" step="1" required></label>
+          <label>아이템 종류<select id="regionItemType" class="field" required></select></label>
+        </div>
+        <p id="regionItemStatus" role="status"></p>
+        <div class="dialog-footer"><button class="button ghost" type="button" id="regionItemCancel">취소</button><button id="regionItemApply" class="button primary" type="submit">배치</button></div>
+      </form>
+    </dialog>
     <dialog id="boardShapeDialog" class="simulation-dialog" aria-labelledby="boardShapeTitle">
       <div class="dialog-header"><h2 id="boardShapeTitle">보드 모양 후보</h2></div>
       <div style="max-height: 60vh; overflow: auto;">
@@ -509,7 +525,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=57"></script>
+    <script src="./app.js?v=58"></script>
   </body>
 </html>
 
