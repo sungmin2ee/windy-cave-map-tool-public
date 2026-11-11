@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.38";
+const CLIENT_VERSION = "2.7.39";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1233,6 +1233,86 @@ function wouldCreateMatch(blocks, index, color, cave) {
   };
   return 1 + countDirection(-1, 0) + countDirection(1, 0) >= 3
     || 1 + countDirection(0, -1) + countDirection(0, 1) >= 3;
+}
+
+function boardShapeCandidates(cave, symmetry, percent) {
+  const { width, height } = cave;
+  const size = width * height;
+  const target = Math.min(size - 1, Math.round(size * percent / 100));
+  const protectedCells = Array.from({ length: size }, (_, index) =>
+    Object.values(cave.layers).some((layer) => layer[index]) || initialPieceAt(cave, index)
+  );
+  const groups = [];
+  for (let index = 0; index < size; index++) {
+    const x = index % width;
+    const y = Math.floor(index / width);
+    const mirror = symmetry === "horizontal" ? y * width + width - 1 - x
+      : symmetry === "vertical" ? (height - 1 - y) * width + x : index;
+    if (mirror < index || protectedCells[index] || protectedCells[mirror]) continue;
+    groups.push(mirror === index ? [index] : [index, mirror]);
+  }
+  const candidates = new Map();
+  for (let attempt = 0; attempt < 30 && candidates.size < 3; attempt++) {
+    const shuffled = [...groups];
+    for (let index = shuffled.length - 1; index > 0; index--) {
+      const other = Math.floor(Math.random() * (index + 1));
+      [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
+    }
+    const cells = [];
+    for (const group of shuffled.sort((a, b) => b.length - a.length)) {
+      if (cells.length + group.length <= target) cells.push(...group);
+    }
+    cells.sort((a, b) => a - b);
+    candidates.set(cells.join(","), cells);
+  }
+  return { target, candidates: [...candidates.values()] };
+}
+
+function openBoardShapes() {
+  const cave = activeCave();
+  const dialog = $("boardShapeDialog");
+  const options = $("boardShapeOptions");
+  const refresh = () => {
+    const percent = clampNumber($("boardShapePercent").value, 20, 0, 70);
+    const { candidates, target } = boardShapeCandidates(cave, $("boardShapeSymmetry").value, percent);
+    options.replaceChildren();
+    $("boardShapeStatus").textContent = cave.width + " × " + cave.height + " · 목표 " + target + "칸";
+    if (candidates[0].length < target) {
+      $("boardShapeStatus").textContent += " · 대칭과 기존 오브젝트를 고려해 가능한 만큼 막았습니다.";
+    }
+    for (const [index, cells] of candidates.entries()) {
+      const blocked = new Set(cells);
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "button ghost";
+      card.textContent = "후보 " + (index + 1) + " 적용 · 막힌 칸 " + cells.length + "개";
+      const grid = document.createElement("span");
+      grid.className = "board-shape-grid";
+      grid.style.gridTemplateColumns = "repeat(" + cave.width + ", 10px)";
+      grid.setAttribute("aria-hidden", "true");
+      for (let cell = 0; cell < cave.width * cave.height; cell++) {
+        const tile = document.createElement("span");
+        if (blocked.has(cell)) tile.className = "board-shape-blocked";
+        grid.append(tile);
+      }
+      card.append(grid);
+      card.addEventListener("click", () => {
+        snapshot();
+        cave.excludedCells = cells;
+        cave.testClearMoves = 0;
+        dialog.close();
+        renderAll();
+        persist();
+        toast("보드 모양을 적용했습니다. 막힌 칸 " + cells.length + "개");
+      });
+      options.append(card);
+    }
+  };
+  $("boardShapeRefresh").onclick = refresh;
+  $("boardShapeSymmetry").onchange = refresh;
+  $("boardShapePercent").onchange = refresh;
+  refresh();
+  dialog.showModal();
 }
 
 function randomizeBlocks() {
@@ -3163,6 +3243,7 @@ function bindInputs() {
   $("deleteCaveButton").addEventListener("click", deleteCave);
   $("resizeButton").addEventListener("click", resizeMap);
   $("randomizeButton").addEventListener("click", randomizeBlocks);
+  $("boardShapeButton").addEventListener("click", openBoardShapes);
   $("undoButton").addEventListener("click", undo);
   $("redoButton").addEventListener("click", redo);
   $("prevCaveButton").addEventListener("click", () => switchCave(-1));
