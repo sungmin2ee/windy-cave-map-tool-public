@@ -2161,7 +2161,7 @@ function refillBlocks(state) {
   }
 }
 
-function damageTerrainFromMatches(state, matches) {
+function damageTerrainFromMatches(state, matches, forcedTerrain = new Set()) {
   const cave = state.cave;
   let damaged = 0;
   let broken = 0;
@@ -2169,15 +2169,16 @@ function damageTerrainFromMatches(state, matches) {
   for (let index = 0; index < cave.layers.terrain.length; index += 1) {
     const terrainId = cave.layers.terrain[index];
     const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
-    if (!rule || rule.reaction === "none") continue;
-    let affected = matches.has(index);
+    const forced = forcedTerrain.has(index);
+    if (!forced && (!rule || rule.reaction === "none")) continue;
+    let affected = forced || matches.has(index);
     if (!affected && rule.reaction === "adjacent") {
       affected = neighborsOf(cave, index).some((neighbor) => matches.has(neighbor));
     }
     if (!affected) continue;
     state.terrainHits[index] = (state.terrainHits[index] || 0) + 1;
     damaged += 1;
-    if (state.terrainHits[index] >= rule.durability) {
+    if (forced || state.terrainHits[index] >= rule.durability) {
       brokenDetails.push({ index, terrainId });
       cave.layers.terrain[index] = null;
       state.terrainHits[index] = 0;
@@ -2197,12 +2198,13 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
   let terrainBroken = 0;
   let flowMoves = 0;
   while (matches.size && cascade < 20) {
-    const expanded = expandSpecialHits(state.cave, matches);
+    const expanded = expandSpecialHits(state, matches);
     const created = createdSpecials(state.cave, runs, preferred, matches);
-    const triggered = [...expanded].some((index) => specialEffect(state.cave, state.cave.playtestPieces[index]));
-    matches = expanded;
-    captureFrame?.(triggered ? "특수 피스 폭발" : "매치", [...matches], "match");
-    const terrainResult = damageTerrainFromMatches(state, matches);
+    const triggered = [...expanded.hits].some((index) => specialEffect(state.cave, state.cave.playtestPieces[index]));
+    matches = expanded.hits;
+    const highlighted = new Set([...matches, ...expanded.targetedTerrain]);
+    captureFrame?.(triggered ? "특수 피스 폭발" : "매치", [...highlighted], "match");
+    const terrainResult = damageTerrainFromMatches(state, matches, expanded.targetedTerrain);
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
     terrainResult.brokenDetails.forEach(({ terrainId }) => advanceObjectives(state, "terrain", terrainId));
@@ -2267,8 +2269,8 @@ function hasPossibleSwap(cave) {
   return false;
 }
 
-function scoreAutoMove(state, matches) {
-  let score = matches.size;
+function scoreAutoMove(state, { hits: matches, targetedTerrain }) {
+  let score = matches.size + 12 * targetedTerrain.size;
   state.cave.objectives.forEach((objective) => {
     if (objective.layer === "block") {
       matches.forEach((index) => { if (state.cave.layers.block[index] === objective.targetId) score += 6; });
@@ -2305,7 +2307,7 @@ function listPossibleSwaps(state) {
           specialEffect(cave, cave.playtestPieces[second])) continue;
       swapPlaytestBlocks(cave, first, second);
       const matches = findMatches(cave);
-      if (matches.size) candidates.push({ first, second, score: scoreAutoMove(state, expandSpecialHits(cave, matches)) });
+      if (matches.size) candidates.push({ first, second, score: scoreAutoMove(state, expandSpecialHits(state, matches)) });
       swapPlaytestBlocks(cave, first, second);
     }
   }
@@ -2315,6 +2317,7 @@ function listPossibleSwaps(state) {
 
 const SPECIAL_EFFECTS = {
   row: "가로 한 줄", column: "세로 한 줄", area: "주변 3×3", cross: "가로·세로 십자", color: "같은 색 전체",
+  target: "목표 타일 1칸 제거",
 };
 
 const SCRIPT_EFFECT_LABEL = "직접 작성한 스크립트";
@@ -2335,7 +2338,7 @@ function parseEffectScript(source) {
     const fail = (message) => { throw new Error((index + 1) + "번째 명령: " + message); };
     const op = command?.op;
     if (typeof op !== "string" || !(Object.hasOwn(SPECIAL_EFFECTS, op) || op === "offsets")) {
-      fail("지원 명령은 row, column, cross, area, color, offsets입니다.");
+      fail("지원 명령은 row, column, cross, area, color, target, offsets입니다.");
     }
     const keys = op === "area" ? ["op", "radius"] : op === "offsets" ? ["op", "cells"] : ["op"];
     if (Object.keys(command).some((key) => !keys.includes(key))) fail("지원하지 않는 옵션이 있습니다.");
@@ -2382,8 +2385,31 @@ function specialEffect(cave, piece) {
   return Object.hasOwn(DEFAULT_SPECIAL_EFFECTS, id) ? DEFAULT_SPECIAL_EFFECTS[id] : null;
 }
 
-function expandSpecialHits(cave, matches) {
+function findRemainingTerrainTarget(state, origin, selected) {
+  const { cave } = state;
+  const remaining = cave.objectives.filter((objective, index) => {
+    const progress = state.objectiveProgress[index];
+    return objective.layer === "terrain" && !state.goalLimitations[index] && progress.current < progress.target;
+  });
+  const x = origin % cave.width;
+  const y = Math.floor(origin / cave.width);
+  let nearest = -1;
+  let distance = Infinity;
+  for (const [index, terrainId] of cave.layers.terrain.entries()) {
+    if (!terrainId || selected.has(index) || isExcluded(cave, index)) continue;
+    if (!remaining.some((objective) => matchesObjectiveAsset(objective, terrainId))) continue;
+    const steps = Math.abs(index % cave.width - x) + Math.abs(Math.floor(index / cave.width) - y);
+    if (steps >= distance) continue;
+    nearest = index;
+    distance = steps;
+  }
+  return nearest;
+}
+
+function expandSpecialHits(state, matches) {
+  const { cave } = state;
   const hits = new Set(matches);
+  const targetedTerrain = new Set();
   for (const index of hits) {
     const effect = specialEffect(cave, cave.playtestPieces[index]);
     if (!effect) continue;
@@ -2393,6 +2419,11 @@ function expandSpecialHits(cave, matches) {
     const definition = effect === "script" && cave.initialPieceDefinitions.find((entry) => entry?.id === String(cave.playtestPieces[index].type));
     const commands = effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }];
     for (const { op, radius = 1, cells } of commands) {
+      if (op === "target") {
+        const target = findRemainingTerrainTarget(state, index, targetedTerrain);
+        if (target >= 0) targetedTerrain.add(target);
+        continue;
+      }
       if (op === "offsets") {
         for (const [dx, dy] of cells) {
           const targetX = x + dx;
@@ -2413,7 +2444,7 @@ function expandSpecialHits(cave, matches) {
       }
     }
   }
-  return hits;
+  return { hits, targetedTerrain };
 }
 
 function createdSpecials(cave, runs, preferred, hits) {
@@ -2459,7 +2490,7 @@ function chooseAutoAction(state) {
   const candidates = listPossibleSwaps(state);
   cave.playtestPieces.forEach((piece, index) => {
     if (!specialEffect(cave, piece) || isBarrier(cave, index)) return;
-    candidates.push({ first: index, score: scoreAutoMove(state, expandSpecialHits(cave, [index])) });
+    candidates.push({ first: index, score: scoreAutoMove(state, expandSpecialHits(state, [index])) });
   });
   if (!candidates.length) return null;
   const bestScore = Math.max(...candidates.map(({ score }) => score));
