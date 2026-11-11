@@ -2,6 +2,8 @@
 
 `Cave = 하나의 레벨` 규칙으로 제작한 브라우저 기반 퍼즐 맵 에디터입니다.
 
+[▶ 맵툴 실행하기](https://sungmin2ee.github.io/windy-cave-map-tool-public/)
+
 ## 기능
 
 - Terrain / Block / Gimmick / Item 레이어 기반 그리드 편집
