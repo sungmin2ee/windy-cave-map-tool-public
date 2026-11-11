@@ -2697,7 +2697,13 @@ function playtestCell(index) {
   const state = playtestState;
   if (!state || state.status !== "playing" || state.animating ||
       isBarrier(state.cave, index) || !specialEffect(state.cave, state.cave.playtestPieces[index])) return;
-  animatePlaytestTurn(state, { first: index });
+  const action = { first: index };
+  if (state.paused) {
+    playSimulationTurn(state, action);
+    renderPlaytest();
+  } else {
+    animatePlaytestTurn(state, action);
+  }
 }
 
 function playtestRemainingTargets(state) {
