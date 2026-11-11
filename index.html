@@ -29,6 +29,9 @@
     #assetReplaceStatus { display: block; }
     #assetReplaceTarget { width: auto; max-width: 100%; }
     .map-cell.asset-replace-preview { outline: 3px solid #58e3d0; outline-offset: -3px; }
+      #assetReplaceCaves { max-height: 8rem; overflow: auto; }
+    #assetReplaceCaves label { display: block; }
+    #assetReplaceRange { width: auto; max-width: 100%; }
   </style>
   </head>
   <body>
@@ -219,6 +222,9 @@
               <span id="assetReplaceStatus" role="status"></span>
               <label for="assetReplaceTarget">교체할 오브젝트</label>
               <select class="field" id="assetReplaceTarget" required></select>
+              <label for="assetReplaceRange">Cave 범위</label>
+              <input class="field" id="assetReplaceRange" placeholder="예: 1~20 (빈칸이면 현재 Cave)" />
+              <div id="assetReplaceCaves" hidden></div>
               <button type="submit" class="button" id="assetReplaceApply">교체</button>
               <button type="button" class="button ghost" id="assetReplaceCancel">취소</button>
             </form>
@@ -280,7 +286,7 @@
             <div class="asset-grid" id="assetGrid"></div>
             <button type="button" class="button ghost" id="showAssetDefinition">오브젝트 만들기</button>
             <button type="button" class="button ghost" id="deleteSelectedAsset" hidden>선택 오브젝트 삭제</button>
-            <button type="button" class="button ghost" id="openAssetReplace" hidden>현재 Cave 일괄 교체</button>
+            <button type="button" class="button ghost" id="openAssetReplace" hidden>오브젝트 일괄 교체</button>
             <form id="assetDefinitionForm" hidden>
               <label class="field-label" for="assetDefinitionName">오브젝트 이름</label>
               <input class="field" id="assetDefinitionName" required maxlength="80" />
@@ -389,7 +395,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=34"></script>
+    <script src="./app.js?v=35"></script>
   </body>
 </html>
 

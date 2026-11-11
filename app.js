@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.16";
+const CLIENT_VERSION = "2.7.17";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -835,14 +835,49 @@ function openAssetReplacement() {
   const layer = activeLayer;
   const id = selectedAssets[layer];
   const cave = activeCave();
-  if (!id || !cave.layers[layer].includes(id)) return toast("현재 Cave에 배치된 오브젝트를 선택하세요.");
+  if (!id || !project.paletteAssets[layer].includes(id)) return toast("교체할 오브젝트를 선택하세요.");
   const alternatives = paletteOptions(layer).filter((asset) => asset.id !== id);
   if (!alternatives.length) return toast("같은 레이어에 교체할 오브젝트를 먼저 추가하세요.");
   const select = $("assetReplaceTarget");
   select.replaceChildren(...alternatives.map(({ name, id }) => new Option(name, id)));
+  $("assetReplaceRange").value = "";
+  $("assetReplaceCaves").replaceChildren();
   assetReplacement = { caveId: cave.id, layer, id };
   renderGrid();
   select.focus();
+}
+
+function updateAssetReplaceRange() {
+  const change = assetReplacement;
+  const range = $("assetReplaceRange").value.trim();
+  const list = $("assetReplaceCaves");
+  list.replaceChildren();
+  list.hidden = !range;
+  if (change && range) {
+    const caves = cavesInRange(range) || [];
+    for (const cave of caves) {
+      const count = cave.layers[change.layer].filter((id) => id === change.id).length;
+      if (!count) continue;
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = cave.id;
+      checkbox.checked = true;
+      const goalUsed = cave.objectives.some((goal) => goal.layer === change.layer && matchesObjectiveAsset(goal, change.id));
+      label.append(checkbox, ` Cave ${cave.number} · ${cave.name} · ${count}칸${goalUsed ? " · 클리어 목표에 사용 중" : ""}`);
+      list.appendChild(label);
+    }
+    if (!list.children.length) list.textContent = "유효한 범위에 교체할 칸이 없습니다.";
+  }
+  renderGrid();
+}
+
+function assetReplacementCaves(change, cave) {
+  const range = $("assetReplaceRange").value.trim();
+  if (!range) return [cave];
+  const selected = new Set(Array.from($("assetReplaceCaves").querySelectorAll("input:checked"), (input) => input.value));
+  return (cavesInRange(range) || []).filter(({ id }) => selected.has(id))
+    .filter((candidate) => candidate.layers[change.layer].includes(change.id));
 }
 
 function applyAssetReplacement(event) {
@@ -852,11 +887,13 @@ function applyAssetReplacement(event) {
   const target = $("assetReplaceTarget").value;
   if (!change || change.caveId !== cave.id || target === change.id ||
       !project.paletteAssets[change.layer].includes(target)) return;
-  const cells = cave.layers[change.layer];
-  if (!cells.includes(change.id)) return;
+  const caves = assetReplacementCaves(change, cave);
+  if (!caves.some((candidate) => candidate.layers[change.layer].includes(change.id))) return;
   snapshot();
-  cave.layers[change.layer] = cells.map((id) => id === change.id ? target : id);
-  cave.testClearMoves = 0;
+  for (const candidate of caves) {
+    candidate.layers[change.layer] = candidate.layers[change.layer].map((id) => id === change.id ? target : id);
+    candidate.testClearMoves = 0;
+  }
   assetReplacement = null;
   renderAll();
   persist();
@@ -884,13 +921,15 @@ function renderGrid() {
   const replacement = assetReplacement;
   $("assetReplaceForm").hidden = !replacement;
   if (replacement) {
-    const count = cave.layers[replacement.layer].filter((id) => id === replacement.id).length;
+    const caves = assetReplacementCaves(replacement, cave);
+    const count = caves.reduce((sum, candidate) => sum + candidate.layers[replacement.layer].filter((id) => id === replacement.id).length, 0);
     $("assetReplaceApply").textContent = `${count}칸 교체`;
     $("assetReplaceApply").disabled = count === 0;
     const goalUsed = cave.objectives.some((goal) => goal.layer === replacement.layer && matchesObjectiveAsset(goal, replacement.id));
     $("assetReplaceStatus").textContent = getAsset(replacement.layer, replacement.id).name +
       (goalUsed ? " · 기존 오브젝트가 클리어 목표에 포함돼 있습니다. 목표 설정을 확인하세요." : "");
   }
+  const previewCurrentCave = replacement && assetReplacementCaves(replacement, cave).includes(cave);
   const located = locatedAssetCells(cave);
   const current = assetLocator?.caveId === cave.id ? assetLocator : null;
   if (current && !located.includes(current.index)) current.index = located[0];
@@ -912,7 +951,7 @@ function renderGrid() {
     cell.setAttribute("role", "button");
     cell.setAttribute("aria-label", cellDescription(cave, index));
     applyCellVisual(cell, cave, index);
-    if (replacement && cave.layers[replacement.layer][index] === replacement.id) cell.classList.add("asset-replace-preview");
+    if (replacement && previewCurrentCave && cave.layers[replacement.layer][index] === replacement.id) cell.classList.add("asset-replace-preview");
     if (locatedSet.has(index)) {
       cell.classList.add("asset-located");
       if (current.index === index) cell.classList.add("asset-located-current");
@@ -2657,6 +2696,8 @@ function bindInputs() {
   $("assetLocatorClose").addEventListener("click", () => { assetLocator = null; renderGrid(); });
   $("openAssetReplace").addEventListener("click", openAssetReplacement);
   $("assetReplaceForm").addEventListener("submit", applyAssetReplacement);
+  $("assetReplaceRange").addEventListener("input", updateAssetReplaceRange);
+  $("assetReplaceCaves").addEventListener("change", renderGrid);
   $("assetReplaceCancel").addEventListener("click", () => { assetReplacement = null; renderGrid(); });
   $("deleteSelectedAsset").addEventListener("click", deleteSelectedAsset);
   $("showAssetDefinition").addEventListener("click", () => {
