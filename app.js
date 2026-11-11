@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.28";
+const CLIENT_VERSION = "2.7.29";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -978,9 +978,12 @@ function renderGrid() {
     });
     cell.addEventListener("pointerenter", (event) => {
       if ((event.buttons & 1) === 0) { isPainting = false; strokeSnapshotTaken = false; return; }
-      if (isPainting && activeTool !== "fill" && activeTool !== "shape" && activeTool !== "inspect") editCell(index, false);
+      if (isPainting && activeTool !== "fill" && activeTool !== "shape") editCell(index, false);
     });
-    cell.addEventListener("mouseenter", () => showCellStatus(index));
+    cell.addEventListener("mouseenter", () => {
+      cell.title = describeCellProperties(cave, index);
+      showCellStatus(index);
+    });
     grid.appendChild(cell);
   }
 }
@@ -1008,7 +1011,7 @@ function applyCellVisual(cell, cave, index) {
       if (piece?.type > 0 && piece.color === assetId) {
         visual.classList.add("ddung-initial-special");
         visual.textContent = "✦";
-        visual.title = `DDUNG 초기 피스 타입 ${piece.type}`;
+        if (playtestState?.cave === cave) visual.title = `DDUNG 초기 피스 타입 ${piece.type}`;
       }
     }
     if (layer === "gimmick" || layer === "item" || (layer === "terrain" && !asset.className)) visual.textContent = asset.visual;
@@ -3099,8 +3102,7 @@ function ddungInitialPiece(tile) {
   return null;
 }
 
-function inspectCell(index) {
-  const cave = activeCave();
+function describeCellProperties(cave, index) {
   const fields = [cellDescription(cave, index)];
   for (const [layer, values] of Object.entries(cave.layers)) {
     if (values[index]) fields.push(`${layer} · ${getAsset(layer, values[index])?.name || values[index]} (${values[index]})`);
@@ -3124,7 +3126,11 @@ function inspectCell(index) {
       }
     }
   }
-  $("cellInspectorText").textContent = fields.join("\n");
+  return fields.join("\n");
+}
+
+function inspectCell(index) {
+  $("cellInspectorText").textContent = describeCellProperties(activeCave(), index);
   $("cellInspector").showModal();
 }
 
