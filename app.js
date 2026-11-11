@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.26";
+const CLIENT_VERSION = "2.7.27";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2326,7 +2326,9 @@ function renderPatchBoard(previous, cave) {
 async function validatePatchCaves(dialog, entries) {
   const button = $("patchPreviewValidate");
   const status = $("patchValidationStatus");
+  if (button.disabled) return;
   button.disabled = true;
+  $("patchValidateSelected").disabled = true;
   const controller = new AbortController();
   const cancel = () => controller.abort();
   dialog.addEventListener("close", cancel);
@@ -2380,7 +2382,10 @@ async function validatePatchCaves(dialog, entries) {
     status.textContent = "검증 중 오류가 발생했습니다.";
   } finally {
     dialog.removeEventListener("close", cancel);
-    if (!controller.signal.aborted && dialog.open) button.disabled = false;
+    if (!controller.signal.aborted && dialog.open) {
+      button.disabled = false;
+      $("patchValidateSelected").disabled = false;
+    }
   }
 }
 
@@ -2415,6 +2420,8 @@ async function exportPatch(file) {
         button.textContent = cave.name;
         const openDetails = () => {
           lastPatchCaveId = cave.id;
+          $("patchValidateSelected").disabled = $("patchPreviewValidate").disabled;
+          $("patchValidateSelected").onclick = () => validatePatchCaves(dialog, [{ cave, cell }]);
           renderPatchBoard(previous ?? { width: 0, height: 0, objectives: [], layers: {} }, cave);
           $("patchBoardPanel").scrollIntoView({ block: "nearest" });
         };
