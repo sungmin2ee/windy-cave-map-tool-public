@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.18";
+const CLIENT_VERSION = "2.7.19";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2191,6 +2191,20 @@ function exportProject() {
   toast("프로젝트 JSON을 내보냈습니다.");
 }
 
+function describePatchChanges(previous, cave) {
+  const groups = [
+    ["보드 배치", ["layers", "excludedCells", "width", "height"]],
+    ["클리어 목표", ["objectives", "targetType", "targetCount"]],
+    ["이동 횟수", ["moveLimit", "parMoves", "testClearMoves"]],
+  ];
+  const changed = (key) => JSON.stringify(previous[key]) !== JSON.stringify(cave[key]);
+  const labels = groups.filter(([, keys]) => keys.some(changed)).map(([label]) => label);
+  const grouped = new Set(groups.flatMap(([, keys]) => keys));
+  const keys = new Set([...Object.keys(previous), ...Object.keys(cave)]);
+  if ([...keys].some((key) => !grouped.has(key) && changed(key))) labels.push("기타 설정");
+  return labels.join(", ") || "기타 변경";
+}
+
 function buildPatch(baseData) {
   if (!baseData?.caves?.length || baseData.type === "patch" || baseData.patch) {
     throw new Error("기준으로 사용할 전체 Windy Cave JSON을 선택하세요.");
@@ -2205,10 +2219,10 @@ function buildPatch(baseData) {
     throw new Error("기준 JSON의 Cave마다 고유 ID가 필요합니다.");
   }
   const base = normalizeProject(baseData);
-  const baseCaves = new Map(base.caves.map((cave) => [String(cave.id), JSON.stringify(cave)]));
+  const baseCaves = new Map(base.caves.map((cave) => [String(cave.id), cave]));
   const currentCaves = project.caves.map(normalizeCave);
   const currentIds = new Set(currentCaves.map((cave) => String(cave.id)));
-  return {
+  const payload = {
     schema: `windy-cave-map-tool/v${SCHEMA_VERSION}`,
     schemaVersion: SCHEMA_VERSION,
     type: "patch",
@@ -2218,18 +2232,39 @@ function buildPatch(baseData) {
     paletteAssets: project.paletteAssets,
     assetDefinitions: project.assetDefinitions,
     patch: {
-      upsertCaves: currentCaves.filter((cave) => baseCaves.get(String(cave.id)) !== JSON.stringify(cave)),
+      upsertCaves: currentCaves.filter((cave) => JSON.stringify(baseCaves.get(String(cave.id))) !== JSON.stringify(cave)),
       removeCaveIds: [...baseCaves.keys()].filter((id) => !currentIds.has(id)),
     },
   };
+  return { payload, baseCaves, base };
 }
 
 async function exportPatch(file) {
   if (!file) return;
   try {
-    const patch = buildPatch(JSON.parse(await file.text()));
-    downloadJson(patch, `windy-patch-${patch.baseContentVersion}-to-${patch.contentVersion}.json`);
-    toast(`패치 ${patch.baseContentVersion} → ${patch.contentVersion} 내보내기 완료`);
+    const { payload, baseCaves, base } = buildPatch(JSON.parse(await file.text()));
+    const dialog = $("patchPreview");
+    const rows = $("patchPreviewRows");
+    rows.replaceChildren();
+    const counts = { "추가": 0, "수정": 0, "삭제": 0 };
+    const append = (status, cave, details) => {
+      counts[status]++;
+      const row = rows.insertRow();
+      for (const value of [status, cave.number, cave.name, details]) row.insertCell().textContent = value;
+    };
+    for (const cave of payload.patch.upsertCaves) {
+      const previous = baseCaves.get(String(cave.id));
+      append(previous ? "수정" : "추가", cave, previous ? describePatchChanges(previous, cave) : "새 Cave");
+    }
+    for (const id of payload.patch.removeCaveIds) append("삭제", baseCaves.get(id), "Cave 삭제");
+    const assetsChanged = ["paletteAssets", "assetDefinitions"].some((key) => JSON.stringify(base[key]) !== JSON.stringify(payload[key]));
+    $("patchPreviewSummary").textContent = `${payload.baseContentVersion} → ${payload.contentVersion} · 추가 ${counts["추가"]} · 수정 ${counts["수정"]} · 삭제 ${counts["삭제"]}${assetsChanged ? " · 팔레트 변경" : ""}`;
+    $("patchPreviewDownload").onclick = () => {
+      downloadJson(payload, `windy-patch-${payload.baseContentVersion}-to-${payload.contentVersion}.json`);
+      dialog.close();
+      toast("패치 JSON을 내보냈습니다.");
+    };
+    dialog.showModal();
   } catch (error) {
     toast(error.message || "패치 JSON을 만들 수 없습니다.");
   }

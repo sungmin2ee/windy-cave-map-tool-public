@@ -352,6 +352,21 @@
       <form class="dialog-footer" method="dialog"><button class="button ghost">닫기</button></form>
     </dialog>
 
+    <dialog id="patchPreview" class="simulation-dialog" aria-labelledby="patchPreviewTitle">
+      <div class="dialog-header"><h2 id="patchPreviewTitle">패치 변경사항 미리보기</h2></div>
+      <p id="patchPreviewSummary"></p>
+      <div style="max-height:50vh; overflow:auto">
+        <table style="width:100%; text-align:left">
+          <thead><tr><th scope="col">상태</th><th scope="col">번호</th><th scope="col">이름</th><th scope="col">변경 내용</th></tr></thead>
+          <tbody id="patchPreviewRows"></tbody>
+        </table>
+      </div>
+      <form class="dialog-footer" method="dialog">
+        <button class="button ghost">취소</button>
+        <button type="button" class="button" id="patchPreviewDownload">패치 다운로드</button>
+      </form>
+    </dialog>
+
     <dialog id="rangeDialog" class="simulation-dialog" aria-labelledby="rangeTitle">
       <div class="dialog-header"><h2 id="rangeTitle">Cave 범위 검증</h2></div>
       <form id="rangeForm">
@@ -396,7 +411,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=36"></script>
+    <script src="./app.js?v=37"></script>
   </body>
 </html>
 
