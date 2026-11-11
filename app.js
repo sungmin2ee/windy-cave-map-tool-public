@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.23";
+const CLIENT_VERSION = "2.7.24";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2383,10 +2383,15 @@ async function validatePatchCaves(dialog, entries) {
   }
 }
 
+let patchBaseData = null;
+
 async function exportPatch(file) {
-  if (!file) return;
   try {
-    const { payload, baseCaves, base } = buildPatch(JSON.parse(await file.text()));
+    const candidate = file ? JSON.parse(await file.text()) : patchBaseData;
+    if (!candidate) return;
+    const { payload, baseCaves, base } = buildPatch(candidate);
+    patchBaseData = candidate;
+    $("reopenPatchPreview").hidden = false;
     const dialog = $("patchPreview");
     const rows = $("patchPreviewRows");
     rows.replaceChildren();
@@ -2994,6 +2999,7 @@ function bindInputs() {
   $("versionInput").addEventListener("change", (event) => setContentVersion(event.target.value));
   $("versionDown").addEventListener("click", () => stepContentVersion(-1));
   $("versionUp").addEventListener("click", () => stepContentVersion(1));
+  $("reopenPatchPreview").addEventListener("click", () => exportPatch());
   $("exportPatchButton").addEventListener("click", () => $("patchBaseFile").click());
   $("patchBaseFile").addEventListener("change", (event) => {
     const file = event.target.files[0];

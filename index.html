@@ -71,6 +71,7 @@
           <button class="button ghost" id="exportButton">JSON 내보내기</button>
           <button class="button primary" id="saveButton">저장</button>
           <button class="button ghost" id="exportPatchButton" title="기준 전체 JSON을 선택해 변경분을 내보냅니다">패치 내보내기</button>
+          <button type="button" class="button ghost" id="reopenPatchPreview" hidden>같은 기준으로 패치 미리보기</button>
           <input id="patchBaseFile" type="file" accept=".json,application/json" hidden />
           <input id="importFile" type="file" accept="application/json" hidden />
         </div>
@@ -431,7 +432,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=41"></script>
+    <script src="./app.js?v=42"></script>
   </body>
 </html>
 
