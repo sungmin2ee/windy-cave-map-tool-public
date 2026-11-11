@@ -77,7 +77,7 @@ const DEFAULT_TERRAIN_RULES = {
   "ddung-oak": { blocksFlow: true, reaction: "adjacent", durability: 2 },
   "ddung-stone": { blocksFlow: true, reaction: "adjacent", durability: 2 },
   "ddung-water": { blocksFlow: false, reaction: "under", durability: 1 },
-  "ddung-ice": { blocksFlow: false, reaction: "adjacent", durability: 1 },
+  "ddung-ice": { locksBlock: true, blocksFlow: false, reaction: "adjacent", durability: 1 },
   "ddung-heather-small": { blocksFlow: false, reaction: "adjacent", durability: 1 },
   "ddung-heather-large": { blocksFlow: false, reaction: "adjacent", durability: 2 },
   "ddung-jelly": { blocksFlow: false, reaction: "adjacent", durability: 1 },
