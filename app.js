@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.0";
+const CLIENT_VERSION = "2.7.1";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -74,7 +74,7 @@ const DEFAULT_TERRAIN_RULES = {
   "ddung-dust": { blocksFlow: false, reaction: "adjacent", durability: 1 },
   "ddung-oak": { blocksFlow: true, reaction: "adjacent", durability: 2 },
   "ddung-stone": { blocksFlow: true, reaction: "adjacent", durability: 2 },
-  "ddung-water": { blocksFlow: false, reaction: "adjacent", durability: 1 },
+  "ddung-water": { blocksFlow: false, reaction: "under", durability: 1 },
   "ddung-ice": { blocksFlow: false, reaction: "adjacent", durability: 1 },
   "ddung-heather-small": { blocksFlow: false, reaction: "adjacent", durability: 1 },
   "ddung-heather-large": { blocksFlow: false, reaction: "adjacent", durability: 2 },
@@ -288,7 +288,10 @@ function normalizeCave(data, index = 0) {
   const objectives = normalizeObjectives(source);
   const externalSource = source.externalSource;
   const migrateDdungGoals = isDdungSource(externalSource) && !externalSource.goalRulesVersion;
-  let goalChanged = false;
+  const migrateWaterReaction = isDdungSource(externalSource) && !externalSource.waterReactionNormalized;
+  const savedWater = source.terrainRules?.["ddung-water"];
+  const oldWaterRule = migrateWaterReaction && (!savedWater || (savedWater.reaction === "adjacent" && savedWater.durability === 1 && savedWater.blocksFlow === false));
+  let goalChanged = oldWaterRule && layers.terrain.includes("ddung-water");
   if (migrateDdungGoals) {
     for (const objective of objectives) {
       const type = ddungObjectiveType(objective);
@@ -309,7 +312,7 @@ function normalizeCave(data, index = 0) {
   const terrainIds = new Set([...Object.keys(DEFAULT_TERRAIN_RULES), ...Object.keys(source.terrainRules || {}).filter(assetId)]);
   terrainIds.forEach((terrainId) => {
     const fallback = getDefaultTerrainRule(terrainId);
-    const rule = source.terrainRules?.[terrainId] || {};
+    const rule = terrainId === "ddung-water" && oldWaterRule ? fallback : source.terrainRules?.[terrainId] || {};
     const reaction = ["none", "under", "adjacent"].includes(rule.reaction) ? rule.reaction : fallback.reaction;
     terrainRules[terrainId] = {
       blocksFlow: rule.blocksFlow == null ? fallback.blocksFlow : Boolean(rule.blocksFlow),
@@ -335,7 +338,7 @@ function normalizeCave(data, index = 0) {
     failureBonus: Boolean(source.failureBonus),
     note: String(source.note || ""),
   };
-  if (migrateDdungGoals) normalized.externalSource = { ...externalSource, goalRulesVersion: 2 };
+  if (migrateDdungGoals || migrateWaterReaction) normalized.externalSource = { ...externalSource, goalRulesVersion: 2, waterReactionNormalized: true };
   delete normalized.packedLayers;
   delete normalized.storageFormat;
   return normalized;
@@ -1999,6 +2002,7 @@ function adaptDdungMapInfo(source, index, format, unknownTokens) {
       sourceId: source.level ?? index + 1,
       ddungVersion: format.match(/v(\d+)/i)?.[1] || null,
       goalRulesVersion: 2,
+      waterReactionNormalized: true,
       specialColors: String(source.special || "").split(",").map((value) => value.trim())
         .filter((value) => /^\d+$/.test(value)).map((value) => DDUNG_COLOR_IDS[Number(value)]).filter(Boolean),
       boxLayoutParsed: true,
