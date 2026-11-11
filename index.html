@@ -263,6 +263,7 @@
               <input id="failureBonus" type="checkbox" />
               <span>Failure Bonus 사용</span>
             </label>
+            <label class="check-line"><input id="specialMatches" type="checkbox"> 매치로 특수 피스 생성</label>
           </section>
         </aside>
 
@@ -492,6 +493,8 @@
       <form id="initialPieceForm">
         <label>블록 색<select class="field" id="initialPieceColor"></select></label>
         <label>초기 특수 타입<select class="field" id="initialPieceType"></select></label>
+        <label id="initialPieceNameLabel" hidden>새 특수 타입 이름<input class="field" id="initialPieceName" maxlength="40"></label>
+        <label id="initialPieceEffectLabel" hidden>발동 효과<select class="field" id="initialPieceEffect"></select></label>
         <button class="button primary" id="initialPieceApply" type="submit">피스 설정 적용</button>
       </form>
       <form method="dialog" class="dialog-footer"><button class="button ghost">닫기</button></form>
@@ -569,10 +572,11 @@
         <button class="icon-button" id="closeSimulationButton">×</button>
       </div>
       <div id="simulationResult" class="simulation-result"></div>
-      <div id="playtestGuide" class="playtest-guide" hidden>블록 하나를 고른 뒤 인접 블록을 선택해 교환하세요. 가로·세로 3개 이상 매치되면 제거되고 중력·리필·연쇄가 적용됩니다.</div>
+      <div id="playtestGuide" class="playtest-guide" hidden>자동으로 블록을 교환하고 특수 피스를 발동합니다. 일시정지한 뒤 특수 피스를 클릭해 직접 발동할 수도 있습니다.</div>
       <p id="playtestFrameStatus" role="status" style="min-height:1.3em;margin:4px 0;"></p>
       <div id="simulationGrid" class="simulation-grid"></div>
       <div class="dialog-footer">
+        <button class="button" id="playtestPauseButton" hidden>일시정지</button>
         <button class="button" id="playtestResetButton" hidden>다시 시작</button>
         <button class="button primary" id="usePlaytestResultButton" hidden>이 기록을 난이도에 사용</button>
         <button class="button" id="closeSimulationFooterButton">닫기</button>
@@ -614,7 +618,9 @@
         <details style="margin-block: .65rem;">
           <summary style="cursor: pointer; font-weight: 700;">플레이와 검증</summary>
           <ul>
-            <li><strong>Playtest</strong>에서 인접한 블록 두 개를 선택해 교환하고, 클리어 목표와 남은 Moves를 확인합니다. 클리어 기록은 <strong>이 기록을 난이도에 사용</strong>으로 반영할 수 있습니다.</li>
+            <li><strong>Playtest</strong>는 블록 교환과 특수 피스 발동을 자동으로 진행합니다. <strong>일시정지</strong> 중에는 특수 피스를 클릭해 직접 발동할 수 있습니다. 발동에는 이동 1회를 사용합니다. 클리어 기록은 <strong>이 기록을 난이도에 사용</strong>으로 반영할 수 있습니다.</li>
+            <li><strong>매치로 특수 피스 생성</strong>을 켜면 가로·세로 4매치에서 해당 방향의 줄 폭탄, 5매치에서 같은 색 제거 피스, T/L자 매치에서 주변 3×3 폭탄이 생깁니다. DDUNG에서 가져온 레벨은 이 설정을 켜서 사용할 수 있습니다.</li>
+            <li><strong>칸 속성</strong>의 <strong>새 특수 타입 만들기</strong>에서 이름과 발동 효과를 선택합니다. 가로·세로 한 줄, 주변 3×3, 십자, 같은 색 전체 제거를 연결할 수 있습니다. 효과는 해당 Cave에서 같은 타입을 사용하는 피스에 적용됩니다.</li>
             <li><strong>검증</strong>은 현재 Cave를, <strong>범위 검증</strong>은 지정한 번호 범위를 자동으로 검사합니다. 자동 플레이의 클리어율과 Moves는 레벨 밸런스를 비교하는 참고 지표입니다.</li>
             <li><strong>Failure Bonus 사용</strong>은 Cave의 설정값으로 저장됩니다. 현재 Playtest와 자동 검증에서는 이 값을 사용하지 않습니다. DDUNG 원본 JSON에는 해당 항목이 없습니다.</li>
           </ul>
@@ -640,7 +646,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=69"></script>
+    <script src="./app.js?v=70"></script>
   </body>
 </html>
 

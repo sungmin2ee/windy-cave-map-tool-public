@@ -147,7 +147,7 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
     simulationRuns: 30,
     randomSeed: `CAVE-${String(number).padStart(4, "0")}`, randomDensity: 100,
     flowRule: "left-first", terrainRules: deepCopy(DEFAULT_TERRAIN_RULES),
-    failureBonus: true, note: "",
+    specialMatches: true, failureBonus: true, note: "",
   };
 }
 
@@ -394,6 +394,7 @@ function normalizeCave(data, index = 0) {
     name: String(source.name || `Cave ${String(index + 1).padStart(4, "0")}`),
     width, height, gravity: normalizeGravity(source.gravity), layers, excludedCells,
     levelSettings: normalizeLevelSettings(source),
+    specialMatches: source.specialMatches ?? !isDdungSource(externalSource),
     usableBlocks: [...new Set(usableBlocks)],
     blockWeights: normalizeBlockWeights(source.blockWeights),
     objectives, targetType, targetCount, moveLimit,
@@ -672,6 +673,7 @@ function renderRules() {
   $("randomDensity").value = cave.randomDensity;
   $("flowRule").value = cave.flowRule;
   $("failureBonus").checked = cave.failureBonus;
+  $("specialMatches").checked = cave.specialMatches;
   $("noteInput").value = cave.note || "";
   document.querySelectorAll("[data-gravity]").forEach((button) => button.classList.toggle("active", button.dataset.gravity === cave.gravity));
   $("currentCaveTitle").textContent = cave.name;
@@ -1064,13 +1066,12 @@ function applyCellVisual(cell, cave, index) {
     visual.className = `cell-${layer} ${asset.className || ""}`;
     if (layer === "block") {
       visual.style.background = blockColor(assetId);
-      const initial = !playtestState || playtestState.cave !== cave || playtestState.movesLeft === cave.moveLimit;
-      const piece = initial ? initialPieceAt(cave, index) : null;
+      const piece = cave.playtestPieces ? cave.playtestPieces[index] : initialPieceAt(cave, index);
       if (piece && (!piece.color || piece.color === assetId)) {
         const badge = document.createElement("span");
         badge.className = "initial-piece-badge";
         badge.textContent = piece.symbol;
-        badge.title = `초기 피스 · ${piece.name || piece.type}`;
+        badge.title = `특수 피스 · ${piece.name || piece.type}`;
         cell.classList.add("has-initial-piece");
         cell.appendChild(badge);
       }
@@ -1778,7 +1779,10 @@ function validateCave(cave) {
   if (!cave.testClearMoves) warnings.push("테스트 클리어 Moves가 없습니다. 실제 플레이 기록을 입력하면 난이도 판정이 더 정확해집니다.");
   if (cave.moveLimit >= cave.parMoves * 2) warnings.push("허용 Moves가 권장 클리어 횟수의 2배 이상이라 난이도가 크게 낮아질 수 있습니다.");
   if (initialMatches) warnings.push(`시작 상태에 이미 3-Match 블록이 ${initialMatches}개 있습니다. 랜덤 재배치를 권장합니다.`);
-  if (analysis.totalBlocks && !initialMatches && !hasPossibleSwap(cave)) warnings.push("시작 상태에서 가능한 3-Match 교환을 찾지 못했습니다.");
+  if (analysis.totalBlocks && !initialMatches && !hasPossibleSwap(cave) &&
+      !cave.layers.block.some((block, index) => block && !isBarrier(cave, index) && specialEffect(cave, initialPieceAt(cave, index)))) {
+    warnings.push("시작 상태에서 가능한 교환이나 특수 피스 발동을 찾지 못했습니다.");
+  }
   return { errors, warnings, unsupported, analysis };
 }
 
@@ -1795,7 +1799,8 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = []) 
   grid.innerHTML = "";
   for (let index = 0; index < cave.width * cave.height; index += 1) {
     const cell = document.createElement(interactive ? "button" : "div");
-    cell.className = `map-cell${interactive && cave.layers.block[index] ? " playable" : ""}${interactive && playtestState?.selectedIndex === index ? " selected" : ""}`;
+    const canActivate = interactive && !isBarrier(cave, index) && specialEffect(cave, cave.playtestPieces[index]);
+    cell.className = `map-cell${canActivate ? " playable" : ""}`;
     cell.type = interactive ? "button" : undefined;
     applyCellVisual(cell, cave, index);
     const targets = remainingTargets.filter(({ objective }) =>
@@ -1818,7 +1823,13 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = []) 
         cell.appendChild(badge);
       }
     }
-    if (interactive) cell.addEventListener("click", () => playtestCell(index));
+    if (interactive) {
+      cell.disabled ||= !canActivate;
+      if (canActivate) {
+        cell.setAttribute("aria-label", `특수 피스 발동 · ${SPECIAL_EFFECTS[canActivate]}`);
+        cell.addEventListener("click", () => playtestCell(index));
+      }
+    }
     grid.appendChild(cell);
   }
 }
@@ -1850,6 +1861,7 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
     renderPlaytest();
   } else {
     playtestState = null;
+    $("playtestPauseButton").hidden = true;
     const baseline = blocked ? null : readValidationBaseline(cave);
     const simulationCave = baseline ? { ...cave, randomSeed: baseline.seed } : cave;
     const batch = blocked ? null : runBatchSimulation(simulationCave, baseline?.runs ?? cave.simulationRuns);
@@ -1901,9 +1913,10 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
     renderSimulationGrid(cave, false);
   }
   if (!dialogAlreadyOpen) $("simulationDialog").showModal();
+  if (canPractice) runAnimatedPlaytest(playtestState);
 }
 
-function findMatches(cave) {
+function findMatches(cave, runs) {
   const matches = new Set();
   const blocks = cave.layers.block;
   for (let y = 0; y < cave.height; y += 1) {
@@ -1912,7 +1925,15 @@ function findMatches(cave) {
       const current = x < cave.width ? blocks[y * cave.width + x] : null;
       const first = blocks[y * cave.width + start];
       if (current === first && first) continue;
-      if (first && x - start >= 3) for (let fill = start; fill < x; fill += 1) matches.add(y * cave.width + fill);
+      if (first && x - start >= 3) {
+        const cells = runs ? [] : null;
+        for (let fill = start; fill < x; fill += 1) {
+          const index = y * cave.width + fill;
+          matches.add(index);
+          cells?.push(index);
+        }
+        if (runs) runs.push({ axis: "horizontal", cells });
+      }
       start = x;
     }
   }
@@ -1922,19 +1943,19 @@ function findMatches(cave) {
       const current = y < cave.height ? blocks[y * cave.width + x] : null;
       const first = blocks[start * cave.width + x];
       if (current === first && first) continue;
-      if (first && y - start >= 3) for (let fill = start; fill < y; fill += 1) matches.add(fill * cave.width + x);
+      if (first && y - start >= 3) {
+        const cells = runs ? [] : null;
+        for (let fill = start; fill < y; fill += 1) {
+          const index = fill * cave.width + x;
+          matches.add(index);
+          cells?.push(index);
+        }
+        if (runs) runs.push({ axis: "vertical", cells });
+      }
       start = y;
     }
   }
   return matches;
-}
-
-function areAdjacent(cave, first, second) {
-  const firstX = first % cave.width;
-  const firstY = Math.floor(first / cave.width);
-  const secondX = second % cave.width;
-  const secondY = Math.floor(second / cave.width);
-  return Math.abs(firstX - secondX) + Math.abs(firstY - secondY) === 1;
 }
 
 function neighborsOf(cave, index) {
@@ -2017,11 +2038,16 @@ function isBarrier(cave, index) {
 }
 
 function settleStraight(cave) {
+  const pieces = cave.playtestPieces;
   for (const line of gravityLines(cave)) {
     let segment = [];
     const settle = () => {
-      const values = segment.map((index) => cave.layers.block[index]).filter(Boolean);
-      segment.forEach((index, position) => { cave.layers.block[index] = values[position] || null; });
+      const values = segment.filter((index) => cave.layers.block[index])
+        .map((index) => ({ block: cave.layers.block[index], piece: pieces?.[index] }));
+      segment.forEach((index, position) => {
+        cave.layers.block[index] = values[position]?.block ?? null;
+        if (pieces) pieces[index] = values[position]?.piece ?? null;
+      });
       segment = [];
     };
     for (const index of line) {
@@ -2076,8 +2102,7 @@ function applyGravity(cave, state) {
         if (targetX < 0 || targetX >= cave.width || targetY < 0 || targetY >= cave.height) continue;
         const targetIndex = targetY * cave.width + targetX;
         if (isBarrier(cave, targetIndex) || cave.layers.block[targetIndex]) continue;
-        cave.layers.block[targetIndex] = cave.layers.block[index];
-        cave.layers.block[index] = null;
+        swapPlaytestBlocks(cave, targetIndex, index);
         flowMoves += 1;
         moved = true;
         break;
@@ -2154,15 +2179,21 @@ function damageTerrainFromMatches(state, matches) {
   return { damaged, broken, brokenDetails };
 }
 
-function resolveMatches(state, captureFrame) {
-  let matches = findMatches(state.cave);
+function resolveMatches(state, captureFrame, activation = [], preferred = []) {
+  let runs = [];
+  let matches = findMatches(state.cave, runs);
+  activation.forEach((index) => matches.add(index));
   let cascade = 0;
   let removed = 0;
   let terrainDamaged = 0;
   let terrainBroken = 0;
   let flowMoves = 0;
   while (matches.size && cascade < 20) {
-    captureFrame?.("매치 · " + matches.size + "개 제거", [...matches], "match");
+    const expanded = expandSpecialHits(state.cave, matches);
+    const created = createdSpecials(state.cave, runs, preferred, matches);
+    const triggered = [...expanded].some((index) => specialEffect(state.cave, state.cave.playtestPieces[index]));
+    matches = expanded;
+    captureFrame?.(triggered ? "특수 피스 폭발" : "매치", [...matches], "match");
     const terrainResult = damageTerrainFromMatches(state, matches);
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
@@ -2185,21 +2216,26 @@ function resolveMatches(state, captureFrame) {
     }
     matches.forEach((index) => {
       const blockId = state.cave.layers.block[index];
-      if (blockId) advanceObjectives(state, "block", blockId);
+      if (blockId && !created.has(index)) {
+        advanceObjectives(state, "block", blockId);
+        removed += 1;
+      }
       const itemId = state.cave.layers.item[index];
       if (itemId) {
         advanceObjectives(state, "item", itemId);
         state.cave.layers.item[index] = null;
       }
-      state.cave.layers.block[index] = null;
-      removed += 1;
+      state.cave.playtestPieces[index] = created.get(index) ?? null;
+      if (!created.has(index)) state.cave.layers.block[index] = null;
     });
-    captureFrame?.("블록 제거", [...matches], "match");
+    captureFrame?.(created.size ? "특수 피스 생성" : "블록 제거", created.size ? [...created.keys()] : [...matches], "match");
     flowMoves += applyGravity(state.cave, state);
     refillBlocks(state);
     captureFrame?.("낙하 및 블록 채우기", [], "refill");
     cascade += 1;
-    matches = findMatches(state.cave);
+    runs = [];
+    preferred = [];
+    matches = findMatches(state.cave, runs);
   }
   return { cascade, removed, terrainDamaged, terrainBroken, flowMoves, capped: matches.size > 0 };
 }
@@ -2251,20 +2287,128 @@ function listPossibleSwaps(state) {
   const blocks = cave.layers.block;
   const candidates = [];
   for (let first = 0; first < blocks.length; first += 1) {
-    if (!blocks[first]) continue;
+    if (!blocks[first] || isBarrier(cave, first)) continue;
     const x = first % cave.width;
     const others = [];
     if (x < cave.width - 1) others.push(first + 1);
     if (first + cave.width < blocks.length) others.push(first + cave.width);
     for (const second of others) {
-      if (!blocks[second] || blocks[first] === blocks[second]) continue;
-      [blocks[first], blocks[second]] = [blocks[second], blocks[first]];
+      if (!blocks[second] || blocks[first] === blocks[second] || isBarrier(cave, second)) continue;
+      swapPlaytestBlocks(cave, first, second);
       const matches = findMatches(cave);
-      if (matches.size) candidates.push({ first, second, score: scoreAutoMove(state, matches) });
-      [blocks[first], blocks[second]] = [blocks[second], blocks[first]];
+      if (matches.size) candidates.push({ first, second, score: scoreAutoMove(state, expandSpecialHits(cave, matches)) });
+      swapPlaytestBlocks(cave, first, second);
     }
   }
   return candidates;
+}
+
+
+const SPECIAL_EFFECTS = {
+  row: "가로 한 줄", column: "세로 한 줄", area: "주변 3×3", cross: "가로·세로 십자", color: "같은 색 전체",
+};
+
+const DEFAULT_SPECIAL_EFFECTS = Object.freeze({ horizontal: "row", vertical: "column", bomb: "area", rainbow: "color" });
+
+function specialEffect(cave, piece) {
+  if (!piece) return null;
+  const id = String(piece.type);
+  const declared = cave.initialPieceDefinitions?.find((entry) => entry?.id === id);
+  if (declared?.effect === "none") return null;
+  if (Object.hasOwn(SPECIAL_EFFECTS, declared?.effect)) return declared.effect;
+  return Object.hasOwn(DEFAULT_SPECIAL_EFFECTS, id) ? DEFAULT_SPECIAL_EFFECTS[id] : null;
+}
+
+function expandSpecialHits(cave, matches) {
+  const hits = new Set(matches);
+  for (const index of hits) {
+    const effect = specialEffect(cave, cave.playtestPieces[index]);
+    if (!effect) continue;
+    const x = index % cave.width;
+    const y = Math.floor(index / cave.width);
+    const color = cave.layers.block[index];
+    for (let other = 0; other < cave.layers.block.length; other += 1) {
+      const dx = Math.abs(other % cave.width - x);
+      const dy = Math.abs(Math.floor(other / cave.width) - y);
+      const affected = (effect === "row" && dy === 0) || (effect === "column" && dx === 0) ||
+        (effect === "cross" && (dx === 0 || dy === 0)) || (effect === "area" && dx <= 1 && dy <= 1) ||
+        (effect === "color" && color && cave.layers.block[other] === color);
+      if (affected && !isExcluded(cave, other)) hits.add(other);
+    }
+  }
+  return hits;
+}
+
+function createdSpecials(cave, runs, preferred, hits) {
+  const result = new Map();
+  if (!cave.specialMatches) return result;
+  const reserved = new Set();
+  const create = (cells, type, candidates = cells) => {
+    if (cells.some((index) => reserved.has(index))) return;
+    const index = [...preferred.filter((index) => candidates.includes(index)), ...candidates]
+      .find((index) => !cave.playtestPieces[index] && hits.has(index));
+    if (index === undefined) return;
+    const definition = EDITABLE_INITIAL_PIECES.find((entry) => entry.id === type);
+    result.set(index, { type, name: definition.name, symbol: definition.symbol });
+    cells.forEach((cell) => reserved.add(cell));
+  };
+  for (const { cells } of runs) {
+    if (cells.length >= 5) create(cells, "rainbow", [cells[Math.floor(cells.length / 2)], ...cells]);
+  }
+  const vertical = new Map();
+  runs.filter(({ axis }) => axis === "vertical").forEach((run) =>
+    run.cells.forEach((index) => vertical.set(index, run.cells)));
+  for (const { cells, axis } of runs) {
+    if (axis !== "horizontal") continue;
+    const center = cells.find((index) => vertical.has(index));
+    if (center !== undefined) create([...cells, ...vertical.get(center)], "bomb", [center]);
+  }
+  for (const { cells, axis } of runs) {
+    if (cells.length === 4) create(cells, axis, [cells[1], ...cells]);
+  }
+  return result;
+}
+
+function swapPlaytestBlocks(cave, first, second) {
+  const blocks = cave.layers.block;
+  const pieces = cave.playtestPieces;
+  [blocks[first], blocks[second]] = [blocks[second], blocks[first]];
+  [pieces[first], pieces[second]] = [pieces[second], pieces[first]];
+}
+
+function chooseAutoAction(state) {
+  const cave = state.cave;
+  const candidates = listPossibleSwaps(state);
+  cave.playtestPieces.forEach((piece, index) => {
+    if (!specialEffect(cave, piece) || isBarrier(cave, index)) return;
+    candidates.push({ first: index, score: scoreAutoMove(state, expandSpecialHits(cave, [index])) });
+  });
+  if (!candidates.length) return null;
+  const bestScore = Math.max(...candidates.map(({ score }) => score));
+  const best = candidates.filter(({ score }) => score === bestScore);
+  return best[Math.floor(state.random() * best.length)];
+}
+
+function playSimulationTurn(state, action, captureFrame) {
+  if (!action) {
+    state.status = "stuck";
+    state.message = "가능한 교환이나 특수 피스 발동이 없습니다.";
+    return;
+  }
+  const { first, second } = action;
+  const cave = state.cave;
+  const activation = second === undefined;
+  if (activation) {
+    captureFrame?.("특수 피스 발동", [first], "match");
+  } else {
+    swapPlaytestBlocks(cave, first, second);
+    captureFrame?.("블록 교환", [first, second], "swap", 250);
+  }
+  state.movesLeft -= 1;
+  const resolved = resolveMatches(state, captureFrame, activation ? [first] : [], activation ? [] : [second, first]);
+  state.message = resolved.removed + "개 제거 · " + resolved.cascade + "연쇄 · Terrain " + resolved.terrainBroken + "개 파괴";
+  if (allObjectivesComplete(state)) state.status = "won";
+  else if (!state.movesLeft) state.status = "lost";
 }
 
 function createPlayState(cave, seedSuffix) {
@@ -2272,12 +2416,16 @@ function createPlayState(cave, seedSuffix) {
   copy.layers.block.forEach((id, index) => {
     if (id && ddungBoxDurability(copy, index)) copy.layers.block[index] = null;
   });
+  copy.playtestPieces = copy.layers.block.map((block, index) => {
+    const piece = block ? initialPieceAt(copy, index) : null;
+    return piece && (!piece.color || piece.color === block) ? piece : null;
+  });
   return {
     cave: copy,
     movesLeft: copy.moveLimit,
-    selectedIndex: null,
+    paused: false,
     status: "playing",
-    message: "교환할 첫 번째 블록을 선택하세요.",
+    message: "자동 플레이를 시작합니다.",
     random: seededRandom(`${copy.randomSeed}|${seedSuffix}`),
     terrainHits: Array(copy.width * copy.height).fill(0),
     gimmickHits: Array(copy.width * copy.height).fill(0),
@@ -2290,21 +2438,9 @@ function createPlayState(cave, seedSuffix) {
 
 function runAutoGame(cave, runIndex) {
   const state = createPlayState(cave, `batch-${runIndex}`);
-  const swaps = [];
-  if (state.goalLimitations.some(Boolean)) return { status: "unsupported", moves: 0 };
-  while (state.movesLeft > 0 && !allObjectivesComplete(state)) {
-    const candidates = listPossibleSwaps(state);
-    if (!candidates.length) return { status: "stuck", moves: cave.moveLimit - state.movesLeft, runIndex, swaps };
-    const bestScore = Math.max(...candidates.map((candidate) => candidate.score));
-    const best = candidates.filter((candidate) => candidate.score === bestScore);
-    const chosen = best[Math.floor(state.random() * best.length)];
-    swaps.push([chosen.first, chosen.second]);
-    const blocks = state.cave.layers.block;
-    [blocks[chosen.first], blocks[chosen.second]] = [blocks[chosen.second], blocks[chosen.first]];
-    state.movesLeft -= 1;
-    resolveMatches(state);
-  }
-  return { status: allObjectivesComplete(state) ? "won" : "lost", moves: cave.moveLimit - state.movesLeft, runIndex, swaps };
+  if (state.goalLimitations.some(Boolean)) return { status: "unsupported", moves: 0, runIndex };
+  while (state.status === "playing") playSimulationTurn(state, chooseAutoAction(state));
+  return { status: state.status, moves: cave.moveLimit - state.movesLeft, runIndex };
 }
 
 function cavesInRange(input) {
@@ -2493,11 +2629,11 @@ function summarizeBatch(results) {
 function startBatchReplay(cave, validation, example) {
   playtestState = createPlayState(cave, `batch-${example.runIndex}`);
   playtestState.validation = validation;
-  playtestState.replay = { cave, example, following: true };
-  if (!example.swaps.length && example.status === "stuck") playtestState.status = "stuck";
+  playtestState.replay = { cave, example };
   $("playtestGuide").hidden = false;
   $("playtestResetButton").hidden = false;
   renderPlaytest();
+  runAnimatedPlaytest(playtestState);
 }
 
 async function showPlaytestFrames(state, frames) {
@@ -2511,69 +2647,47 @@ async function showPlaytestFrames(state, frames) {
   }
 }
 
-async function playtestCell(index) {
-  const state = playtestState;
-  if (!state || state.animating || state.status !== "playing" || !state.cave.layers.block[index]) return;
-  if (state.selectedIndex == null) {
-    state.selectedIndex = index;
-    state.message = "교환할 인접 블록을 선택하세요.";
-    renderPlaytest();
-    return;
-  }
-  if (state.selectedIndex === index) {
-    state.selectedIndex = null;
-    state.message = "선택을 취소했습니다.";
-    renderPlaytest();
-    return;
-  }
-  if (!areAdjacent(state.cave, state.selectedIndex, index)) {
-    state.selectedIndex = index;
-    state.message = "인접하지 않아 첫 번째 블록을 다시 선택했습니다.";
-    renderPlaytest();
-    return;
-  }
-  const first = state.selectedIndex;
+async function animatePlaytestTurn(state, action) {
   const frames = [];
-  const captureFrame = (label, cells, kind, delay = 300) => {
+  const capture = (label, cells, kind, delay = 180) => {
     const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
-    frames.push({ cave: { ...state.cave, layers }, label, cells, kind, delay });
+    frames.push({ cave: { ...state.cave, layers, playtestPieces: [...state.cave.playtestPieces] }, label, cells, kind, delay });
   };
-  const blocks = state.cave.layers.block;
-  [blocks[first], blocks[index]] = [blocks[index], blocks[first]];
-  state.selectedIndex = null;
   state.animating = true;
-  captureFrame("선택한 두 블록 교환", [first, index], "swap", 420);
-  if (!findMatches(state.cave).size) {
-    [blocks[first], blocks[index]] = [blocks[index], blocks[first]];
-    state.message = "3-Match가 생기지 않아 교환을 되돌렸습니다. Moves는 차감하지 않았습니다.";
-    captureFrame("매치 없음 · 교환 되돌리기", [first, index], "swap");
+  try {
+    playSimulationTurn(state, action, capture);
     await showPlaytestFrames(state, frames);
+  } finally {
     state.animating = false;
-    if (playtestState === state) renderPlaytest();
-    return;
+    if (playtestState === state && $("simulationDialog").open) renderPlaytest();
   }
-  if (state.replay) {
-    const recorded = state.replay.example.swaps[state.cave.moveLimit - state.movesLeft];
-    state.replay.following &&= Boolean(recorded && recorded.includes(first) && recorded.includes(index));
-    // Automatic play consumes one draw when it chooses a swap.
-    state.random();
+}
+
+async function runAnimatedPlaytest(state) {
+  if (state.running) return;
+  state.running = true;
+  try {
+    while (playtestState === state && $("simulationDialog").open && !state.paused && state.status === "playing") {
+      await animatePlaytestTurn(state, chooseAutoAction(state));
+    }
+  } finally {
+    state.running = false;
   }
-  state.movesLeft -= 1;
-  const resolved = resolveMatches(state, captureFrame);
-  state.message = `${resolved.removed}개 제거 · ${resolved.cascade}연쇄 · Terrain 반응 ${resolved.terrainDamaged}회${resolved.terrainBroken ? ` · Terrain ${resolved.terrainBroken}개 파괴` : ""}${resolved.flowMoves ? ` · 우회 흐름 ${resolved.flowMoves}칸` : ""}${resolved.capped ? " · 연쇄 안전 제한 도달" : ""}`;
-  if (allObjectivesComplete(state)) {
-    state.status = "won";
-    state.message = `${state.cave.moveLimit - state.movesLeft} Moves로 목표를 달성했습니다. ${state.message}`;
-  } else if (state.movesLeft <= 0) {
-    state.status = "lost";
-    state.message = "Moves를 모두 사용했습니다.";
-  } else if (!hasPossibleSwap(state.cave)) {
-    state.status = "stuck";
-    state.message = "가능한 3-Match 교환이 없습니다. 새 시드나 셔플이 필요합니다.";
-  }
-  await showPlaytestFrames(state, frames);
-  state.animating = false;
-  if (playtestState === state) renderPlaytest();
+}
+
+function togglePlaytestPause() {
+  const state = playtestState;
+  if (!state || state.status !== "playing") return;
+  state.paused = !state.paused;
+  if (!state.animating) renderPlaytest();
+  if (!state.paused) runAnimatedPlaytest(state);
+}
+
+function playtestCell(index) {
+  const state = playtestState;
+  if (!state || state.status !== "playing" || !state.paused || state.animating ||
+      isBarrier(state.cave, index) || !specialEffect(state.cave, state.cave.playtestPieces[index])) return;
+  animatePlaytestTurn(state, { first: index });
 }
 
 function playtestRemainingTargets(state) {
@@ -2599,31 +2713,16 @@ function renderPlaytest() {
     Moves <b>${state.movesLeft}</b> / ${state.cave.moveLimit} · 사용 ${usedMoves}회<br>
     ${objectiveProgressHtml(state)}
     Gravity ${state.cave.gravity} · 막힘 우회 ${flowLabels[state.cave.flowRule]}<br>
-    ${failed ? `<strong>${state.status === "lost" ? "이동 횟수 소진" : "가능한 매치 없음"}</strong>` : escapeHtml(state.message)}
+    ${failed ? `<strong>${state.status === "lost" ? "이동 횟수 소진" : "가능한 교환이나 특수 피스 발동 없음"}</strong>` : escapeHtml(state.message)}
     ${remainingTargets.length ? `<ul aria-label="남은 목표">${remainingTargets.map(({ objective, remaining }) =>
       `<li>${escapeHtml(objectiveLabel(objective))} · ${remaining}개 남음</li>`).join("")}</ul>` : ""}
     ${practice ? issueHtml({ errors: [], warnings: [], unsupported: state.validation.unsupported }) : ""}
   `;
   $("usePlaytestResultButton").hidden = state.status !== "won";
-  if (state.replay) {
-    const used = state.cave.moveLimit - state.movesLeft;
-    const label = document.createElement("p");
-    label.textContent = `자동 검증 ${state.replay.example.runIndex + 1}번째 판 · ${state.replay.following ? "기록된 수 따라가기" : "다른 수로 플레이 중"}`;
-    result.appendChild(label);
-    const next = state.replay.example.swaps[used];
-    if (next && state.replay.following && state.status === "playing") {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "button ghost";
-      button.textContent = "자동 플레이 다음 수";
-      button.addEventListener("click", () => {
-        state.selectedIndex = next[0];
-        playtestCell(next[1]);
-      });
-      result.appendChild(button);
-    }
-  }
-  renderSimulationGrid(state.cave, state.status === "playing", remainingTargets);
+  const pause = $("playtestPauseButton");
+  pause.hidden = state.status !== "playing";
+  pause.textContent = state.paused ? "자동 플레이 계속" : "일시정지";
+  renderSimulationGrid(state.cave, state.status === "playing" && state.paused, remainingTargets);
 }
 
 function resetPlaytest() {
@@ -2638,6 +2737,7 @@ function resetPlaytest() {
   playtestState.validation = validateCave(cave);
   $("usePlaytestResultButton").hidden = true;
   renderPlaytest();
+  runAnimatedPlaytest(playtestState);
 }
 
 function usePlaytestResult() {
@@ -2719,6 +2819,8 @@ function buildGridTilesExport(cave) {
   const collect = {};
   for (const goal of cave.objectives) collect[goal.targetId] = (collect[goal.targetId] || 0) + resolvedObjectiveCount(cave, goal);
   source.goals = { ...source.goals, moves: cave.moveLimit, collect };
+  if (cave.initialPieceDefinitions?.some((entry) => entry.effect)) source.initialPieceDefinitions = cave.initialPieceDefinitions;
+  if (cave.specialMatches === false || Object.hasOwn(source, "specialMatches")) source.specialMatches = cave.specialMatches;
   return source;
 }
 
@@ -2728,6 +2830,9 @@ function buildDdungLevelExport(cave) {
   const fields = ["width", "height", "layers", "excludedCells", "objectives", "usableBlocks", "blockWeights", "gravity", "initialPieceTypes"];
   if (fields.some((key) => JSON.stringify(cave[key]) !== JSON.stringify(baseline[key]))) {
     throw new Error("이 레벨의 보드나 목표 편집은 DDUNG 형식으로 변환할 수 없습니다. 프로젝트 내보내기로 저장하세요.");
+  }
+  if (cave.specialMatches || cave.initialPieceDefinitions?.some((entry) => entry.effect && entry.effect !== "none")) {
+    throw new Error("특수 피스 동작 설정은 전체 레벨 JSON으로 저장하세요.");
   }
   const settings = cave.levelSettings;
   const before = baseline.levelSettings;
@@ -2781,7 +2886,7 @@ function exportProject() {
 
 function describePatchChanges(previous, cave) {
   const groups = [
-    ["보드 배치", ["layers", "excludedCells", "width", "height", "initialPieceTypes", "initialPieceDefinitions"]],
+    ["보드 배치", ["layers", "excludedCells", "width", "height", "initialPieceTypes", "initialPieceDefinitions", "specialMatches"]],
     ["클리어 목표", ["objectives", "targetType", "targetCount"]],
     ["이동 횟수", ["moveLimit", "parMoves", "testClearMoves"]],
   ];
@@ -3435,7 +3540,7 @@ function externalInitialPieces(source, grid, width, height) {
     initialPieceTypes: types,
     initialPieceDefinitions: [...new Set(Object.values(types))].map((id, index) => {
       const declared = definitions.find((entry) => entry && String(entry.id) === id);
-      return { id, name: String(declared?.name || id), symbol: String(declared?.symbol || symbols[index] || index + 1) };
+      return { id, name: String(declared?.name || id), symbol: String(declared?.symbol || symbols[index] || index + 1), effect: declared?.effect };
     }),
   };
 }
@@ -3492,6 +3597,7 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers,
     id: valueAt(source, ["id", "uuid", "levelId", "stageId"], crypto.randomUUID()),
     name: valueAt(source, ["name", "title", "levelName", "stageName"], `Imported Cave ${String(index + 1).padStart(4, "0")}`),
     ...externalInitialPieces(source, tiles, width, height),
+    specialMatches: source.specialMatches,
     excludedCells: source.excludedCells,
     width, height, gravity: valueAt(source, ["gravity", "gravityDirection", "direction"], "down"), layers,
     flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "left-first"),
@@ -3753,6 +3859,7 @@ function bindInputs() {
   $("closeSimulationButton").addEventListener("click", () => $("simulationDialog").close());
   $("closeSimulationFooterButton").addEventListener("click", () => $("simulationDialog").close());
   $("playtestResetButton").addEventListener("click", resetPlaytest);
+  $("playtestPauseButton").addEventListener("click", togglePlaytestPause);
   $("usePlaytestResultButton").addEventListener("click", usePlaytestResult);
   $("saveButton").addEventListener("click", () => persist(true));
   $("exportButton").addEventListener("click", exportProject);
@@ -3785,6 +3892,14 @@ function bindInputs() {
   $("randomSeed").addEventListener("change", updateRandomSettings);
   $("randomDensity").addEventListener("change", updateRandomSettings);
   $("failureBonus").addEventListener("change", updateRule);
+  $("specialMatches").addEventListener("change", (event) => {
+    snapshot();
+    const cave = activeCave();
+    cave.specialMatches = event.target.checked;
+    cave.testClearMoves = 0;
+    renderRules();
+    persist();
+  });
   $("terrainRuleType").addEventListener("change", (event) => { selectedTerrainRule = event.target.value; renderTerrainRuleEditor(); });
   $("terrainReaction").addEventListener("change", updateTerrainRule);
   $("terrainBlocksFlow").addEventListener("change", updateTerrainRule);
@@ -3901,6 +4016,8 @@ function inspectCell(index) {
   const form = $("initialPieceForm");
   const color = $("initialPieceColor");
   const type = $("initialPieceType");
+  const newName = $("initialPieceName");
+  const effect = $("initialPieceEffect");
   details.textContent = describeCellProperties(cave, index);
   form.hidden = isBarrier(cave, index);
   form.onsubmit = null;
@@ -3920,23 +4037,40 @@ function inspectCell(index) {
     color.value = currentColor || "";
     type.replaceChildren(new Option("일반 블록 · 특수 타입 해제", ""));
     for (const entry of definitions.values()) type.add(new Option(entry.symbol + " " + entry.name, entry.id));
+    type.add(new Option("새 특수 타입 만들기", "__new__"));
     type.value = current ? String(current.type) : "";
+    newName.value = "";
+    effect.replaceChildren(new Option("발동 효과 없음", "none"));
+    for (const [id, label] of Object.entries(SPECIAL_EFFECTS)) effect.add(new Option(label, id));
     const refresh = () => {
-      $("initialPieceApply").disabled = Boolean(type.value && !color.value);
+      const creating = type.value === "__new__";
+      $("initialPieceNameLabel").hidden = !creating;
+      $("initialPieceEffectLabel").hidden = !type.value;
+      $("initialPieceApply").disabled = Boolean(type.value && !color.value) || (creating && !newName.value.trim());
     };
-    form.onchange = refresh;
-    refresh();
+    type.onchange = () => {
+      effect.value = specialEffect(cave, { type: type.value }) || "none";
+      refresh();
+    };
+    form.oninput = refresh;
+    type.onchange();
     form.onsubmit = (event) => {
       event.preventDefault();
-      const definition = definitions.get(type.value);
-      if (definition && !color.value) return;
+      const creating = type.value === "__new__";
+      if ((type.value && !color.value) || (creating && !newName.value.trim())) return;
+      const definition = creating
+        ? { id: "custom-" + crypto.randomUUID(), name: newName.value.trim(), symbol: "✦" }
+        : definitions.get(type.value);
       snapshot();
       cave.layers.block[index] = color.value || null;
       cave.initialPieceTypes ??= {};
       cave.initialPieceTypes[index] = definition?.id ?? null;
       if (definition) {
         cave.initialPieceDefinitions ??= [];
-        if (!cave.initialPieceDefinitions.some((entry) => entry.id === definition.id)) cave.initialPieceDefinitions.push(definition);
+        const updated = { ...definition, effect: effect.value };
+        const previous = cave.initialPieceDefinitions.findIndex((entry) => entry.id === definition.id);
+        if (previous < 0) cave.initialPieceDefinitions.push(updated);
+        else cave.initialPieceDefinitions[previous] = updated;
       }
       project.paletteAssets = collectPaletteAssets(project.caves, project.paletteAssets);
       cave.testClearMoves = 0;
