@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.22";
+const CLIENT_VERSION = "2.7.23";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2347,6 +2347,21 @@ async function validatePatchCaves(dialog, entries) {
       const batch = results.length ? summarizeBatch(results) : null;
       cell.textContent = batch ? `클리어율 ${batch.clearRate}% (${batch.wins}/${batch.runs})`
         : validation.errors.length ? "검증 오류" : "판정 미지원";
+      if (validation.errors.length) {
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "button ghost";
+        edit.textContent = "Cave 편집 열기";
+        edit.setAttribute("aria-label", `Cave ${cave.number} 편집 열기`);
+        edit.addEventListener("click", () => {
+          controller.abort();
+          dialog.close();
+          $("caveJump").value = String(cave.number);
+          jumpToCave();
+          $("mapGrid").scrollIntoView({ block: "nearest" });
+        });
+        cell.appendChild(edit);
+      }
       const issues = issueHtml(validation);
       if (issues) {
         const details = document.createElement("details");
