@@ -1533,9 +1533,13 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     }
   }
 
-  for (let index = 0; index < cave.width; index += 1) {
-    if (!isBarrier(cave, index) && !cave.layers.gimmick[index]) {
-      cave.layers.gimmick[index] = SPAWNER_ID;
+  const spawnEdge = new Set(gravityLines(cave).map((line) => line[line.length - 1]));
+  const gimmicks = cave.layers.gimmick;
+  for (let index = 0; index < gimmicks.length; index += 1) {
+    if (spawnEdge.has(index) && !isBarrier(cave, index)) {
+      if (!gimmicks[index]) gimmicks[index] = SPAWNER_ID;
+    } else if (gimmicks[index] === SPAWNER_ID) {
+      gimmicks[index] = null;
     }
   }
 
