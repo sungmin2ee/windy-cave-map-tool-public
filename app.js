@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.43";
+const CLIENT_VERSION = "2.7.44";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1906,7 +1906,7 @@ function damageTerrainFromMatches(state, matches) {
   return { damaged, broken, brokenDetails };
 }
 
-function resolveMatches(state) {
+function resolveMatches(state, captureFrame) {
   let matches = findMatches(state.cave);
   let cascade = 0;
   let removed = 0;
@@ -1914,6 +1914,7 @@ function resolveMatches(state) {
   let terrainBroken = 0;
   let flowMoves = 0;
   while (matches.size && cascade < 20) {
+    captureFrame?.("매치 · " + matches.size + "개 제거", [...matches], "match");
     const terrainResult = damageTerrainFromMatches(state, matches);
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
@@ -1945,8 +1946,10 @@ function resolveMatches(state) {
       state.cave.layers.block[index] = null;
       removed += 1;
     });
+    captureFrame?.("블록 제거", [...matches], "match");
     flowMoves += applyGravity(state.cave, state);
     refillBlocks(state.cave, state.random);
+    captureFrame?.("낙하 및 블록 채우기", [], "refill");
     cascade += 1;
     matches = findMatches(state.cave);
   }
@@ -2249,9 +2252,20 @@ function startBatchReplay(cave, validation, example) {
   renderPlaytest();
 }
 
-function playtestCell(index) {
+async function showPlaytestFrames(state, frames) {
+  for (const frame of frames) {
+    if (playtestState !== state || !$("simulationDialog").open) return;
+    renderSimulationGrid(frame.cave);
+    const grid = $("simulationGrid");
+    for (const index of frame.cells) grid.children[index]?.classList.add("playtest-frame-" + frame.kind);
+    $("playtestFrameStatus").textContent = frame.label;
+    await new Promise((resolve) => setTimeout(resolve, frame.delay));
+  }
+}
+
+async function playtestCell(index) {
   const state = playtestState;
-  if (!state || state.status !== "playing" || !state.cave.layers.block[index]) return;
+  if (!state || state.animating || state.status !== "playing" || !state.cave.layers.block[index]) return;
   if (state.selectedIndex == null) {
     state.selectedIndex = index;
     state.message = "교환할 인접 블록을 선택하세요.";
@@ -2271,13 +2285,23 @@ function playtestCell(index) {
     return;
   }
   const first = state.selectedIndex;
+  const frames = [];
+  const captureFrame = (label, cells, kind, delay = 300) => {
+    const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
+    frames.push({ cave: { ...state.cave, layers }, label, cells, kind, delay });
+  };
   const blocks = state.cave.layers.block;
   [blocks[first], blocks[index]] = [blocks[index], blocks[first]];
   state.selectedIndex = null;
+  state.animating = true;
+  captureFrame("선택한 두 블록 교환", [first, index], "swap", 420);
   if (!findMatches(state.cave).size) {
     [blocks[first], blocks[index]] = [blocks[index], blocks[first]];
     state.message = "3-Match가 생기지 않아 교환을 되돌렸습니다. Moves는 차감하지 않았습니다.";
-    renderPlaytest();
+    captureFrame("매치 없음 · 교환 되돌리기", [first, index], "swap");
+    await showPlaytestFrames(state, frames);
+    state.animating = false;
+    if (playtestState === state) renderPlaytest();
     return;
   }
   if (state.replay) {
@@ -2287,7 +2311,7 @@ function playtestCell(index) {
     state.random();
   }
   state.movesLeft -= 1;
-  const resolved = resolveMatches(state);
+  const resolved = resolveMatches(state, captureFrame);
   state.message = `${resolved.removed}개 제거 · ${resolved.cascade}연쇄 · Terrain 반응 ${resolved.terrainDamaged}회${resolved.terrainBroken ? ` · Terrain ${resolved.terrainBroken}개 파괴` : ""}${resolved.flowMoves ? ` · 우회 흐름 ${resolved.flowMoves}칸` : ""}${resolved.capped ? " · 연쇄 안전 제한 도달" : ""}`;
   if (allObjectivesComplete(state)) {
     state.status = "won";
@@ -2299,7 +2323,9 @@ function playtestCell(index) {
     state.status = "stuck";
     state.message = "가능한 3-Match 교환이 없습니다. 새 시드나 셔플이 필요합니다.";
   }
-  renderPlaytest();
+  await showPlaytestFrames(state, frames);
+  state.animating = false;
+  if (playtestState === state) renderPlaytest();
 }
 
 function playtestRemainingTargets(state) {
@@ -2310,6 +2336,7 @@ function playtestRemainingTargets(state) {
 }
 
 function renderPlaytest() {
+  $("playtestFrameStatus").textContent = "";
   const state = playtestState;
   if (!state) return;
   const failed = state.status === "lost" || state.status === "stuck";
