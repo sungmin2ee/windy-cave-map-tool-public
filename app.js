@@ -395,7 +395,7 @@ function normalizeCave(data, index = 0) {
     name: String(source.name || `Cave ${String(index + 1).padStart(4, "0")}`),
     width, height, gravity: normalizeGravity(source.gravity), layers, excludedCells,
     levelSettings: normalizeLevelSettings(source),
-    specialMatches: source.specialMatches ?? !isDdungSource(externalSource),
+    specialMatches: source.specialMatches ?? true,
     usableBlocks: [...new Set(usableBlocks)],
     blockWeights: normalizeBlockWeights(source.blockWeights),
     objectives, targetType, targetCount, moveLimit,
@@ -1963,6 +1963,19 @@ function findMatches(cave, runs) {
       start = y;
     }
   }
+  if (cave.specialMatches) {
+    for (let y = 0; y < cave.height - 1; y += 1) {
+      for (let x = 0; x < cave.width - 1; x += 1) {
+        const topLeft = y * cave.width + x;
+        const color = blocks[topLeft];
+        if (!color) continue;
+        const cells = [topLeft, topLeft + 1, topLeft + cave.width, topLeft + cave.width + 1];
+        if (!cells.every((index) => blocks[index] === color && !isBarrier(cave, index))) continue;
+        cells.forEach((index) => matches.add(index));
+        runs?.push({ axis: "square", cells });
+      }
+    }
+  }
   return matches;
 }
 
@@ -2370,7 +2383,7 @@ function specialEffectLabel(effect) {
   return effect === "script" ? SCRIPT_EFFECT_LABEL : SPECIAL_EFFECTS[effect];
 }
 
-const DEFAULT_SPECIAL_EFFECTS = Object.freeze({ horizontal: "row", vertical: "column", bomb: "area", rainbow: "color" });
+const DEFAULT_SPECIAL_EFFECTS = Object.freeze({ horizontal: "row", vertical: "column", bomb: "area", rainbow: "color", bee: "target" });
 
 const DDUNG_SPECIAL_EFFECTS = Object.freeze({ 1: "row", 2: "column", 3: "area" });
 
@@ -2473,7 +2486,8 @@ function createdSpecials(cave, runs, preferred, hits) {
     if (center !== undefined) create([...cells, ...vertical.get(center)], "bomb", [center]);
   }
   for (const { cells, axis } of runs) {
-    if (cells.length === 4) create(cells, axis, [cells[1], ...cells]);
+    if (axis === "square") create(cells, "bee");
+    else if (cells.length === 4) create(cells, axis, [cells[1], ...cells]);
   }
   return result;
 }
@@ -2978,7 +2992,7 @@ function buildDdungLevelExport(cave) {
   if (fields.some((key) => JSON.stringify(cave[key]) !== JSON.stringify(baseline[key]))) {
     throw new Error("이 레벨의 보드나 목표 편집은 DDUNG 형식으로 변환할 수 없습니다. 프로젝트 내보내기로 저장하세요.");
   }
-  if (cave.specialMatches || cave.initialPieceDefinitions?.some((entry) => entry.effect && entry.effect !== "none")) {
+  if (cave.initialPieceDefinitions?.some((entry) => entry.effect && entry.effect !== "none")) {
     throw new Error("특수 피스 동작 설정은 전체 레벨 JSON으로 저장하세요.");
   }
   const settings = cave.levelSettings;

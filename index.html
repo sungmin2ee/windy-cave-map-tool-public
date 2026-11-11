@@ -263,7 +263,6 @@
               <input id="failureBonus" type="checkbox" />
               <span>Failure Bonus 사용</span>
             </label>
-            <label class="check-line"><input id="specialMatches" type="checkbox"> 매치로 특수 피스 생성</label>
           </section>
         </aside>
 
@@ -284,6 +283,7 @@
             <div class="toolbar-spacer"></div>
             <button class="button validate" id="validateButton">검증</button>
             <button class="button validate" id="rangeButton">범위 검증</button>
+            <label class="check-line"><input id="specialMatches" type="checkbox"> 매치로 특수 피스 생성</label>
             <button class="button play" id="playButton"><span>▶</span> Playtest</button>
           </div>
 
@@ -635,7 +635,7 @@
           <summary style="cursor: pointer; font-weight: 700;">플레이와 검증</summary>
           <ul>
             <li><strong>Playtest</strong>는 블록 교환과 특수 피스 발동을 자동으로 진행합니다. <strong>일시정지</strong> 중에는 특수 피스를 클릭해 직접 발동할 수 있습니다. 발동에는 이동 1회를 사용합니다. 클리어 기록은 <strong>이 기록을 난이도에 사용</strong>으로 반영할 수 있습니다.</li>
-            <li><strong>매치로 특수 피스 생성</strong>을 켜면 가로·세로 4매치에서 해당 방향의 줄 폭탄, 5매치에서 같은 색 제거 피스, T/L자 매치에서 주변 3×3 폭탄이 생깁니다. DDUNG에서 가져온 레벨은 이 설정을 켜서 사용할 수 있습니다.</li>
+            <li><strong>매치로 특수 피스 생성</strong>을 켜면 가로·세로 4매치에서 해당 방향의 줄 폭탄, 5매치에서 같은 색 제거 피스, T/L자 매치에서 주변 3×3 폭탄, 2×2 매치에서 목표 타일을 제거하는 벌이 생깁니다. 일자 3매치는 블록만 제거합니다. 기존 레벨에서 꺼져 있다면 Playtest 버튼 옆에서 켤 수 있습니다.</li>
             <li>오른쪽 오브젝트 패널의 <strong>특수 타입 관리</strong>에서 현재 Cave의 특수 타입 이름과 발동 효과를 설정합니다. 효과는 해당 Cave에서 같은 타입을 사용하는 모든 피스에 적용됩니다. <strong>칸 속성</strong>에서 블록 색과 등록된 특수 타입을 선택해 배치합니다.</li>
             <li>직접 작성한 스크립트를 선택하면 여러 효과를 조합할 수 있습니다. 예를 들어 <code>[{"op":"row"},{"op":"offsets","cells":[[-1,-1],[1,1]]}]</code>는 피스의 가로 한 줄과 대각선 두 칸을 터뜨립니다. Playtest와 자동 플레이에서 같은 효과가 적용됩니다. 스크립트는 지원 명령을 담은 JSON 배열입니다.</li>
             <li><strong>검증</strong>은 현재 Cave를, <strong>범위 검증</strong>은 지정한 번호 범위를 자동으로 검사합니다. 자동 플레이의 클리어율과 Moves는 레벨 밸런스를 비교하는 참고 지표입니다.</li>
@@ -663,7 +663,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=79"></script>
+    <script src="./app.js?v=80"></script>
   </body>
 </html>
 
