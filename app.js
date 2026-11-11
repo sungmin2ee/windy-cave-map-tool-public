@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.4";
+const CLIENT_VERSION = "2.7.5";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1138,7 +1138,7 @@ function issueHtml(validation) {
   return errorHtml + warningHtml + unsupportedHtml;
 }
 
-function renderSimulationGrid(cave, interactive = false) {
+function renderSimulationGrid(cave, interactive = false, remainingTargets = []) {
   const grid = $("simulationGrid");
   grid.style.gridTemplateColumns = `repeat(${cave.width}, 30px)`;
   grid.innerHTML = "";
@@ -1147,6 +1147,14 @@ function renderSimulationGrid(cave, interactive = false) {
     cell.className = `map-cell${interactive && cave.layers.block[index] ? " playable" : ""}${interactive && playtestState?.selectedIndex === index ? " selected" : ""}`;
     cell.type = interactive ? "button" : undefined;
     applyCellVisual(cell, cave, index);
+    const targets = remainingTargets.filter(({ objective }) =>
+      matchesObjectiveAsset(objective, cave.layers[objective.layer][index]) &&
+      (objective.layer !== "gimmick" || !playtestState.activatedGimmicks.has(index)));
+    if (targets.length) {
+      cell.classList.add("remaining-target");
+      cell.title = targets.map(({ objective }) => objectiveLabel(objective)).join(", ");
+      cell.setAttribute("aria-label", `남은 목표 · ${cell.title}`);
+    }
     if (playtestState?.cave === cave) {
       const terrainId = cave.layers.terrain[index];
       const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
@@ -1634,24 +1642,35 @@ function playtestCell(index) {
   renderPlaytest();
 }
 
+function playtestRemainingTargets(state) {
+  return state.cave.objectives.map((objective, index) => {
+    const { current, target } = state.objectiveProgress[index];
+    return { objective, remaining: Math.max(0, target - current), unsupported: state.goalLimitations[index] };
+  }).filter(({ remaining, unsupported }) => remaining > 0 && !unsupported);
+}
+
 function renderPlaytest() {
   const state = playtestState;
   if (!state) return;
+  const failed = state.status === "lost" || state.status === "stuck";
+  const remainingTargets = failed ? playtestRemainingTargets(state) : [];
   const usedMoves = state.cave.moveLimit - state.movesLeft;
   const practice = state.goalLimitations.some(Boolean);
   const flowLabels = { "left-first": "왼쪽/위 우선", "right-first": "오른쪽/아래 우선", alternate: "교대", "seeded-random": "시드 랜덤", none: "우회 없음" };
   const result = $("simulationResult");
   result.className = `simulation-result ${state.status === "won" ? "success" : ["lost", "stuck"].includes(state.status) ? "error" : "warning"}`;
   result.innerHTML = `
-    <strong>${practice ? "PLAYTEST 연습 · 클리어 판정 미지원" : state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 종료" : "PLAYTEST 진행 중"}</strong><br>
+    <strong>${practice ? "PLAYTEST 연습 · 클리어 판정 미지원" : state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 실패" : "PLAYTEST 진행 중"}</strong><br>
     Moves <b>${state.movesLeft}</b> / ${state.cave.moveLimit} · 사용 ${usedMoves}회<br>
     ${objectiveProgressHtml(state)}
     Gravity ${state.cave.gravity} · 막힘 우회 ${flowLabels[state.cave.flowRule]}<br>
-    ${escapeHtml(practice && state.status !== "playing" ? "연습을 종료했습니다." : state.message)}
+    ${failed ? `<strong>${state.status === "lost" ? "이동 횟수 소진" : "가능한 매치 없음"}</strong>` : escapeHtml(state.message)}
+    ${remainingTargets.length ? `<ul aria-label="남은 목표">${remainingTargets.map(({ objective, remaining }) =>
+      `<li>${escapeHtml(objectiveLabel(objective))} · ${remaining}개 남음</li>`).join("")}</ul>` : ""}
     ${practice ? issueHtml({ errors: [], warnings: [], unsupported: state.validation.unsupported }) : ""}
   `;
   $("usePlaytestResultButton").hidden = state.status !== "won";
-  renderSimulationGrid(state.cave, state.status === "playing");
+  renderSimulationGrid(state.cave, state.status === "playing", remainingTargets);
 }
 
 function resetPlaytest() {
