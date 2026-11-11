@@ -1801,7 +1801,9 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = []) 
   for (let index = 0; index < cave.width * cave.height; index += 1) {
     const cell = document.createElement(interactive ? "button" : "div");
     const canActivate = interactive && !isBarrier(cave, index) && specialEffect(cave, cave.playtestPieces[index]);
-    cell.className = `map-cell${canActivate ? " playable" : ""}`;
+    const canSwap = interactive && playtestState.paused && cave.layers.block[index] && !isBarrier(cave, index);
+    const selected = canSwap && playtestState.selectedIndex === index;
+    cell.className = `map-cell${canActivate || canSwap ? " playable" : ""}${selected ? " selected" : ""}`;
     cell.type = interactive ? "button" : undefined;
     applyCellVisual(cell, cave, index);
     const targets = remainingTargets.filter(({ objective }) =>
@@ -1825,13 +1827,16 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = []) 
       }
     }
     if (interactive) {
-      cell.disabled ||= !canActivate;
+      cell.disabled ||= !(canActivate || canSwap);
       const piece = cave.playtestPieces[index];
       if (piece && !canActivate) cell.title = "발동 효과가 연결되지 않은 특수 피스";
       if (canActivate) {
         cell.setAttribute("aria-label", `특수 피스 발동 · ${SPECIAL_EFFECTS[canActivate]}`);
-        cell.addEventListener("click", () => playtestCell(index));
+      } else if (canSwap) {
+        cell.setAttribute("aria-label", cellDescription(cave, index));
+        cell.setAttribute("aria-pressed", String(selected));
       }
+      if (!cell.disabled) cell.addEventListener("click", () => playtestCell(index));
     }
     grid.appendChild(cell);
   }
@@ -2430,6 +2435,7 @@ function createPlayState(cave, seedSuffix) {
     cave: copy,
     movesLeft: copy.moveLimit,
     paused: false,
+    selectedIndex: null,
     status: "playing",
     message: "자동 플레이를 시작합니다.",
     random: seededRandom(`${copy.randomSeed}|${seedSuffix}`),
@@ -2688,6 +2694,7 @@ function togglePlaytestPause() {
   const state = playtestState;
   if (!state || state.status !== "playing") return;
   state.paused = !state.paused;
+  state.selectedIndex = null;
   $("playtestPauseButton").textContent = state.paused ? "자동 플레이 계속" : "일시정지";
   if (!state.animating) renderPlaytest();
   if (!state.paused) runAnimatedPlaytest(state);
@@ -2695,15 +2702,41 @@ function togglePlaytestPause() {
 
 function playtestCell(index) {
   const state = playtestState;
-  if (!state || state.status !== "playing" || state.animating ||
-      isBarrier(state.cave, index) || !specialEffect(state.cave, state.cave.playtestPieces[index])) return;
-  const action = { first: index };
-  if (state.paused) {
-    playSimulationTurn(state, action);
-    renderPlaytest();
-  } else {
-    animatePlaytestTurn(state, action);
+  if (!state || state.status !== "playing" || state.animating) return;
+  const cave = state.cave;
+  if (isBarrier(cave, index) || !cave.layers.block[index]) return;
+
+  if (specialEffect(cave, cave.playtestPieces[index])) {
+    state.selectedIndex = null;
+    const action = { first: index };
+    if (state.paused) {
+      playSimulationTurn(state, action);
+      renderPlaytest();
+    } else {
+      animatePlaytestTurn(state, action);
+    }
+    return;
   }
+  if (!state.paused) return;
+
+  const first = state.selectedIndex;
+  state.selectedIndex = null;
+  if (first === index) {
+    state.message = "선택을 취소했습니다.";
+  } else if (first === null || !neighborsOf(cave, first).includes(index)) {
+    state.selectedIndex = index;
+    state.message = "교환할 인접 블록을 클릭하세요.";
+  } else {
+    swapPlaytestBlocks(cave, first, index);
+    const matched = findMatches(cave);
+    swapPlaytestBlocks(cave, first, index);
+    if (matched.has(first) || matched.has(index)) {
+      playSimulationTurn(state, { first, second: index });
+    } else {
+      state.message = "매치가 만들어지지 않아 교환을 되돌렸습니다.";
+    }
+  }
+  renderPlaytest();
 }
 
 function playtestRemainingTargets(state) {
