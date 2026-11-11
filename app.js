@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.21";
+const CLIENT_VERSION = "2.7.22";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2323,6 +2323,51 @@ function renderPatchBoard(previous, cave) {
   firstChanged?.click();
 }
 
+async function validatePatchCaves(dialog, entries) {
+  const button = $("patchPreviewValidate");
+  const status = $("patchValidationStatus");
+  button.disabled = true;
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  dialog.addEventListener("close", cancel);
+  try {
+    for (const [index, { cave, cell }] of entries.entries()) {
+      status.textContent = `${index + 1} / ${entries.length} · Cave ${cave.number} 검증 중`;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (controller.signal.aborted || !dialog.open) return;
+      const validation = validateCave(cave);
+      const results = [];
+      if (!validation.errors.length && !validation.unsupported.length) {
+        for (let run = 0; run < cave.simulationRuns; run++) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (controller.signal.aborted || !dialog.open) return;
+          results.push(runAutoGame(cave, run));
+        }
+      }
+      const batch = results.length ? summarizeBatch(results) : null;
+      cell.textContent = batch ? `클리어율 ${batch.clearRate}% (${batch.wins}/${batch.runs})`
+        : validation.errors.length ? "검증 오류" : "판정 미지원";
+      const issues = issueHtml(validation);
+      if (issues) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "검증 메시지";
+        const messages = document.createElement("div");
+        messages.innerHTML = issues;
+        details.append(summary, messages);
+        cell.appendChild(details);
+      }
+    }
+    status.textContent = `${entries.length}개 Cave 검증 완료`;
+  } catch (error) {
+    console.error(error);
+    status.textContent = "검증 중 오류가 발생했습니다.";
+  } finally {
+    dialog.removeEventListener("close", cancel);
+    if (!controller.signal.aborted && dialog.open) button.disabled = false;
+  }
+}
+
 async function exportPatch(file) {
   if (!file) return;
   try {
@@ -2331,6 +2376,7 @@ async function exportPatch(file) {
     const rows = $("patchPreviewRows");
     rows.replaceChildren();
     $("patchBoardPanel").hidden = true;
+    const entries = [];
     const counts = { "추가": 0, "수정": 0, "삭제": 0 };
     const append = (status, cave, details, previous) => {
       counts[status]++;
@@ -2350,6 +2396,9 @@ async function exportPatch(file) {
         name.appendChild(button);
       } else name.textContent = cave.name;
       row.insertCell().textContent = details;
+      const cell = row.insertCell();
+      cell.textContent = status === "삭제" ? "—" : "미검증";
+      if (status !== "삭제") entries.push({ cave, cell });
     };
     for (const cave of payload.patch.upsertCaves) {
       const previous = baseCaves.get(String(cave.id));
@@ -2358,6 +2407,9 @@ async function exportPatch(file) {
     for (const id of payload.patch.removeCaveIds) append("삭제", baseCaves.get(id), "Cave 삭제");
     const assetsChanged = ["paletteAssets", "assetDefinitions"].some((key) => JSON.stringify(base[key]) !== JSON.stringify(payload[key]));
     $("patchPreviewSummary").textContent = `${payload.baseContentVersion} → ${payload.contentVersion} · 추가 ${counts["추가"]} · 수정 ${counts["수정"]} · 삭제 ${counts["삭제"]}${assetsChanged ? " · 팔레트 변경" : ""}`;
+    $("patchValidationStatus").textContent = "";
+    $("patchPreviewValidate").disabled = !entries.length;
+    $("patchPreviewValidate").onclick = () => validatePatchCaves(dialog, entries);
     $("patchPreviewDownload").onclick = () => {
       downloadJson(payload, `windy-patch-${payload.baseContentVersion}-to-${payload.contentVersion}.json`);
       dialog.close();
