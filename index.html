@@ -239,6 +239,7 @@
             </div>
             <label>수동 난이도<select class="field" id="levelDifficulty"><option value="0">하</option><option value="1">중</option><option value="2">상</option></select></label>
             <label>오브젝트 생성 방식<select class="field" id="levelSpawnMode"><option value="0">랜덤방식</option><option value="1">확률방식 1</option><option value="2">확률방식 2</option></select></label>
+            <p class="muted">플레이테스트에서 새 블록이 나올 때 적용됩니다. 랜덤은 같은 확률, 확률 1은 고정 비율, 확률 2는 방금 나온 색의 확률을 낮춥니다.</p>
             <button type="submit" class="button ghost">레벨 설정 적용</button>
             <p id="levelSettingsStatus" role="status"></p>
           </fieldset>
@@ -548,7 +549,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=62"></script>
+    <script src="./app.js?v=63"></script>
   </body>
 </html>
 
