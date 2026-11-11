@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.3";
+const CLIENT_VERSION = "2.7.4";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -294,6 +294,10 @@ function normalizeCave(data, index = 0) {
       : unpackLayer(layer, source.packedLayers?.[layer], size);
     for (let i = 0; i < size; i += 1) layers[layer][i] = assetId(values[i]);
   }
+  const excludedCells = Array.isArray(source.excludedCells)
+    ? [...new Set(source.excludedCells.filter((index) => Number.isInteger(index) && index >= 0 && index < size))].sort((a, b) => a - b)
+    : [];
+  for (const index of excludedCells) for (const layer of Object.values(layers)) layer[index] = null;
   const usableBlocks = Array.isArray(source.usableBlocks)
     ? source.usableBlocks.map(assetId).filter(Boolean)
     : layers.block.filter(Boolean);
@@ -336,7 +340,7 @@ function normalizeCave(data, index = 0) {
     ...source,
     id: source.id || crypto.randomUUID(),
     name: String(source.name || `Cave ${String(index + 1).padStart(4, "0")}`),
-    width, height, gravity: normalizeGravity(source.gravity), layers,
+    width, height, gravity: normalizeGravity(source.gravity), layers, excludedCells,
     usableBlocks: [...new Set(usableBlocks)],
     blockWeights: normalizeBlockWeights(source.blockWeights),
     objectives, targetType, targetCount, moveLimit,
@@ -792,14 +796,22 @@ function renderGrid() {
     });
     cell.addEventListener("pointerenter", (event) => {
       if ((event.buttons & 1) === 0) { isPainting = false; strokeSnapshotTaken = false; return; }
-      if (isPainting && activeTool !== "fill") editCell(index, false);
+      if (isPainting && activeTool !== "fill" && activeTool !== "shape") editCell(index, false);
     });
     cell.addEventListener("mouseenter", () => showCellStatus(index));
     grid.appendChild(cell);
   }
 }
 
+function isExcluded(cave, index) {
+  return cave.excludedCells?.includes(index) ?? false;
+}
 function applyCellVisual(cell, cave, index) {
+  if (isExcluded(cave, index)) {
+    cell.classList.add("excluded-cell");
+    if (cell.tagName === "BUTTON") cell.disabled = true;
+    return;
+  }
   for (const layer of ["terrain", "block", "gimmick", "item"]) {
     const assetId = cave.layers[layer][index];
     if (!assetId) continue;
@@ -815,6 +827,17 @@ function applyCellVisual(cell, cave, index) {
 
 function editCell(index, fillMode) {
   const cave = activeCave();
+  if (activeTool === "shape") {
+    const excluded = isExcluded(cave, index);
+    if (!excluded && (cave.excludedCells?.length || 0) >= cave.width * cave.height - 1) return toast("보드에는 최소 한 칸이 필요합니다.");
+    snapshot();
+    cave.excludedCells = excluded ? cave.excludedCells.filter((cell) => cell !== index) : [...(cave.excludedCells || []), index].sort((a, b) => a - b);
+    if (!excluded) for (const layer of Object.values(cave.layers)) layer[index] = null;
+    cave.testClearMoves = 0;
+    renderAll(); persist(); showCellStatus(index);
+    return;
+  }
+  if (isExcluded(cave, index)) return;
   if (activeTool !== "eraser" && !selectedAssets[activeLayer]) {
     isPainting = false; strokeSnapshotTaken = false;
     toast("팔레트에서 추가할 항목을 먼저 선택하세요.");
@@ -837,7 +860,7 @@ function floodFill(cave, layer, start, replacement) {
   const visited = new Set();
   while (queue.length) {
     const index = queue.shift();
-    if (visited.has(index) || cells[index] !== target) continue;
+    if (visited.has(index) || isExcluded(cave, index) || cells[index] !== target) continue;
     visited.add(index); cells[index] = replacement;
     const x = index % cave.width;
     const y = Math.floor(index / cave.width);
@@ -860,6 +883,9 @@ function resizeMap() {
       for (let x = 0; x < Math.min(width, cave.width); x += 1) next[layer][y * width + x] = cave.layers[layer][y * cave.width + x];
     }
   }
+  cave.excludedCells = (cave.excludedCells || []).map((index) => [index % cave.width, Math.floor(index / cave.width)])
+    .filter(([x, y]) => x < width && y < height).map(([x, y]) => y * width + x);
+  if (cave.excludedCells.length === width * height) cave.excludedCells.pop();
   cave.width = width; cave.height = height; cave.layers = next;
   renderAll(); persist(); toast(`맵 크기를 ${width} × ${height}(으)로 변경했습니다.`);
 }
@@ -1277,7 +1303,7 @@ function ddungBoxDurability(cave, index) {
 }
 
 function isBarrier(cave, index) {
-  if (index < 0 || index >= cave.width * cave.height) return true;
+  if (index < 0 || index >= cave.width * cave.height || isExcluded(cave, index)) return true;
   if (ddungBoxDurability(cave, index)) return true;
   const terrainId = cave.layers.terrain[index];
   return terrainId ? Boolean(cave.terrainRules?.[terrainId]?.blocksFlow) : false;
@@ -2139,6 +2165,7 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers)
   return normalizeCave({
     id: valueAt(source, ["id", "uuid", "levelId", "stageId"], crypto.randomUUID()),
     name: valueAt(source, ["name", "title", "levelName", "stageName"], `Imported Cave ${String(index + 1).padStart(4, "0")}`),
+    excludedCells: source.excludedCells,
     width, height, gravity: valueAt(source, ["gravity", "gravityDirection", "direction"], "down"), layers,
     flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "left-first"),
     terrainRules: valueAt(source, ["terrainRules", "terrainBehavior", "terrainBehaviors"], undefined),
@@ -2323,6 +2350,7 @@ function showCellStatus(index) {
 }
 
 function cellDescription(cave, index) {
+  if (isExcluded(cave, index)) return `(${index % cave.width + 1}, ${Math.floor(index / cave.width) + 1}) · 제외된 칸`;
   const x = index % cave.width; const y = Math.floor(index / cave.width);
   return `열 ${x + 1}, 행 ${y + 1}`;
 }
