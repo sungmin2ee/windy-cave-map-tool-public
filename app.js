@@ -72,7 +72,7 @@ const DEFAULT_TERRAIN_RULES = {
   ice: { blocksFlow: false, reaction: "adjacent", durability: 2 },
   pit: { blocksFlow: true, reaction: "none", durability: 1 },
   conveyor: { blocksFlow: false, reaction: "none", durability: 1 },
-  "ddung-web": { blocksFlow: false, reaction: "adjacent", durability: 1 },
+  "ddung-web": { locksBlock: true, blocksFlow: false, reaction: "adjacent", durability: 1 },
   "ddung-dust": { blocksFlow: false, reaction: "adjacent", durability: 1 },
   "ddung-oak": { blocksFlow: true, reaction: "adjacent", durability: 2 },
   "ddung-stone": { blocksFlow: true, reaction: "adjacent", durability: 2 },
@@ -385,6 +385,7 @@ function normalizeCave(data, index = 0) {
     const reaction = ["none", "under", "adjacent"].includes(rule.reaction) ? rule.reaction : fallback.reaction;
     terrainRules[terrainId] = {
       blocksFlow: rule.blocksFlow == null ? fallback.blocksFlow : Boolean(rule.blocksFlow),
+      locksBlock: rule.locksBlock == null ? Boolean(fallback.locksBlock) : Boolean(rule.locksBlock),
       reaction,
       durability: clampNumber(rule.durability, fallback.durability, 1, 99),
     };
@@ -698,12 +699,13 @@ function renderTerrainRuleEditor() {
   $("terrainReaction").value = rule.reaction;
   $("terrainDurability").value = rule.durability;
   $("terrainBlocksFlow").checked = rule.blocksFlow;
+  $("terrainLocksBlock").checked = Boolean(rule.locksBlock);
   $("terrainDurability").disabled = rule.reaction === "none";
   const terrainName = getAsset("terrain", selectedTerrainRule)?.name || selectedTerrainRule;
   const reactionLabel = rule.reaction === "none"
     ? "3-Match로 제거할 수 없습니다."
     : `${rule.durability}번 반응하면 사라집니다.`;
-  $("terrainRuleSummary").innerHTML = `<strong>${escapeHtml(terrainName)}</strong><span>${rule.blocksFlow ? "블록 흐름을 막습니다." : "블록이 통과할 수 있습니다."} ${reactionLabel}</span>`;
+  $("terrainRuleSummary").innerHTML = `<strong>${escapeHtml(terrainName)}</strong><span>${rule.blocksFlow || rule.locksBlock ? "블록의 교환, 매치, 낙하를 막습니다." : "이 지형 위의 블록은 교환하고 매치할 수 있습니다."} ${reactionLabel}</span>`;
 }
 
 function renderDifficultySummary(cave) {
@@ -1925,9 +1927,8 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
 
 function findMatches(cave, runs, protectedCells) {
   const matches = new Set();
-  const blocks = protectedCells?.size
-    ? cave.layers.block.map((color, index) => protectedCells.has(index) ? null : color)
-    : cave.layers.block;
+  const blocks = cave.layers.block.map((color, index) =>
+    color && !protectedCells?.has(index) && !isBarrier(cave, index) ? color : null);
   for (let y = 0; y < cave.height; y += 1) {
     let start = 0;
     for (let x = 1; x <= cave.width; x += 1) {
@@ -1971,7 +1972,7 @@ function findMatches(cave, runs, protectedCells) {
         const color = blocks[topLeft];
         if (!color) continue;
         const cells = [topLeft, topLeft + 1, topLeft + cave.width, topLeft + cave.width + 1];
-        if (!cells.every((index) => blocks[index] === color && !isBarrier(cave, index))) continue;
+        if (!cells.every((index) => blocks[index] === color)) continue;
         cells.forEach((index) => matches.add(index));
         runs?.push({ axis: "square", cells });
       }
@@ -2056,7 +2057,8 @@ function isBarrier(cave, index) {
   if (index < 0 || index >= cave.width * cave.height || isExcluded(cave, index)) return true;
   if (ddungBoxDurability(cave, index)) return true;
   const terrainId = cave.layers.terrain[index];
-  return terrainId ? Boolean(cave.terrainRules?.[terrainId]?.blocksFlow) : false;
+  const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
+  return Boolean(rule?.blocksFlow || rule?.locksBlock);
 }
 
 function settleStraight(cave) {
@@ -2181,6 +2183,7 @@ function damageTerrainFromMatches(state, matches, forcedTerrain = new Set()) {
   let broken = 0;
   const brokenDetails = [];
   for (let index = 0; index < cave.layers.terrain.length; index += 1) {
+    if (isExcluded(cave, index)) continue;
     const terrainId = cave.layers.terrain[index];
     const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
     const forced = forcedTerrain.has(index);
@@ -2216,17 +2219,19 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
   while (matches.size && cascade < 20) {
     const expanded = expandSpecialHits(state, matches, protectedCells);
     const created = createdSpecials(state.cave, runs, preferred, matches);
-    const triggered = [...expanded.hits].some((index) => specialEffect(state.cave, state.cave.playtestPieces[index]));
+    const triggered = [...expanded.hits].some((index) => !isBarrier(state.cave, index) && specialEffect(state.cave, state.cave.playtestPieces[index]));
     matches = expanded.hits;
     const highlighted = new Set([...matches, ...expanded.targetedTerrain]);
     captureFrame?.(triggered ? "특수 피스 폭발" : "매치", [...highlighted], "match");
+    // A blast can break an obstacle without clearing the piece it was protecting.
+    const clearableCells = [...matches].filter((index) => !isBarrier(state.cave, index));
     const terrainResult = damageTerrainFromMatches(state, matches, expanded.targetedTerrain);
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
     terrainResult.brokenDetails.forEach(({ terrainId }) => advanceObjectives(state, "terrain", terrainId));
     for (let index = 0; index < state.cave.layers.gimmick.length; index += 1) {
       const gimmickId = state.cave.layers.gimmick[index];
-      if (!gimmickId || state.activatedGimmicks.has(index)) continue;
+      if (!gimmickId || isExcluded(state.cave, index) || state.activatedGimmicks.has(index)) continue;
       const affected = matches.has(index) || neighborsOf(state.cave, index).some((neighbor) => matches.has(neighbor));
       if (affected) {
         const durability = ddungBoxDurability(state.cave, index);
@@ -2240,7 +2245,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
         advanceObjectives(state, "gimmick", gimmickId);
       }
     }
-    matches.forEach((index) => {
+    clearableCells.forEach((index) => {
       const blockId = state.cave.layers.block[index];
       if (blockId && !created.has(index)) {
         advanceObjectives(state, "block", blockId);
@@ -2276,15 +2281,16 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
 function hasPossibleSwap(cave) {
   const blocks = cave.layers.block;
   for (let index = 0; index < blocks.length; index += 1) {
-    if (!blocks[index]) continue;
+    if (!blocks[index] || isBarrier(cave, index)) continue;
     const x = index % cave.width;
     const candidates = [];
     if (x < cave.width - 1) candidates.push(index + 1);
     if (index + cave.width < blocks.length) candidates.push(index + cave.width);
     for (const other of candidates) {
-      if (!blocks[other] || blocks[other] === blocks[index]) continue;
+      if (!blocks[other] || blocks[other] === blocks[index] || isBarrier(cave, other)) continue;
       [blocks[index], blocks[other]] = [blocks[other], blocks[index]];
-      const possible = findMatches(cave).size > 0;
+      const matches = findMatches(cave);
+      const possible = matches.has(index) || matches.has(other);
       [blocks[index], blocks[other]] = [blocks[other], blocks[index]];
       if (possible) return true;
     }
@@ -2296,9 +2302,9 @@ function scoreAutoMove(state, { hits: matches, targetedTerrain }) {
   let score = matches.size + 12 * targetedTerrain.size;
   state.cave.objectives.forEach((objective) => {
     if (objective.layer === "block") {
-      matches.forEach((index) => { if (state.cave.layers.block[index] === objective.targetId) score += 6; });
+      matches.forEach((index) => { if (!isBarrier(state.cave, index) && state.cave.layers.block[index] === objective.targetId) score += 6; });
     } else if (objective.layer === "item") {
-      matches.forEach((index) => { if (state.cave.layers.item[index] === objective.targetId) score += 10; });
+      matches.forEach((index) => { if (!isBarrier(state.cave, index) && state.cave.layers.item[index] === objective.targetId) score += 10; });
     } else if (objective.layer === "terrain") {
       state.cave.layers.terrain.forEach((terrainId, index) => {
         if (terrainId !== objective.targetId) return;
@@ -2330,7 +2336,7 @@ function listPossibleSwaps(state) {
           specialEffect(cave, cave.playtestPieces[second])) continue;
       swapPlaytestBlocks(cave, first, second);
       const matches = findMatches(cave);
-      if (matches.size) candidates.push({ first, second, score: scoreAutoMove(state, expandSpecialHits(state, matches)) });
+      if (matches.has(first) || matches.has(second)) candidates.push({ first, second, score: scoreAutoMove(state, expandSpecialHits(state, matches)) });
       swapPlaytestBlocks(cave, first, second);
     }
   }
@@ -2434,6 +2440,7 @@ function expandSpecialHits(state, matches, protectedCells = new Set()) {
   const hits = new Set(matches);
   const targetedTerrain = new Set();
   for (const index of hits) {
+    if (isBarrier(cave, index)) continue;
     const effect = specialEffect(cave, cave.playtestPieces[index]);
     if (!effect) continue;
     const x = index % cave.width;
@@ -4075,6 +4082,7 @@ function bindInputs() {
   $("terrainRuleType").addEventListener("change", (event) => { selectedTerrainRule = event.target.value; renderTerrainRuleEditor(); });
   $("terrainReaction").addEventListener("change", updateTerrainRule);
   $("terrainBlocksFlow").addEventListener("change", updateTerrainRule);
+  $("terrainLocksBlock").addEventListener("change", updateTerrainRule);
   $("terrainDurability").addEventListener("input", updateTerrainRule);
   $("noteInput").addEventListener("change", (event) => { snapshot(); activeCave().note = event.target.value; persist(); });
 }
@@ -4084,6 +4092,7 @@ function updateTerrainRule() {
   const cave = activeCave();
   cave.terrainRules[selectedTerrainRule] = {
     blocksFlow: $("terrainBlocksFlow").checked,
+    locksBlock: $("terrainLocksBlock").checked,
     reaction: $("terrainReaction").value,
     durability: clampNumber($("terrainDurability").value, 1, 1, 99),
   };

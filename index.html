@@ -388,13 +388,18 @@
 
             <label class="check-field terrain-block-check">
               <input id="terrainBlocksFlow" type="checkbox" />
-              <span>블록 이동과 리필을 막는 장애물</span>
+              <span>교환·매치·낙하·리필을 막는 장애물</span>
+            </label>
+
+            <label class="check-field terrain-block-check">
+              <input id="terrainLocksBlock" type="checkbox" />
+              <span>제거할 때까지 이 칸의 블록 잠금</span>
             </label>
 
             <label class="field-label" for="terrainReaction">3-Match 반응</label>
             <select class="field" id="terrainReaction">
               <option value="none">제거 불가</option>
-              <option value="under">같은 칸에서 매치될 때</option>
+              <option value="under">같은 칸에서 매치되거나 특수 피스 효과가 닿을 때</option>
               <option value="adjacent">같은 칸 또는 인접 4방향 매치</option>
             </select>
 
@@ -663,7 +668,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=82"></script>
+    <script src="./app.js?v=83"></script>
   </body>
 </html>
 
