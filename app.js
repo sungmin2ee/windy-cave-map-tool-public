@@ -2360,7 +2360,8 @@ function createdSpecials(cave, runs, preferred, hits) {
     const index = [...preferred.filter((index) => candidates.includes(index)), ...candidates]
       .find((index) => !cave.playtestPieces[index] && hits.has(index));
     if (index === undefined) return;
-    const definition = EDITABLE_INITIAL_PIECES.find((entry) => entry.id === type);
+    const definition = cave.initialPieceDefinitions?.find((entry) => entry.id === type) ||
+      EDITABLE_INITIAL_PIECES.find((entry) => entry.id === type);
     result.set(index, { type, name: definition.name, symbol: definition.symbol });
     cells.forEach((cell) => reserved.add(cell));
   };
@@ -3840,6 +3841,7 @@ function bindInputs() {
   $("assetReplaceCancel").addEventListener("click", () => { assetReplacement = null; renderGrid(); });
   $("viewAssetUsage").addEventListener("click", viewSelectedAssetUsage);
   $("deleteSelectedAsset").addEventListener("click", deleteSelectedAsset);
+  $("manageSpecialTypes").addEventListener("click", openSpecialTypeManager);
   $("showAssetDefinition").addEventListener("click", () => {
     $("assetDefinitionForm").reset();
     $("assetDefinitionForm").hidden = false;
@@ -4059,27 +4061,83 @@ const EDITABLE_INITIAL_PIECES = [
   { id: "rainbow", name: "오색", symbol: "✦" },
 ];
 
+function specialTypeOptions(cave) {
+  const definitions = new Map(EDITABLE_INITIAL_PIECES.map((entry) => [entry.id, entry]));
+  for (const entry of cave.initialPieceDefinitions || []) {
+    if (entry?.id) definitions.set(String(entry.id), { ...entry, id: String(entry.id) });
+  }
+  cave.layers.block.forEach((block, index) => {
+    if (!block) return;
+    const piece = initialPieceAt(cave, index);
+    if (!piece) return;
+    const id = String(piece.type);
+    if (!definitions.has(id)) definitions.set(id, { id, name: piece.name || "기존 타입 " + id, symbol: piece.symbol });
+  });
+  return definitions;
+}
+
+function openSpecialTypeManager() {
+  const cave = activeCave();
+  const dialog = $("specialTypeDialog");
+  const form = $("specialTypeForm");
+  const select = $("specialTypeSelect");
+  const name = $("specialTypeName");
+  const effect = $("specialTypeEffect");
+  const status = $("specialTypeStatus");
+  let definitions;
+
+  effect.replaceChildren(new Option("발동 효과 없음", "none"));
+  for (const [id, label] of Object.entries(SPECIAL_EFFECTS)) effect.add(new Option(label, id));
+
+  const showType = () => {
+    const definition = definitions.get(select.value);
+    name.value = definition?.name || "";
+    effect.value = specialEffect(cave, definition ? { type: definition.id } : null) || "none";
+    status.textContent = "";
+  };
+  const refresh = (selected) => {
+    definitions = specialTypeOptions(cave);
+    select.replaceChildren(new Option("새 특수 타입", ""));
+    for (const entry of definitions.values()) {
+      const label = SPECIAL_EFFECTS[specialEffect(cave, { type: entry.id })] || "발동 효과 없음";
+      select.add(new Option(entry.name + " · " + label, entry.id));
+    }
+    select.value = selected;
+    showType();
+  };
+  refresh("");
+  select.onchange = showType;
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    const label = name.value.trim();
+    if (!label || activeCave() !== cave) return;
+    const current = definitions.get(select.value);
+    const id = current?.id || "custom-" + crypto.randomUUID();
+    const updated = { ...current, id, name: label, symbol: current?.symbol || "✦", effect: effect.value };
+    snapshot();
+    cave.initialPieceDefinitions = (cave.initialPieceDefinitions || []).filter((entry) => String(entry?.id) !== id);
+    cave.initialPieceDefinitions.push(updated);
+    cave.testClearMoves = 0;
+    renderAll();
+    persist();
+    refresh(id);
+    status.textContent = "특수 타입을 저장했습니다.";
+  };
+  dialog.showModal();
+}
+
 function inspectCell(index) {
   const cave = activeCave();
   const dialog = $("cellInspector");
-  const details = $("cellInspectorText");
   const form = $("initialPieceForm");
   const color = $("initialPieceColor");
   const type = $("initialPieceType");
-  const newName = $("initialPieceName");
-  const effect = $("initialPieceEffect");
-  details.textContent = describeCellProperties(cave, index);
+  $("cellInspectorText").textContent = describeCellProperties(cave, index);
   form.hidden = isBarrier(cave, index);
-  form.onsubmit = null;
   if (!form.hidden) {
     const currentColor = cave.layers.block[index];
     const current = initialPieceAt(cave, index);
-    const definitions = new Map(EDITABLE_INITIAL_PIECES.map((entry) => [entry.id, entry]));
-    for (const entry of cave.initialPieceDefinitions || []) definitions.set(entry.id, entry);
-    if (current && !definitions.has(String(current.type))) {
-      const id = String(current.type);
-      definitions.set(id, { id, name: current.name || "기존 타입 " + id, symbol: current.symbol });
-    }
+    const definitions = specialTypeOptions(cave);
     color.replaceChildren(new Option("블록 없음", ""));
     for (const id of new Set([...(project.paletteAssets.block || []), ...Object.keys(COLORS), currentColor].filter(Boolean))) {
       color.add(new Option(getAsset("block", id)?.name || id, id));
@@ -4087,41 +4145,19 @@ function inspectCell(index) {
     color.value = currentColor || "";
     type.replaceChildren(new Option("일반 블록 · 특수 타입 해제", ""));
     for (const entry of definitions.values()) type.add(new Option(entry.symbol + " " + entry.name, entry.id));
-    type.add(new Option("새 특수 타입 만들기", "__new__"));
     type.value = current ? String(current.type) : "";
-    newName.value = "";
-    effect.replaceChildren(new Option("발동 효과 없음", "none"));
-    for (const [id, label] of Object.entries(SPECIAL_EFFECTS)) effect.add(new Option(label, id));
     const refresh = () => {
-      const creating = type.value === "__new__";
-      $("initialPieceNameLabel").hidden = !creating;
-      $("initialPieceEffectLabel").hidden = !type.value;
-      $("initialPieceApply").disabled = Boolean(type.value && !color.value) || (creating && !newName.value.trim());
-    };
-    type.onchange = () => {
-      effect.value = specialEffect(cave, { type: type.value }) || "none";
-      refresh();
+      $("initialPieceApply").disabled = Boolean(type.value && !color.value);
     };
     form.oninput = refresh;
-    type.onchange();
+    refresh();
     form.onsubmit = (event) => {
       event.preventDefault();
-      const creating = type.value === "__new__";
-      if ((type.value && !color.value) || (creating && !newName.value.trim())) return;
-      const definition = creating
-        ? { id: "custom-" + crypto.randomUUID(), name: newName.value.trim(), symbol: "✦" }
-        : definitions.get(type.value);
+      if (type.value && !color.value) return;
       snapshot();
       cave.layers.block[index] = color.value || null;
       cave.initialPieceTypes ??= {};
-      cave.initialPieceTypes[index] = definition?.id ?? null;
-      if (definition) {
-        cave.initialPieceDefinitions ??= [];
-        const updated = { ...definition, effect: effect.value };
-        const previous = cave.initialPieceDefinitions.findIndex((entry) => entry.id === definition.id);
-        if (previous < 0) cave.initialPieceDefinitions.push(updated);
-        else cave.initialPieceDefinitions[previous] = updated;
-      }
+      cave.initialPieceTypes[index] = type.value || null;
       project.paletteAssets = collectPaletteAssets(project.caves, project.paletteAssets);
       cave.testClearMoves = 0;
       dialog.close();
