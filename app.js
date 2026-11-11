@@ -7,6 +7,8 @@ const CLIENT_VERSION = "2.7.45";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
+const SPAWNER_ID = "spawner";
+
 const ASSETS = {
   terrain: [
     { id: "floor", name: "Floor", className: "terrain-floor", visual: "·" },
@@ -32,7 +34,7 @@ const ASSETS = {
     { id: "door", name: "Door", visual: "▥" },
     { id: "arrow-up", name: "Arrow Up", visual: "↑" },
     { id: "arrow-down", name: "Arrow Down", visual: "↓" },
-    { id: "spawner", name: "Spawner", visual: "✦" },
+    { id: SPAWNER_ID, name: "Spawner", visual: "✦" },
     { id: "exit", name: "Exit", visual: "⇥" },
     { id: "ddung-box", name: "DDUNG Box", visual: "□" },
     { id: "ddung-mouse-panel", name: "DDUNG Mouse Panel", visual: "◉" },
@@ -149,7 +151,7 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
   };
 }
 
-const defaultProject = () => ({ version: "V0001", assetDefinitions: {}, paletteAssets: {}, caves: [createCave(1)], activeCaveId: null });
+const defaultProject = () => ({ version: "V0001", assetDefinitions: {}, paletteAssets: { gimmick: [SPAWNER_ID] }, caves: [createCave(1)], activeCaveId: null });
 let project = loadProject();
 if (!project.activeCaveId || !project.caves.some((c) => c.id === project.activeCaveId)) project.activeCaveId = project.caves[0].id;
 
@@ -248,6 +250,7 @@ function collectPaletteAssets(caves, saved = {}, definitions = {}) {
   const used = Object.fromEntries(Object.keys(ASSETS).map((layer) => [
     layer, new Set([...(Array.isArray(saved?.[layer]) ? saved[layer] : []), ...(definitions[layer] || []).map(({ id }) => id)]),
   ]));
+  used.gimmick.add(SPAWNER_ID);
   for (const cave of caves) {
     for (const layer of Object.keys(ASSETS)) {
       for (const id of cave.layers[layer]) used[layer].add(id);
@@ -756,7 +759,9 @@ function renderPalette() {
   $("selectedAssetSummary").textContent = activeTool === "eraser"
     ? `${activeLayer.toUpperCase()} · 지우기 (이 레이어만)`
     : `${activeLayer.toUpperCase()} · ${current?.name || "선택 없음"}`;
-  $("viewAssetUsage").hidden = $("deleteSelectedAsset").hidden = $("openAssetReplace").hidden = !current || activeTool === "eraser";
+  const hideAssetActions = !current || activeTool === "eraser";
+  $("viewAssetUsage").hidden = $("openAssetReplace").hidden = hideAssetActions;
+  $("deleteSelectedAsset").hidden = hideAssetActions || (layer === "gimmick" && current?.id === SPAWNER_ID);
   const colors = $("usableColors");
   colors.innerHTML = "";
   const blockIds = project.paletteAssets.block || [];
@@ -833,6 +838,7 @@ function viewSelectedAssetUsage() {
 function deleteSelectedAsset() {
   const layer = activeLayer;
   const id = selectedAssets[layer];
+  if (layer === "gimmick" && id === SPAWNER_ID) return;
   if (!project.paletteAssets[layer]?.includes(id)) return;
   const name = getAsset(layer, id).name;
   const usage = findAssetUsage(project.caves, layer, id);
@@ -1529,7 +1535,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
 
   for (let index = 0; index < cave.width; index += 1) {
     if (!isBarrier(cave, index) && !cave.layers.gimmick[index]) {
-      cave.layers.gimmick[index] = "spawner";
+      cave.layers.gimmick[index] = SPAWNER_ID;
     }
   }
 
