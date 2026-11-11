@@ -1,4 +1,6 @@
-# Windy Cave Map Tool
+# 3-Match Puzzle Map Tool
+
+제작: [sungmin2ee](https://github.com/sungmin2ee)
 
 `Cave = 하나의 레벨` 규칙으로 제작한 브라우저 기반 퍼즐 맵 에디터입니다.
 
@@ -17,7 +19,7 @@
 
 - Terrain / Block / Gimmick / Item 레이어 기반 그리드 편집
 - 팔레트 항목 선택 후 클릭·드래그 추가, 레이어별 지우기, 선택 재클릭 해제
-- 브러시, 채우기, 지우개, Undo / Redo
+- 브러시, 채우기, 지우개, 칸 비활성화 및 복원, Undo / Redo
 - Cave 생성, 복제, 삭제, 이전/다음 이동
 - 맵 크기, 중력, 최대 4개의 다중 목표, Moves, 권장·테스트 클리어 Moves 설정
 - Block 제거 / Terrain 파괴 / Gimmick 활성화 / Item 수집 목표와 맵 배치 수 자동 집계

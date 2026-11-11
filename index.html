@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
-    <title>Windy Cave Map Tool</title>
+    <title>3-Match Puzzle Map Tool</title>
     <link rel="stylesheet" href="./styles.css?v=18" />
     <style>
     .map-cell.excluded-cell { background: transparent; border: 1px dashed #505564; box-shadow: none; opacity: .48; }
@@ -16,10 +16,10 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="brand">
-          <div class="brand-mark">W</div>
+          <div class="brand-mark" aria-hidden="true">3</div>
           <div>
-            <strong>WINDY WORKS</strong>
-            <span>CAVE MAP TOOL</span>
+            <strong>3-Match Puzzle Map Tool</strong>
+            <span>Made by sungmin2ee</span>
           </div>
         </div>
 
@@ -177,7 +177,7 @@
               <button class="tool-button active" data-tool="brush"><span>✎</span>브러시</button>
               <button class="tool-button" data-tool="fill"><span>◩</span>채우기</button>
               <button class="tool-button" data-tool="eraser"><span>◇</span>지우개</button>
-              <button class="tool-button" data-tool="shape" title="칸을 클릭해 제외하거나 빈 칸으로 복원합니다. 제외하면 해당 칸의 오브젝트가 지워집니다."><span>▧</span>보드 모양</button>
+              <button class="tool-button" data-tool="shape" title="칸을 클릭해 제외하거나 빈 칸으로 복원합니다. 제외하면 해당 칸의 오브젝트가 지워집니다."><span>▧</span>칸 비활성화</button>
             </div>
             <div class="toolbar-divider"></div>
             <div class="tool-group">
