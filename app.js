@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.37";
+const CLIENT_VERSION = "2.7.38";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1242,10 +1242,13 @@ function randomizeBlocks() {
   const colors = cave.usableBlocks.length ? cave.usableBlocks : project.paletteAssets.block || [];
   if (!colors.some((id) => blockWeight(cave, id) > 0)) return toast("생성 가중치가 0보다 큰 블록 종류를 선택하세요.");
   const random = seededRandom(`${seed}|${cave.width}x${cave.height}|${colors.join(",")}|${density}`);
-  const blocks = Array(cave.width * cave.height).fill(null);
+  const fixed = cave.layers.block.map((_, index) =>
+    isBarrier(cave, index) || Boolean(cave.layers.item[index]) || Boolean(initialPieceAt(cave, index))
+  );
+  const blocks = cave.layers.block.map((block, index) => fixed[index] ? block : null);
   const eligible = [];
   for (let index = 0; index < blocks.length; index += 1) {
-    if (isBarrier(cave, index)) continue;
+    if (fixed[index]) continue;
     eligible.push(index);
     if (random() * 100 >= density) continue;
     const candidates = colors.filter((color) => blockWeight(cave, color) > 0 && !wouldCreateMatch(blocks, index, color, cave));
@@ -1253,12 +1256,12 @@ function randomizeBlocks() {
   }
   const shortfalls = [];
   for (const objective of cave.objectives.filter((item) => item.layer === "block")) {
-    const targetNeeded = Math.min(resolvedObjectiveCount(cave, objective), eligible.length);
+    const targetNeeded = resolvedObjectiveCount(cave, objective);
     let targetPlaced = blocks.filter((value) => value === objective.targetId).length;
     const shuffled = [...eligible].sort(() => random() - 0.5);
     for (const index of shuffled) {
       if (targetPlaced >= targetNeeded) break;
-      if (blocks[index] !== objective.targetId && !wouldCreateMatch(blocks, index, objective.targetId, cave)) {
+      if (blockWeight(cave, objective.targetId) > 0 && blocks[index] !== objective.targetId && !wouldCreateMatch(blocks, index, objective.targetId, cave)) {
         blocks[index] = objective.targetId;
         targetPlaced += 1;
       }
@@ -1272,7 +1275,7 @@ function randomizeBlocks() {
   cave.randomSeed = seed;
   cave.randomDensity = density;
   renderAll(); persist();
-  toast(`시드 ${seed} · 시작 매치 0개 · 블록 ${blocks.filter(Boolean).length}개${shortfalls.length ? ` · 목표색 부족 ${shortfalls.join(", ")}` : ""}`);
+  toast(`시드 ${seed} · 고정 칸 ${fixed.filter(Boolean).length}개 보존 · 블록 ${blocks.filter(Boolean).length}개${shortfalls.length ? ` · 목표색 부족 ${shortfalls.join(", ")}` : ""}`);
 }
 
 function analyzeDifficulty(cave) {
