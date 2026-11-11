@@ -39,7 +39,13 @@
     button.patch-board-cell[aria-pressed="true"] { outline: 2px solid white; outline-offset: -3px; }
     #patchCellDetail { white-space: pre-line; overflow-wrap: anywhere; }
       #cellInspectorText { padding: 0 16px; white-space: pre-line; overflow-wrap: anywhere; }
-    .ddung-initial-special { display: grid; place-items: center; color: white; font-weight: bold; font-size: 16px; text-shadow: 0 1px 3px #171024; }
+    .ddung-initial-special {
+      z-index: 4; display: grid; place-items: start end;
+      color: #fff; font-size: clamp(11px, 2.1vmin, 20px);
+      font-weight: 800; line-height: 1;
+      text-shadow: 1px 1px #111522, -1px -1px #111522, 1px -1px #111522, -1px 1px #111522;
+      outline: 2px solid #fff; outline-offset: 1px;
+    }
   </style>
   </head>
   <body>
