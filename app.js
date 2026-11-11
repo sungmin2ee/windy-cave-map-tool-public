@@ -2389,6 +2389,7 @@ function listPossibleSwaps(state, firstOnly = false) {
 const SPECIAL_EFFECTS = {
   row: "가로 한 줄", column: "세로 한 줄", area: "주변 3×3", cross: "가로·세로 십자", color: "같은 색 전체",
   target: "목표 타일 1칸 제거",
+  fish: "물고기 · 목표 한 칸 타격",
 };
 
 const SCRIPT_EFFECT_LABEL = "직접 작성한 스크립트";
@@ -2409,7 +2410,7 @@ function parseEffectScript(source) {
     const fail = (message) => { throw new Error((index + 1) + "번째 명령: " + message); };
     const op = command?.op;
     if (typeof op !== "string" || !(Object.hasOwn(SPECIAL_EFFECTS, op) || op === "offsets")) {
-      fail("지원 명령은 row, column, cross, area, color, target, offsets입니다.");
+      fail("지원 명령은 row, column, cross, area, color, target, fish, offsets입니다.");
     }
     const keys = op === "area" ? ["op", "radius"] : op === "offsets" ? ["op", "cells"] : ["op"];
     if (Object.keys(command).some((key) => !keys.includes(key))) fail("지원하지 않는 옵션이 있습니다.");
@@ -2443,7 +2444,7 @@ function specialEffectLabel(effect) {
 
 const DEFAULT_SPECIAL_EFFECTS = Object.freeze({ horizontal: "row", vertical: "column", bomb: "area", rainbow: "color", bee: "target" });
 
-const DDUNG_SPECIAL_EFFECTS = Object.freeze({ 1: "row", 2: "column", 3: "area" });
+const DDUNG_SPECIAL_EFFECTS = Object.freeze({ 1: "row", 2: "column", 3: "area", 8: "fish" });
 
 function specialEffect(cave, piece) {
   if (!piece) return null;
@@ -2478,6 +2479,32 @@ function findRemainingTerrainTarget(state, origin, selected) {
   return nearest;
 }
 
+function findFishTarget(state, origin, hits, protectedCells) {
+  const { cave } = state;
+  const goals = cave.objectives.filter((objective, index) => {
+    const progress = state.objectiveProgress[index];
+    return !state.goalLimitations[index] && progress.current < progress.target;
+  });
+  const x = origin % cave.width;
+  const y = Math.floor(origin / cave.width);
+  let best = -1;
+  let bestScore = Infinity;
+  for (let index = 0; index < cave.layers.block.length; index += 1) {
+    if (hits.has(index) || protectedCells.has(index) || isExcluded(cave, index)) continue;
+    const goal = goals.some((objective) => {
+      const id = cave.layers[objective.layer][index];
+      return id && matchesObjectiveAsset(objective, id);
+    });
+    if (!goal && (!cave.layers.block[index] || isBarrier(cave, index))) continue;
+    const distance = Math.abs(index % cave.width - x) + Math.abs(Math.floor(index / cave.width) - y);
+    const score = distance + (goal ? 0 : cave.width + cave.height);
+    if (score >= bestScore) continue;
+    best = index;
+    bestScore = score;
+  }
+  return best;
+}
+
 function expandSpecialHits(state, matches, protectedCells = new Set()) {
   const { cave } = state;
   const hits = new Set(matches);
@@ -2492,6 +2519,11 @@ function expandSpecialHits(state, matches, protectedCells = new Set()) {
     const definition = effect === "script" && cave.initialPieceDefinitions.find((entry) => entry?.id === String(cave.playtestPieces[index].type));
     const commands = effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }];
     for (const { op, radius = 1, cells } of commands) {
+      if (op === "fish") {
+        const target = findFishTarget(state, index, hits, protectedCells);
+        if (target >= 0) hits.add(target);
+        continue;
+      }
       if (op === "target") {
         const target = findRemainingTerrainTarget(state, index, targetedTerrain);
         if (target >= 0) targetedTerrain.add(target);
