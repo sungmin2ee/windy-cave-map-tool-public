@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.17";
+const CLIENT_VERSION = "2.7.18";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -704,7 +704,7 @@ function renderPalette() {
   $("selectedAssetSummary").textContent = activeTool === "eraser"
     ? `${activeLayer.toUpperCase()} · 지우기 (이 레이어만)`
     : `${activeLayer.toUpperCase()} · ${current?.name || "선택 없음"}`;
-  $("deleteSelectedAsset").hidden = $("openAssetReplace").hidden = !current || activeTool === "eraser";
+  $("viewAssetUsage").hidden = $("deleteSelectedAsset").hidden = $("openAssetReplace").hidden = !current || activeTool === "eraser";
   const colors = $("usableColors");
   colors.innerHTML = "";
   const blockIds = project.paletteAssets.block || [];
@@ -744,6 +744,40 @@ function findAssetUsage(caves, layer, id) {
   }).sort((a, b) => a.cave.number - b.cave.number);
 }
 
+function showAssetUsage(layer, id, name, usage, message) {
+  const dialog = $("assetUsageDialog");
+  $("assetUsageMessage").textContent = message;
+  const list = $("assetUsageList");
+  list.replaceChildren();
+  for (const { cave, reasons } of usage) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "button ghost";
+    button.textContent = `Cave ${cave.number} · ${cave.name} · ${reasons.join(", ")}`;
+    button.addEventListener("click", () => {
+      dialog.close();
+      $("caveJump").value = String(cave.number);
+      assetLocator = { caveId: cave.id, layer, id, name };
+      jumpToCave();
+      stepLocatedAsset(0);
+    });
+    item.appendChild(button);
+    list.appendChild(item);
+  }
+  dialog.showModal();
+}
+
+function viewSelectedAssetUsage() {
+  const layer = activeLayer;
+  const id = selectedAssets[layer];
+  if (!project.paletteAssets[layer]?.includes(id)) return;
+  const name = getAsset(layer, id).name;
+  const usage = findAssetUsage(project.caves, layer, id);
+  const message = usage.length ? `‘${name}’ 사용처 · ${usage.length}개 Cave` : `‘${name}’을(를) 사용하는 Cave가 없습니다.`;
+  showAssetUsage(layer, id, name, usage, message);
+}
+
 function deleteSelectedAsset() {
   const layer = activeLayer;
   const id = selectedAssets[layer];
@@ -751,27 +785,7 @@ function deleteSelectedAsset() {
   const name = getAsset(layer, id).name;
   const usage = findAssetUsage(project.caves, layer, id);
   if (usage.length) {
-    const dialog = $("assetUsageDialog");
-    $("assetUsageMessage").textContent = `‘${name}’을(를) 사용하는 Cave가 있습니다. 배치나 설정에서 제거한 뒤 다시 시도하세요.`;
-    const list = $("assetUsageList");
-    list.replaceChildren();
-    for (const { cave, reasons } of usage) {
-      const item = document.createElement("li");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "button ghost";
-      button.textContent = `Cave ${cave.number} · ${cave.name} · ${reasons.join(", ")}`;
-      button.addEventListener("click", () => {
-        dialog.close();
-        $("caveJump").value = String(cave.number);
-        assetLocator = { caveId: cave.id, layer, id, name };
-        jumpToCave();
-        stepLocatedAsset(0);
-      });
-      item.appendChild(button);
-      list.appendChild(item);
-    }
-    dialog.showModal();
+    showAssetUsage(layer, id, name, usage, `‘${name}’을(를) 사용하는 Cave가 있습니다. 배치나 설정에서 제거한 뒤 다시 시도하세요.`);
     return;
   }
   if (!window.confirm(`‘${name}’을(를) 팔레트에서 삭제할까요?`)) return;
@@ -2699,6 +2713,7 @@ function bindInputs() {
   $("assetReplaceRange").addEventListener("input", updateAssetReplaceRange);
   $("assetReplaceCaves").addEventListener("change", renderGrid);
   $("assetReplaceCancel").addEventListener("click", () => { assetReplacement = null; renderGrid(); });
+  $("viewAssetUsage").addEventListener("click", viewSelectedAssetUsage);
   $("deleteSelectedAsset").addEventListener("click", deleteSelectedAsset);
   $("showAssetDefinition").addEventListener("click", () => {
     $("assetDefinitionForm").reset();

@@ -285,6 +285,7 @@
             <div class="selected-asset" id="selectedAssetSummary"></div>
             <div class="asset-grid" id="assetGrid"></div>
             <button type="button" class="button ghost" id="showAssetDefinition">오브젝트 만들기</button>
+            <button type="button" class="button ghost" id="viewAssetUsage" hidden>사용처 보기</button>
             <button type="button" class="button ghost" id="deleteSelectedAsset" hidden>선택 오브젝트 삭제</button>
             <button type="button" class="button ghost" id="openAssetReplace" hidden>오브젝트 일괄 교체</button>
             <form id="assetDefinitionForm" hidden>
@@ -345,7 +346,7 @@
     <div class="toast" id="toast" role="status"></div>
 
     <dialog id="assetUsageDialog" class="simulation-dialog" aria-labelledby="assetUsageTitle">
-      <div class="dialog-header"><h2 id="assetUsageTitle">사용 중인 오브젝트</h2></div>
+      <div class="dialog-header"><h2 id="assetUsageTitle">오브젝트 사용처</h2></div>
       <p id="assetUsageMessage"></p>
       <ul id="assetUsageList" style="max-height:50vh; overflow:auto"></ul>
       <form class="dialog-footer" method="dialog"><button class="button ghost">닫기</button></form>
@@ -395,7 +396,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=35"></script>
+    <script src="./app.js?v=36"></script>
   </body>
 </html>
 
