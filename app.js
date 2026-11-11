@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.5.0";
+const CLIENT_VERSION = "2.6.0";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -111,11 +111,14 @@ function packProjectForStorage(value) {
     ...value,
     storageFormat: "packed-layers-v1",
     caves: value.caves.map((cave) => {
-      const compact = {
-        ...cave,
-        layers: undefined,
-        packedLayers: Object.fromEntries(Object.entries(cave.layers).map(([layer, values]) => [layer, packLayer(layer, values)])),
-      };
+      const layers = {};
+      const packedLayers = {};
+      for (const [layer, values] of Object.entries(cave.layers)) {
+        const knownIds = new Set(ASSETS[layer].map((asset) => asset.id));
+        if (values.some((id) => id !== null && !knownIds.has(id))) layers[layer] = values;
+        else packedLayers[layer] = packLayer(layer, values);
+      }
+      const compact = { ...cave, layers, packedLayers };
       delete compact.targetType;
       delete compact.targetCount;
       if (JSON.stringify(compact.terrainRules) === JSON.stringify(DEFAULT_TERRAIN_RULES)) delete compact.terrainRules;
@@ -135,7 +138,7 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
   const layers = emptyLayers(width * height);
   return {
     id: crypto.randomUUID(), name, width, height, gravity: "down", layers,
-    usableBlocks: Object.keys(COLORS),
+    usableBlocks: [],
     objectives: [],
     targetType: null, targetCount: 0,
     moveLimit: 20, parMoves: 14, testClearMoves: 0,
@@ -146,7 +149,7 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
   };
 }
 
-const defaultProject = () => ({ version: "V0001", paletteAssets: {}, caves: [createCave(1)], activeCaveId: null });
+const defaultProject = () => ({ version: "V0001", assetDefinitions: {}, paletteAssets: {}, caves: [createCave(1)], activeCaveId: null });
 let project = loadProject();
 if (!project.activeCaveId || !project.caves.some((c) => c.id === project.activeCaveId)) project.activeCaveId = project.caves[0].id;
 
@@ -181,7 +184,7 @@ function normalizeColor(value) {
     p: "purple", 보라: "purple", 보라색: "purple",
   };
   const normalized = aliases[key] || key;
-  return COLORS[normalized] ? normalized : null;
+  return Object.hasOwn(COLORS, normalized) ? normalized : null;
 }
 
 function normalizeGravity(value) {
@@ -191,8 +194,23 @@ function normalizeGravity(value) {
   return ["up", "down", "left", "right"].includes(normalized) ? normalized : "down";
 }
 
-function objectiveAssetExists(layer, targetId) {
-  return Boolean(ASSETS[layer]?.some((asset) => asset.id === targetId));
+function assetId(value) {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const id = String(value).trim();
+  if (!id || /^(?:0|empty|none|null|air|void|__proto__|constructor|prototype)$/i.test(id)) return null;
+  return id;
+}
+
+function normalizeAssetDefinitions(source) {
+  return Object.fromEntries(Object.keys(ASSETS).map((layer) => {
+    const definitions = Array.isArray(source?.[layer]) ? source[layer] : [];
+    const unique = new Map();
+    for (const definition of definitions) {
+      const id = assetId(definition?.id);
+      if (id) unique.set(id, { id, name: String(definition.name || id) });
+    }
+    return [layer, [...unique.values()]];
+  }));
 }
 
 function normalizeObjective(value, fallback = {}) {
@@ -201,9 +219,7 @@ function normalizeObjective(value, fallback = {}) {
   const layer = Object.prototype.hasOwnProperty.call(ASSETS, requestedLayer) ? requestedLayer : "block";
   const fallbackTarget = ASSETS[layer][0]?.id || "red";
   let targetId = source.targetId ?? source.objectId ?? source.type ?? source.target ?? source.color ?? fallback.targetId ?? fallbackTarget;
-  if (layer === "block") targetId = normalizeColor(targetId) || fallbackTarget;
-  else targetId = String(targetId || fallbackTarget).toLowerCase();
-  if (!objectiveAssetExists(layer, targetId)) targetId = fallbackTarget;
+  targetId = assetId(targetId) || fallbackTarget;
   const defaultAction = OBJECTIVE_ACTIONS[layer].action;
   const requestedAction = String(source.action || source.condition || defaultAction).toLowerCase();
   const actionAliases = { clear: "match", remove: layer === "terrain" ? "destroy" : defaultAction, break: "destroy", pickup: "collect", trigger: "activate" };
@@ -223,21 +239,24 @@ function normalizeObjectives(source) {
   if (Array.isArray(source.objectives)) {
     return source.objectives.slice(0, MAX_OBJECTIVES).map((objective) => normalizeObjective(objective));
   }
-  const legacyTarget = normalizeColor(source.targetType) || "purple";
+  if (source.targetType == null && source.targetCount == null) return [];
+  const legacyTarget = normalizeColor(source.targetType) || assetId(source.targetType) || "purple";
   return [normalizeObjective({ layer: "block", targetId: legacyTarget, action: "match", countMode: "manual", count: clampNumber(source.targetCount, 8, 1, 999) })];
 }
 
-function collectPaletteAssets(caves, saved = {}) {
+function collectPaletteAssets(caves, saved = {}, definitions = {}) {
   const used = Object.fromEntries(Object.keys(ASSETS).map((layer) => [
-    layer, new Set(Array.isArray(saved?.[layer]) ? saved[layer] : []),
+    layer, new Set([...(Array.isArray(saved?.[layer]) ? saved[layer] : []), ...(definitions[layer] || []).map(({ id }) => id)]),
   ]));
   for (const cave of caves) {
     for (const layer of Object.keys(ASSETS)) {
       for (const id of cave.layers[layer]) used[layer].add(id);
     }
+    for (const id of cave.usableBlocks) used.block.add(id);
+    for (const objective of cave.objectives) used[objective.layer].add(objective.targetId);
   }
-  return Object.fromEntries(Object.entries(ASSETS).map(([layer, assets]) => [
-    layer, assets.filter((asset) => used[layer].has(asset.id)).map((asset) => asset.id),
+  return Object.fromEntries(Object.entries(used).map(([layer, ids]) => [
+    layer, [...ids].filter((id) => assetId(id)),
   ]));
 }
 
@@ -247,7 +266,8 @@ function normalizeProject(data) {
   const caves = rawCaves.map((cave, index) => normalizeCave(cave, index));
   if (!caves.length) caves.push(createCave(1));
   const activeCaveId = caves.some((cave) => cave.id === source.activeCaveId) ? source.activeCaveId : caves[0].id;
-  return { ...source, version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, paletteAssets: collectPaletteAssets(caves, source.paletteAssets) };
+  const assetDefinitions = normalizeAssetDefinitions(source.assetDefinitions);
+  return { ...source, version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets: collectPaletteAssets(caves, source.paletteAssets, assetDefinitions) };
 }
 
 function normalizeCave(data, index = 0) {
@@ -260,11 +280,11 @@ function normalizeCave(data, index = 0) {
     const values = Array.isArray(source.layers?.[layer])
       ? source.layers[layer]
       : unpackLayer(layer, source.packedLayers?.[layer], size);
-    for (let i = 0; i < size; i += 1) layers[layer][i] = values[i] ?? null;
+    for (let i = 0; i < size; i += 1) layers[layer][i] = assetId(values[i]);
   }
   const usableBlocks = Array.isArray(source.usableBlocks)
-    ? source.usableBlocks.map(normalizeColor).filter(Boolean)
-    : Object.keys(COLORS);
+    ? source.usableBlocks.map(assetId).filter(Boolean)
+    : layers.block.filter(Boolean);
   const objectives = normalizeObjectives(source);
   const primaryBlockObjective = objectives.find((objective) => objective.layer === "block") || objectives[0];
   const targetType = primaryBlockObjective?.layer === "block" ? primaryBlockObjective.targetId : null;
@@ -273,13 +293,15 @@ function normalizeCave(data, index = 0) {
   const estimatedTargetCount = objectives.reduce((sum, objective) => sum + objective.count, 0);
   const estimatedPar = Math.max(1, Math.ceil(estimatedTargetCount * 0.8 + usableBlocks.length * 0.7));
   const terrainRules = {};
-  Object.keys(DEFAULT_TERRAIN_RULES).forEach((terrainId) => {
+  const terrainIds = new Set([...Object.keys(DEFAULT_TERRAIN_RULES), ...Object.keys(source.terrainRules || {}).filter(assetId)]);
+  terrainIds.forEach((terrainId) => {
+    const fallback = getDefaultTerrainRule(terrainId);
     const rule = source.terrainRules?.[terrainId] || {};
-    const reaction = ["none", "under", "adjacent"].includes(rule.reaction) ? rule.reaction : DEFAULT_TERRAIN_RULES[terrainId].reaction;
+    const reaction = ["none", "under", "adjacent"].includes(rule.reaction) ? rule.reaction : fallback.reaction;
     terrainRules[terrainId] = {
-      blocksFlow: rule.blocksFlow == null ? DEFAULT_TERRAIN_RULES[terrainId].blocksFlow : Boolean(rule.blocksFlow),
+      blocksFlow: rule.blocksFlow == null ? fallback.blocksFlow : Boolean(rule.blocksFlow),
       reaction,
-      durability: clampNumber(rule.durability, DEFAULT_TERRAIN_RULES[terrainId].durability, 1, 99),
+      durability: clampNumber(rule.durability, fallback.durability, 1, 99),
     };
   });
   const normalized = {
@@ -287,7 +309,7 @@ function normalizeCave(data, index = 0) {
     id: source.id || crypto.randomUUID(),
     name: String(source.name || `Cave ${String(index + 1).padStart(4, "0")}`),
     width, height, gravity: normalizeGravity(source.gravity), layers,
-    usableBlocks: [...new Set(usableBlocks.length ? usableBlocks : Object.keys(COLORS))],
+    usableBlocks: [...new Set(usableBlocks)],
     objectives, targetType, targetCount, moveLimit,
     parMoves: clampNumber(source.parMoves, Math.min(moveLimit, estimatedPar), 1, 999),
     testClearMoves: clampNumber(source.testClearMoves, 0, 0, 999),
@@ -353,7 +375,30 @@ function updateUndoButtons() {
   $("redoButton").disabled = !redoStack.length;
 }
 
-function getAsset(layer, id) { return ASSETS[layer].find((asset) => asset.id === id); }
+function getDefaultTerrainRule(id) {
+  return Object.hasOwn(DEFAULT_TERRAIN_RULES, id)
+    ? DEFAULT_TERRAIN_RULES[id]
+    : { blocksFlow: false, reaction: "none", durability: 1 };
+}
+
+function getAsset(layer, id) {
+  if (!assetId(id)) return null;
+  const known = ASSETS[layer].find((asset) => asset.id === id);
+  const definition = project.assetDefinitions?.[layer]?.find((asset) => asset.id === id);
+  return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer], ...known, id, name: definition?.name || known?.name || id };
+}
+
+function blockColor(id) {
+  if (Object.hasOwn(COLORS, id)) return COLORS[id];
+  let hash = 0;
+  for (const character of id) hash = (Math.imul(hash, 31) + character.codePointAt(0)) >>> 0;
+  return `hsl(${hash % 360} 68% 55%)`;
+}
+
+function paletteOptions(layer, extraId) {
+  return [...new Set([...(project.paletteAssets[layer] || []), extraId].filter(Boolean))]
+    .map((id) => getAsset(layer, id));
+}
 
 function resolvedObjectiveCount(cave, objective) {
   if (objective.countMode === "auto-map") return cave.layers[objective.layer].filter((value) => value === objective.targetId).length;
@@ -403,9 +448,8 @@ function renderObjectives() {
   cave.objectives.forEach((objective, index) => {
     const row = document.createElement("div");
     row.className = "objective-row";
-    const targetOptions = ASSETS[objective.layer]
-      .filter((asset) => asset.id === objective.targetId || project.paletteAssets[objective.layer]?.includes(asset.id))
-      .map((asset) => `<option value="${asset.id}"${asset.id === objective.targetId ? " selected" : ""}>${escapeHtml(asset.name)}</option>`).join("");
+    const targetOptions = paletteOptions(objective.layer, objective.targetId)
+      .map((asset) => `<option value="${escapeHtml(asset.id)}"${asset.id === objective.targetId ? " selected" : ""}>${escapeHtml(asset.name)}</option>`).join("");
     const autoCount = resolvedObjectiveCount(cave, objective);
     row.innerHTML = `
       <div class="objective-row-top">
@@ -513,9 +557,9 @@ function renderTerrainRuleEditor() {
   const terrainIds = project.paletteAssets.terrain || [];
   $("terrainRuleSection").hidden = terrainIds.length === 0;
   if (!terrainIds.length) return;
-  terrainSelect.innerHTML = ASSETS.terrain.filter((asset) => terrainIds.includes(asset.id)).map((asset) => `<option value="${asset.id}">${escapeHtml(asset.name)}</option>`).join("");
+  terrainSelect.innerHTML = paletteOptions("terrain").map((asset) => `<option value="${escapeHtml(asset.id)}">${escapeHtml(asset.name)}</option>`).join("");
   if (!terrainIds.includes(selectedTerrainRule)) selectedTerrainRule = terrainIds[0];
-  const rule = cave.terrainRules[selectedTerrainRule] || DEFAULT_TERRAIN_RULES[selectedTerrainRule];
+  const rule = cave.terrainRules[selectedTerrainRule] || getDefaultTerrainRule(selectedTerrainRule);
   terrainSelect.value = selectedTerrainRule;
   $("terrainReaction").value = rule.reaction;
   $("terrainDurability").value = rule.durability;
@@ -561,16 +605,13 @@ function renderPalette() {
   const paletteIds = project.paletteAssets[layer] || [];
   if (!paletteIds.includes(selectedAssets[layer])) selectedAssets[layer] = null;
 
-  const addAsset = $("addPaletteAsset");
-  addAsset.hidden = true;
-  addAsset.replaceChildren();
-  $("showPaletteCatalog").disabled = paletteIds.length === ASSETS[layer].length;
+  $("assetDefinitionForm").hidden = true;
 
-  ASSETS[layer].filter((asset) => paletteIds.includes(asset.id)).forEach((asset) => {
+  paletteOptions(layer).forEach((asset) => {
     const button = document.createElement("button");
     button.className = `asset-card${activeTool !== "eraser" && selectedAssets[activeLayer] === asset.id ? " active" : ""}`;
-    const style = activeLayer === "block" ? `background:${COLORS[asset.id]}` : "";
-    button.innerHTML = `<span class="asset-visual ${asset.className || ""}" style="${style}">${asset.visual}</span><span>${asset.name}</span>`;
+    const style = activeLayer === "block" ? `background:${blockColor(asset.id)}` : "";
+    button.innerHTML = `<span class="asset-visual ${asset.className || ""}" style="${style}">${escapeHtml(asset.visual)}</span><span>${escapeHtml(asset.name)}</span>`;
     button.addEventListener("click", () => {
       const isSameSelection = activeTool !== "eraser" && selectedAssets[activeLayer] === asset.id;
       selectedAssets[activeLayer] = isSameSelection ? null : asset.id;
@@ -592,7 +633,7 @@ function renderPalette() {
   const blockIds = project.paletteAssets.block || [];
   $("usableColorsSection").hidden = blockIds.length === 0;
   blockIds.forEach((name) => {
-    const color = COLORS[name];
+    const color = blockColor(name);
     const button = document.createElement("button");
     button.className = `color-toggle${activeCave().usableBlocks.includes(name) ? " active" : ""}`;
     button.style.background = color;
@@ -645,8 +686,8 @@ function applyCellVisual(cell, cave, index) {
     if (!asset) continue;
     const visual = document.createElement("span");
     visual.className = `cell-${layer} ${asset.className || ""}`;
-    if (layer === "block") visual.style.background = COLORS[assetId];
-    if (layer === "gimmick" || layer === "item") visual.textContent = asset.visual;
+    if (layer === "block") visual.style.background = blockColor(assetId);
+    if (layer === "gimmick" || layer === "item" || (layer === "terrain" && !asset.className)) visual.textContent = asset.visual;
     cell.appendChild(visual);
   }
 }
@@ -764,7 +805,8 @@ function randomizeBlocks() {
   const cave = activeCave();
   const seed = ($("randomSeed").value.trim() || `CAVE-${Date.now().toString(36).toUpperCase()}`).slice(0, 40);
   const density = clampNumber($("randomDensity").value, 100, 10, 100);
-  const colors = cave.usableBlocks.length ? cave.usableBlocks : Object.keys(COLORS);
+  const colors = cave.usableBlocks.length ? cave.usableBlocks : project.paletteAssets.block || [];
+  if (!colors.length) return toast("먼저 사용할 블록 종류를 추가하세요.");
   const random = seededRandom(`${seed}|${cave.width}x${cave.height}|${colors.join(",")}|${density}`);
   const blocks = Array(cave.width * cave.height).fill(null);
   const eligible = [];
@@ -791,6 +833,7 @@ function randomizeBlocks() {
   }
   snapshot();
   cave.layers.block = blocks;
+  cave.usableBlocks = [...colors];
   project.paletteAssets = collectPaletteAssets(project.caves, project.paletteAssets);
   cave.randomSeed = seed;
   cave.randomDensity = density;
@@ -849,7 +892,7 @@ function validateCave(cave) {
     const target = resolvedObjectiveCount(cave, objective);
     if (objectiveKeys.has(key)) errors.push(`${label} 목표가 중복되어 있습니다.`);
     objectiveKeys.add(key);
-    if (!objectiveAssetExists(objective.layer, objective.targetId)) errors.push(`${label} 대상이 현재 팔레트에 없습니다.`);
+    if (!project.paletteAssets[objective.layer]?.includes(objective.targetId)) errors.push(`${label} 대상이 현재 팔레트에 없습니다.`);
     if (target < 1) errors.push(`${label} 목표 수량은 1 이상이어야 합니다.`);
     if (objective.countMode === "auto-map" && placed < 1) errors.push(`${label} 자동 수량 목표지만 맵에 배치된 대상이 없습니다.`);
     if (objective.layer === "block" && !cave.usableBlocks.includes(objective.targetId)) errors.push(`${label} 색상이 사용 가능 블록에서 제외되어 있습니다.`);
@@ -1105,7 +1148,8 @@ function applyGravity(cave, state) {
 }
 
 function refillBlocks(cave, random) {
-  const colors = cave.usableBlocks.length ? cave.usableBlocks : Object.keys(COLORS);
+  const colors = cave.usableBlocks;
+  if (!colors.length) return;
   for (let index = 0; index < cave.layers.block.length; index += 1) {
     if (!cave.layers.block[index] && !isBarrier(cave, index)) {
       cave.layers.block[index] = colors[Math.floor(random() * colors.length)];
@@ -1449,6 +1493,7 @@ function buildPatch(baseData) {
     contentVersion: project.version,
     minimumClientVersion: CLIENT_VERSION,
     paletteAssets: project.paletteAssets,
+    assetDefinitions: project.assetDefinitions,
     patch: {
       upsertCaves: currentCaves.filter((cave) => baseCaves.get(String(cave.id)) !== JSON.stringify(cave)),
       removeCaveIds: [...baseCaves.keys()].filter((id) => !currentIds.has(id)),
@@ -1520,6 +1565,7 @@ function applyPatchPayload(data) {
   next.version = String(data?.contentVersion || patch?.contentVersion || baseVersion);
   next.contentVersion = next.version;
   if (data.paletteAssets) next.paletteAssets = data.paletteAssets;
+  if (data.assetDefinitions) next.assetDefinitions = data.assetDefinitions;
   if (!next.caves.some((cave) => cave.id === next.activeCaveId)) next.activeCaveId = next.caves[0].id;
   return { project: normalizeProject(next), format: `패치 ${baseVersion} → ${next.version}`, unknownTokens: [] };
 }
@@ -1537,10 +1583,11 @@ function flatArray(value) {
   return Array.isArray(value[0]) ? value.flat() : value;
 }
 
-function normalizeAssetId(layer, value, unknownTokens) {
-  if (value == null || value === "" || value === false) return null;
-  if (layer === "block") return normalizeColor(value);
-  const raw = String(value).trim().toLowerCase();
+function normalizeAssetId(layer, value, allowCustom = false) {
+  const id = assetId(typeof value === "object" && value !== null ? value.id ?? value.type ?? value.name : value);
+  if (!id) return null;
+  if (layer === "block") return normalizeColor(id) || (allowCustom ? id : null);
+  const raw = id.toLowerCase();
   const key = raw.replace(/[ _]/g, "-");
   if (["0", "empty", "none", "null", "air", "void"].includes(key)) return null;
   const aliases = {
@@ -1553,22 +1600,25 @@ function normalizeAssetId(layer, value, unknownTokens) {
   };
   const normalized = aliases[key] || key;
   if (ASSETS[layer].some((asset) => asset.id === normalized)) return normalized;
-  unknownTokens?.add(`${layer}:${raw}`);
-  return null;
+  return allowCustom ? id : null;
 }
 
-function applyCellToken(layers, index, token, unknownTokens) {
+function applyCellToken(layers, index, token, unknownTokens, declaredLayers) {
   if (token == null) return;
   if (Array.isArray(token)) {
-    token.forEach((entry) => applyCellToken(layers, index, entry, unknownTokens));
+    token.forEach((entry) => applyCellToken(layers, index, entry, unknownTokens, declaredLayers));
     return;
   }
+  const declaredId = assetId(token);
+  const declaredLayer = declaredLayers.get(declaredId);
+  if (declaredLayer) { layers[declaredLayer][index] = declaredId; return; }
   if (typeof token === "number" || /^\d+$/.test(String(token).trim())) {
     const numericMap = {
       0: null, 1: "wall", 2: "floor", 3: "red", 4: "yellow", 5: "blue", 6: "green", 7: "orange", 8: "purple",
       9: "pit", 10: "ice", 11: "teleport-a", 12: "teleport-b", 13: "switch", 14: "door", 15: "exit", 16: "coin", 17: "key",
     };
-    applyCellToken(layers, index, numericMap[Number(token)], unknownTokens);
+    if (!Object.hasOwn(numericMap, Number(token))) unknownTokens.add(String(token));
+    else applyCellToken(layers, index, numericMap[Number(token)], unknownTokens, declaredLayers);
     return;
   }
   if (typeof token === "object") {
@@ -1581,16 +1631,21 @@ function applyCellToken(layers, index, token, unknownTokens) {
     let applied = false;
     entries.forEach(([layer, value]) => {
       if (value == null) return;
-      const normalized = normalizeAssetId(layer, value, unknownTokens);
+      const normalized = normalizeAssetId(layer, value, true);
       if (normalized) layers[layer][index] = normalized;
       applied = true;
     });
-    if (!applied) applyCellToken(layers, index, valueAt(token, ["type", "id", "value", "name"]), unknownTokens);
+    if (!applied) {
+      const layer = valueAt(token, ["layer", "category"]);
+      const id = valueAt(token, ["id", "type", "value", "name"]);
+      if (Object.hasOwn(ASSETS, layer)) layers[layer][index] = normalizeAssetId(layer, id, true);
+      else applyCellToken(layers, index, id, unknownTokens, declaredLayers);
+    }
     return;
   }
   const parts = String(token).split(/[|,+]/).map((part) => part.trim()).filter(Boolean);
   if (parts.length > 1) {
-    parts.forEach((part) => applyCellToken(layers, index, part, unknownTokens));
+    parts.forEach((part) => applyCellToken(layers, index, part, unknownTokens, declaredLayers));
     return;
   }
   const value = parts[0] || String(token);
@@ -1600,18 +1655,18 @@ function applyCellToken(layers, index, token, unknownTokens) {
     const normalized = normalizeAssetId(layer, value, null);
     if (normalized) { layers[layer][index] = normalized; return; }
   }
-  unknownTokens?.add(String(value));
+  if (assetId(value)) unknownTokens.add(String(value));
 }
 
 function adaptExternalObjective(raw, fallbackTarget = "purple", fallbackCount = 1) {
   const source = raw && typeof raw === "object" ? raw : { target: raw };
   const rawTarget = valueAt(source, ["targetId", "objectId", "type", "target", "color", "id", "name"], fallbackTarget);
   let layer = String(valueAt(source, ["layer", "category", "kind"], "")).toLowerCase();
-  if (!ASSETS[layer]) {
+  if (!Object.hasOwn(ASSETS, layer)) {
     if (normalizeColor(rawTarget)) layer = "block";
     else layer = Object.keys(ASSETS).find((candidate) => normalizeAssetId(candidate, rawTarget, null)) || "block";
   }
-  const targetId = layer === "block" ? (normalizeColor(rawTarget) || "purple") : (normalizeAssetId(layer, rawTarget, null) || ASSETS[layer][0].id);
+  const targetId = normalizeAssetId(layer, rawTarget, true) || ASSETS[layer][0].id;
   const countModeValue = valueAt(source, ["countMode", "count_mode", "quantityMode"], "manual");
   return normalizeObjective({
     id: source.id,
@@ -1792,7 +1847,7 @@ function adaptDdungMapInfo(source, index, format, unknownTokens) {
   return cave;
 }
 
-function adaptExternalLevel(level, index, format, unknownTokens) {
+function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers) {
   if (/^DDUNG MapInfo/i.test(format)) return adaptDdungMapInfo(level, index, format, unknownTokens);
   const source = level && typeof level === "object" ? level : {};
   const grid = valueAt(source, ["grid", "board", "cells", "tiles", "map.grid", "map.cells", "map.tiles"], []);
@@ -1810,20 +1865,22 @@ function adaptExternalLevel(level, index, format, unknownTokens) {
   Object.entries(layerAliases).forEach(([layer, aliases]) => {
     const rawLayer = valueAt(source.layers || {}, aliases, valueAt(source, aliases.map((alias) => `${alias}Layer`), []));
     flatArray(rawLayer).slice(0, size).forEach((value, cellIndex) => {
-      const normalized = normalizeAssetId(layer, value, unknownTokens);
+      const normalized = normalizeAssetId(layer, value, true);
       if (normalized) layers[layer][cellIndex] = normalized;
     });
   });
-  flatArray(grid).slice(0, size).forEach((token, cellIndex) => applyCellToken(layers, cellIndex, token, unknownTokens));
-  const target = valueAt(source, ["target", "goal", "objective", "objectives.0"], {});
-  const rawUsable = valueAt(source, ["usableBlocks", "availableColors", "colors", "palette"], Object.keys(COLORS));
-  const usableBlocks = (Array.isArray(rawUsable) ? rawUsable : String(rawUsable).split(",")).map(normalizeColor).filter(Boolean);
+  flatArray(grid).slice(0, size).forEach((token, cellIndex) => applyCellToken(layers, cellIndex, token, unknownTokens, declaredLayers));
+  const target = valueAt(source, ["target", "goal", "objective", "objectives.0"], null);
+  const rawUsable = valueAt(source, ["usableBlocks", "availableColors", "colors", "palette"], layers.block.filter(Boolean));
+  const usableBlocks = (Array.isArray(rawUsable) ? rawUsable : String(rawUsable).split(","))
+    .map((value) => normalizeAssetId("block", value, true)).filter(Boolean);
   const targetType = normalizeColor(valueAt(source, ["targetType", "targetColor", "goalColor", "target.color", "goal.color", "objective.color", "objectives.0.color"], typeof target === "string" ? target : "purple")) || "purple";
   const targetCount = valueAt(source, ["targetCount", "goalCount", "collectCount", "target.count", "goal.count", "objective.count", "objectives.0.count"], 1);
   const rawObjectives = valueAt(source, ["objectives", "targets", "goals"], []);
   const objectives = Array.isArray(rawObjectives) && rawObjectives.length
     ? rawObjectives.slice(0, MAX_OBJECTIVES).map((objective) => adaptExternalObjective(objective, targetType, targetCount))
-    : [adaptExternalObjective(target, targetType, targetCount)];
+    : target != null || source.targetType || source.targetColor || source.goalColor
+      ? [adaptExternalObjective(target, targetType, targetCount)] : [];
   const moveLimit = valueAt(source, ["moveLimit", "maxMoves", "moves", "turnLimit", "maxTurns"], 20);
   const objectiveCount = objectives.reduce((sum, objective) => sum + objective.count, 0);
   const parMoves = valueAt(source, ["parMoves", "par", "recommendedMoves", "solutionMoves", "minMoves"], Math.max(1, Math.ceil(objectiveCount * 0.8)));
@@ -1857,8 +1914,13 @@ function adaptImportedJson(data) {
   }
   if (!levels.length) throw new Error("편집할 레벨 데이터를 찾지 못했습니다.");
   const unknownTokens = new Set();
-  const caves = levels.map((level, index) => adaptExternalLevel(level, index, format, unknownTokens));
-  const next = normalizeProject({ version: String(data?.version || data?.gameVersion || "IMPORTED"), caves, activeCaveId: caves[0].id });
+  const definitions = normalizeAssetDefinitions(data?.assetDefinitions);
+  const declaredLayers = new Map();
+  for (const [layer, assets] of Object.entries(definitions)) {
+    for (const { id } of assets) declaredLayers.set(id, declaredLayers.has(id) ? null : layer);
+  }
+  const caves = levels.map((level, index) => adaptExternalLevel(level, index, format, unknownTokens, declaredLayers));
+  const next = normalizeProject({ version: String(data?.version || data?.gameVersion || "IMPORTED"), caves, activeCaveId: caves[0].id, assetDefinitions: data?.assetDefinitions });
   return { project: next, format, unknownTokens: [...unknownTokens] };
 }
 
@@ -1891,25 +1953,26 @@ function bindInputs() {
     renderAll();
     persist();
   });
-  $("showPaletteCatalog").addEventListener("click", () => {
-    const select = $("addPaletteAsset");
-    const ids = project.paletteAssets[activeLayer] || [];
-    select.replaceChildren(new Option("종류 선택", ""));
-    for (const asset of ASSETS[activeLayer]) {
-      if (!ids.includes(asset.id)) select.add(new Option(asset.name, asset.id));
-    }
-    select.hidden = false;
-    select.focus();
+  $("showAssetDefinition").addEventListener("click", () => {
+    $("assetDefinitionForm").reset();
+    $("assetDefinitionForm").hidden = false;
+    $("assetDefinitionName").focus();
   });
-  $("addPaletteAsset").addEventListener("change", (event) => {
-    const id = event.target.value;
-    if (!getAsset(activeLayer, id)) return;
+  $("assetDefinitionForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = $("assetDefinitionName").value.trim();
+    const id = assetId($("assetDefinitionId").value || name);
+    const layer = activeLayer;
+    const ids = project.paletteAssets[layer] || [];
+    if (!name || !id) return toast("오브젝트 이름과 유효한 ID를 입력하세요.");
+    if (ids.includes(id)) return toast("이 레이어에 같은 ID가 이미 있습니다.");
     snapshot();
-    project.paletteAssets[activeLayer] = [...(project.paletteAssets[activeLayer] || []), id];
-    selectedAssets[activeLayer] = id;
+    project.assetDefinitions[layer] = [...(project.assetDefinitions[layer] || []), { id, name }];
+    project.paletteAssets[layer] = [...ids, id];
+    selectedAssets[layer] = id;
     activeTool = "brush";
-    if (activeLayer === "terrain") selectedTerrainRule = id;
-    if (activeLayer === "block" && !activeCave().usableBlocks.includes(id)) activeCave().usableBlocks.push(id);
+    if (layer === "terrain") selectedTerrainRule = id;
+    if (layer === "block" && !activeCave().usableBlocks.includes(id)) activeCave().usableBlocks.push(id);
     renderAll();
     persist();
   });

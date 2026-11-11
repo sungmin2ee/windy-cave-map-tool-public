@@ -234,8 +234,14 @@
 
             <div class="selected-asset" id="selectedAssetSummary"></div>
             <div class="asset-grid" id="assetGrid"></div>
-            <button type="button" class="button ghost" id="showPaletteCatalog">오브젝트 종류 추가</button>
-            <select class="field" id="addPaletteAsset" aria-label="추가할 오브젝트 종류" hidden></select>
+            <button type="button" class="button ghost" id="showAssetDefinition">오브젝트 만들기</button>
+            <form id="assetDefinitionForm" hidden>
+              <label class="field-label" for="assetDefinitionName">오브젝트 이름</label>
+              <input class="field" id="assetDefinitionName" required maxlength="80" />
+              <label class="field-label" for="assetDefinitionId">JSON ID (선택)</label>
+              <input class="field" id="assetDefinitionId" maxlength="80" placeholder="비워 두면 이름을 ID로 사용" />
+              <button type="submit" class="button">추가</button>
+            </form>
           </section>
 
           <section class="panel-section usable-section" id="usableColorsSection" hidden>
@@ -299,7 +305,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=14"></script>
+    <script src="./app.js?v=15"></script>
   </body>
 </html>
 
