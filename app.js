@@ -1483,6 +1483,186 @@ function randomizeBlocks() {
   toast(`시드 ${seed} · 고정 칸 ${fixed.filter(Boolean).length}개 보존 · 블록 ${blocks.filter(Boolean).length}개${shortfalls.length ? ` · 목표색 부족 ${shortfalls.join(", ")}` : ""}`);
 }
 
+
+function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement) {
+  const cave = deepCopy(source);
+  const seed = source.randomSeed + "|difficulty-" + target + "-" + (attempt + 1);
+  const random = seededRandom(seed);
+  if (!keepPlacement) {
+    cave.layers = emptyLayers(cave.width * cave.height);
+    cave.initialPieceTypes = Object.fromEntries(
+      source.layers.block.flatMap((_, index) => initialPieceAt(source, index) ? [[index, null]] : [])
+    );
+  }
+  cave.randomSeed = seed;
+  cave.usableBlocks = keepPlacement ? [...new Set([...source.usableBlocks, ...colors])] : colors;
+  cave.testClearMoves = 0;
+
+  const free = cave.layers.block.flatMap((_, index) =>
+    !isBarrier(cave, index) && Object.values(cave.layers).every((layer) => !layer[index]) ? [index] : []
+  );
+  const objectiveLayers = [];
+  const eligibleAssets = {
+    terrain: (project.paletteAssets.terrain || []).filter((id) => {
+      const rule = cave.terrainRules[id];
+      return rule && !rule.blocksFlow && rule.reaction !== "none" &&
+        (!id.startsWith("ddung-") || ["ddung-water", "ddung-ice", "ddung-web"].includes(id));
+    }),
+    item: (project.paletteAssets.item || []).filter((id) => !id.startsWith("ddung-")),
+    gimmick: (project.paletteAssets.gimmick || []).filter((id) => id === "switch" ||
+      (id === "ddung-box" && isDdungSource(cave.externalSource) && cave.externalSource.boxLayoutParsed)),
+  };
+  for (const [layer, assets] of Object.entries(eligibleAssets)) {
+    if (!assets.length || !free.length) continue;
+    const targetId = assets[Math.floor(random() * assets.length)];
+    const count = Math.min(free.length, Math.max(1, Math.round(free.length * (0.025 + target * 0.001) * (0.65 + random() * 0.7))));
+    for (let placed = 0; placed < count; placed += 1) {
+      const [index] = free.splice(Math.floor(random() * free.length), 1);
+      cave.layers[layer][index] = targetId;
+    }
+    objectiveLayers.push({ layer, targetId, count });
+  }
+
+  const blocks = cave.layers.block;
+  for (let index = 0; index < blocks.length; index += 1) {
+    if (blocks[index] || isBarrier(cave, index)) continue;
+    const available = colors.filter((color) => !wouldCreateMatch(blocks, index, color, cave));
+    if (!available.length) return null;
+    blocks[index] = chooseBlockColor(cave, available, random);
+  }
+  if (findMatches(cave).size || !hasPossibleSwap(cave)) return null;
+
+  const targetId = colors[Math.floor(random() * colors.length)];
+  const placed = blocks.filter((color) => color === targetId).length;
+  const blockCount = Math.max(1, Math.min(placed, Math.round(3 + target / 8 + random() * 5)));
+  cave.objectives = [{ layer: "block", targetId, count: blockCount }, ...objectiveLayers]
+    .map((goal, index) => normalizeObjective({ ...goal, id: "generated-goal-" + (index + 1), countMode: "manual" }));
+  cave.targetType = targetId;
+  cave.targetCount = blockCount;
+  const moveSpread = [-8, -4, 0, 4, 9, 15][attempt % 6];
+  cave.moveLimit = Math.max(2, Math.min(35, Math.round(17 - target / 8 + objectiveLayers.length * 3 + moveSpread)));
+  cave.parMoves = Math.max(1, Math.floor(cave.moveLimit * 0.75));
+  const validation = validateCave(cave);
+  return validation.errors.length || validation.unsupported.length ? null : cave;
+}
+
+function difficultyCandidateScore(cave, batch) {
+  const failureRate = 1 - batch.wins / batch.runs;
+  const movePressure = batch.average / cave.moveLimit;
+  return Math.max(1, Math.min(100, Math.round(70 * failureRate + 25 * movePressure + 5 * batch.stuck / batch.runs)));
+}
+
+function renderDifficultyCandidates(source, candidates) {
+  const options = $("difficultyOptions");
+  options.replaceChildren();
+  for (const [index, { cave, batch, score }] of candidates.entries()) {
+    const card = document.createElement("details");
+    card.open = index === 0;
+    const summary = document.createElement("summary");
+    summary.textContent = "후보 " + (index + 1) + " · 추정 난이도 " + score + " · 클리어 " + batch.clearRate + "% (" + batch.wins + "/" + batch.runs + ")";
+    const info = document.createElement("p");
+    info.textContent = "제한 " + cave.moveLimit + " Moves · 성공 평균 " + batch.average +
+      " Moves · 막힘 " + batch.stuck + "/" + batch.runs;
+    const goals = document.createElement("p");
+    goals.textContent = cave.objectives.map((goal) => objectiveLabel(goal) + " " + goal.count + "개").join(" · ");
+    const viewport = document.createElement("div");
+    viewport.className = "difficulty-preview-scroll";
+    const grid = document.createElement("div");
+    grid.className = "difficulty-preview-grid";
+    grid.style.gridTemplateColumns = "repeat(" + cave.width + ", 24px)";
+    for (let cellIndex = 0; cellIndex < cave.layers.block.length; cellIndex += 1) {
+      const cell = document.createElement("div");
+      cell.className = "map-cell";
+      applyCellVisual(cell, cave, cellIndex);
+      cell.title = describeCellProperties(cave, cellIndex);
+      grid.append(cell);
+    }
+    viewport.append(grid);
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.className = "button primary";
+    apply.textContent = "이 후보 적용";
+    apply.onclick = () => {
+      if (activeCave() !== source) return;
+      snapshot();
+      Object.assign(source, cave);
+      $("difficultyDialog").close();
+      renderAll();
+      persist();
+      toast("추정 난이도 " + score + " 후보를 적용했습니다.");
+    };
+    card.append(summary, info, goals, viewport, apply);
+    options.append(card);
+  }
+}
+
+function openDifficultyGenerator() {
+  $("difficultyOptions").replaceChildren();
+  $("difficultyStatus").textContent = "";
+  $("difficultyDialog").showModal();
+}
+
+async function generateDifficultyCandidates(event) {
+  event.preventDefault();
+  const source = activeCave();
+  const dialog = $("difficultyDialog");
+  const target = $("difficultyTarget").valueAsNumber;
+  const keepPlacement = $("difficultyKeepPlacement").checked;
+  const status = $("difficultyStatus");
+  const submit = $("difficultyGenerate");
+  const fields = $("difficultyFields");
+  if (submit.disabled || !Number.isInteger(target) || target < 1 || target > 100) return;
+  $("difficultyOptions").replaceChildren();
+  const colors = (source.usableBlocks.length ? source.usableBlocks : project.paletteAssets.block || [])
+    .filter((id) => blockWeight(source, id) > 0);
+  if (colors.length < 2) {
+    status.textContent = "사용 색상에서 생성 가중치가 0보다 큰 블록을 2종 이상 선택하세요.";
+    return;
+  }
+  const candidates = [];
+  const signatures = new Set();
+  const attempts = 12;
+  const runs = 6;
+  let canceled = false;
+  const cancel = () => { canceled = true; };
+  dialog.addEventListener("close", cancel, { once: true });
+  fields.disabled = true;
+  submit.disabled = true;
+  try {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      status.textContent = "목표 " + target + " · 후보 생성 및 검증 " + (attempt + 1) + "/" + attempts;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (canceled || !dialog.open || activeCave() !== source) return;
+      const cave = buildDifficultyCandidate(source, colors, target, attempt, keepPlacement);
+      if (!cave) continue;
+      const signature = JSON.stringify([cave.layers, cave.objectives, cave.moveLimit]);
+      if (signatures.has(signature)) continue;
+      signatures.add(signature);
+      const results = [];
+      for (let run = 0; run < runs; run += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (canceled || !dialog.open || activeCave() !== source) return;
+        results.push(runAutoGame(cave, run));
+      }
+      const batch = summarizeBatch(results);
+      if (batch.wins) candidates.push({ cave, batch, score: difficultyCandidateScore(cave, batch) });
+    }
+    candidates.sort((a, b) => Math.abs(a.score - target) - Math.abs(b.score - target) || b.batch.wins - a.batch.wins);
+    const best = candidates.slice(0, 3);
+    renderDifficultyCandidates(source, best);
+    status.textContent = best.length
+      ? "목표 " + target + " · 가까운 후보 " + best.length + "개 · 후보당 자동 플레이 " + runs + "회"
+      : "자동 플레이에서 클리어한 후보가 없습니다. 배치 유지 옵션이나 보드 구성을 확인해 주세요.";
+  } catch (error) {
+    console.error(error);
+    status.textContent = "후보를 만드는 중 오류가 발생했습니다.";
+  } finally {
+    dialog.removeEventListener("close", cancel);
+    fields.disabled = false;
+    submit.disabled = false;
+  }
+}
+
 function analyzeDifficulty(cave) {
   const totalBlocks = cave.layers.block.filter(Boolean).length;
   const usedColors = new Set(cave.layers.block.filter(Boolean));
@@ -3508,6 +3688,8 @@ function bindInputs() {
   $("resizeButton").addEventListener("click", resizeMap);
   $("randomizeButton").addEventListener("click", randomizeBlocks);
   $("boardShapeButton").addEventListener("click", openBoardShapes);
+  $("difficultyButton").addEventListener("click", openDifficultyGenerator);
+  $("difficultyForm").addEventListener("submit", generateDifficultyCandidates);
   $("regionItemButton").addEventListener("click", openRegionItems);
   $("regionItemCancel").addEventListener("click", () => $("regionItemDialog").close());
   $("undoButton").addEventListener("click", undo);

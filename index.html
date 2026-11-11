@@ -69,6 +69,17 @@
       .playtest-frame-swap { outline: 2px solid #7dd3fc; outline-offset: -2px; z-index: 1; }
     .playtest-frame-match { outline: 2px solid #fbbf24; outline-offset: -2px; background-color: #4d3312; z-index: 1; }
   </style>
+    <style>
+      #difficultyDialog { max-height: 86vh; overflow-y: auto; }
+      #difficultyFields { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+      #difficultyTarget { max-width: 7rem; }
+      #difficultyOptions { display: grid; gap: 12px; }
+      #difficultyOptions details { padding: 12px; border: 1px solid #444952; border-radius: 8px; }
+      #difficultyOptions summary { cursor: pointer; font-weight: 700; }
+      .difficulty-preview-scroll { overflow: auto; max-height: 38vh; margin-block: 12px; }
+      .difficulty-preview-grid { display: grid; width: max-content; gap: 2px; }
+      .difficulty-preview-grid .map-cell { width: 24px; height: 24px; min-width: 0; min-height: 0; }
+    </style>
   </head>
   <body>
     <div class="app-shell">
@@ -225,6 +236,7 @@
                 </label>
               </div>
               <button class="button full randomize" id="randomizeButton">랜덤 채우기 · 시드로 블록 배치</button>
+                <button id="difficultyButton" class="button ghost" type="button">난이도로 보드 생성</button>
                 <button id="boardShapeButton" class="button ghost" type="button">보드 모양 후보</button>
                 <button id="regionItemButton" class="button ghost" type="button">구역 아이템 랜덤 배치</button>
               <small>같은 시드·크기·색상이면 같은 결과이며, 시작 3-Match는 만들지 않습니다.</small>
@@ -417,6 +429,23 @@
         <div class="dialog-footer"><button class="button ghost" type="button" id="regionItemCancel">취소</button><button id="regionItemApply" class="button primary" type="submit">배치</button></div>
       </form>
     </dialog>
+    <dialog id="difficultyDialog" class="simulation-dialog" aria-labelledby="difficultyTitle">
+      <div class="dialog-header"><h2 id="difficultyTitle">목표 난이도로 보드 생성</h2></div>
+      <form id="difficultyForm">
+        <fieldset id="difficultyFields">
+          <label>목표 난이도 (1~100)
+            <input id="difficultyTarget" class="field" type="number" min="1" max="100" step="1" value="50" required>
+          </label>
+          <label><input id="difficultyKeepPlacement" type="checkbox" checked> 기존 오브젝트 배치 유지</label>
+        </fieldset>
+        <p>등록된 오브젝트와 사용 색상으로 후보를 만들고, 클리어율과 이동 횟수로 난이도를 추정합니다.</p>
+        <button id="difficultyGenerate" class="button primary" type="submit">후보 생성</button>
+      </form>
+      <p id="difficultyStatus" role="status"></p>
+      <div id="difficultyOptions"></div>
+      <form method="dialog" class="dialog-footer"><button class="button ghost">닫기</button></form>
+    </dialog>
+
     <dialog id="boardShapeDialog" class="simulation-dialog" aria-labelledby="boardShapeTitle">
       <div class="dialog-header"><h2 id="boardShapeTitle">보드 모양 후보</h2></div>
       <div style="max-height: 60vh; overflow: auto;">
@@ -605,7 +634,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=64"></script>
+    <script src="./app.js?v=65"></script>
   </body>
 </html>
 
