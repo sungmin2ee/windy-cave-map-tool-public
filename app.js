@@ -26,7 +26,10 @@ const ASSETS = {
     { id: "ddung-heather-large", name: "DDUNG Heather Large", className: "terrain-ddung-heather", visual: "♨" },
     { id: "ddung-jelly", name: "DDUNG Jelly", className: "terrain-ddung-jelly", visual: "◫" },
   ],
-  block: Object.keys(COLORS).map((id) => ({ id, name: id[0].toUpperCase() + id.slice(1), className: `block-${id}`, visual: "◆" })),
+  block: [
+    ...Object.keys(COLORS).map((id) => ({ id, name: id[0].toUpperCase() + id.slice(1), className: `block-${id}`, visual: "◆" })),
+    { id: "ddung-dust-piece", name: "DDUNG Dust", visual: "░" },
+  ],
   gimmick: [
     { id: "teleport-a", name: "Teleport A", visual: "◉" },
     { id: "teleport-b", name: "Teleport B", visual: "◎" },
@@ -77,9 +80,9 @@ const DEFAULT_TERRAIN_RULES = {
   "ddung-oak": { blocksFlow: true, reaction: "adjacent", durability: 2 },
   "ddung-stone": { blocksFlow: true, reaction: "adjacent", durability: 2 },
   "ddung-water": { blocksFlow: false, reaction: "under", durability: 1 },
-  "ddung-ice": { locksBlock: true, blocksFlow: false, reaction: "adjacent", durability: 1 },
-  "ddung-heather-small": { locksBlock: true, blocksFlow: false, reaction: "adjacent-only", durability: 1 },
-  "ddung-heather-large": { locksBlock: true, blocksFlow: false, reaction: "adjacent-only", durability: 2 },
+  "ddung-ice": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 1 },
+  "ddung-heather-small": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 1 },
+  "ddung-heather-large": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 2 },
   "ddung-jelly": { blocksFlow: false, reaction: "adjacent", durability: 1 },
 };
 
@@ -382,7 +385,7 @@ function normalizeCave(data, index = 0) {
   terrainIds.forEach((terrainId) => {
     const fallback = getDefaultTerrainRule(terrainId);
     const rule = terrainId === "ddung-water" && oldWaterRule ? fallback : source.terrainRules?.[terrainId] || {};
-    const reaction = ["none", "under", "adjacent", "adjacent-only"].includes(rule.reaction) ? rule.reaction : fallback.reaction;
+    const reaction = ["none", "under", "adjacent", "adjacent-only", "splash"].includes(rule.reaction) ? rule.reaction : fallback.reaction;
     terrainRules[terrainId] = {
       blocksFlow: rule.blocksFlow == null ? fallback.blocksFlow : Boolean(rule.blocksFlow),
       locksBlock: rule.locksBlock == null ? Boolean(fallback.locksBlock) : Boolean(rule.locksBlock),
@@ -1069,6 +1072,7 @@ function applyCellVisual(cell, cave, index) {
     visual.className = `cell-${layer} ${asset.className || ""}`;
     if (layer === "block") {
       visual.style.background = blockColor(assetId);
+      if (assetId === "ddung-dust-piece") visual.textContent = asset.visual;
       const piece = cave.playtestPieces ? cave.playtestPieces[index] : initialPieceAt(cave, index);
       if (piece && (!piece.color || piece.color === assetId)) {
         const badge = document.createElement("span");
@@ -1952,7 +1956,7 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
 function findMatches(cave, runs, protectedCells) {
   const matches = new Set();
   const blocks = cave.layers.block.map((color, index) =>
-    color && !protectedCells?.has(index) && !isBarrier(cave, index) ? color : null);
+    color && color !== "ddung-dust-piece" && !protectedCells?.has(index) && !isBarrier(cave, index) ? color : null);
   for (let y = 0; y < cave.height; y += 1) {
     let start = 0;
     for (let x = 1; x <= cave.width; x += 1) {
@@ -2213,7 +2217,7 @@ function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), rem
     const forced = forcedTerrain.has(index);
     if (!forced && (!rule || rule.reaction === "none")) continue;
     let affected = forced || (rule.reaction !== "adjacent-only" && matches.has(index));
-    if (!affected && rule.reaction === "adjacent-only") {
+    if (!affected && (rule.reaction === "adjacent-only" || rule.reaction === "splash")) {
       affected = neighborsOf(cave, index).some((neighbor) => removedBlocks.has(neighbor));
     }
     if (!affected && rule.reaction === "adjacent") {
@@ -2338,8 +2342,9 @@ function scoreAutoMove(state, { hits: matches, targetedTerrain }) {
         if (terrainId !== objective.targetId) return;
         const reaction = state.cave.terrainRules?.[terrainId]?.reaction;
         const adjacent = neighborsOf(state.cave, index);
-        if (reaction === "adjacent-only") {
-          if (adjacent.some((cell) => matches.has(cell) && state.cave.layers.block[cell] && !isBarrier(state.cave, cell))) score += 8;
+        if (reaction === "adjacent-only" || reaction === "splash") {
+          if ((reaction === "splash" && matches.has(index)) ||
+              adjacent.some((cell) => matches.has(cell) && state.cave.layers.block[cell] && !isBarrier(state.cave, cell))) score += 8;
         } else if (matches.has(index) || (reaction === "adjacent" && adjacent.some((cell) => matches.has(cell)))) {
           score += 8;
         }
@@ -2564,7 +2569,7 @@ function ensurePlayableBoard(state, captureFrame) {
   const { cave } = state;
   const blocks = cave.layers.block;
   const slots = blocks.flatMap((color, index) =>
-    color && !cave.playtestPieces[index] && !isBarrier(cave, index) ? [index] : []);
+    color && color !== "ddung-dust-piece" && !cave.playtestPieces[index] && !isBarrier(cave, index) ? [index] : []);
   const original = slots.map((index) => blocks[index]);
   if (slots.length >= 4 && new Set(original).size >= 2) {
     for (let attempt = 0; attempt < 80; attempt += 1) {
@@ -3652,10 +3657,15 @@ function applyDdungTile(layers, index, character, unknownTokens) {
     if (characters.includes(character)) { layers.block[index] = color; return; }
   }
   if (".ㄱㄲㄳ⑴ㄴy".includes(character)) return;
+  if (character === "E") {
+    layers.terrain[index] = "ddung-ice";
+    layers.block[index] = "ddung-dust-piece";
+    return;
+  }
   const terrainCharacters = [
     ["ddung-web", "WV"], ["ddung-dust", "D"], ["ddung-oak", "IC⒝⒞⒟⒠⒣⒤⒥!@#$"],
     ["ddung-stone", "FG78"], ["ddung-water", "U6⒦⒧⒨⒩⒪⒫⒬⒭⒮⒯"],
-    ["ddung-ice", "EN"], ["ddung-heather-small", "s"], ["ddung-heather-large", "tuvw"],
+    ["ddung-ice", "N"], ["ddung-heather-small", "s"], ["ddung-heather-large", "tuvw"],
     ["ddung-jelly", "①②③④⑤⑥⑦⑧⑨⑩ⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ"],
   ];
   const terrain = terrainCharacters.find(([, characters]) => characters.includes(character));
@@ -3735,7 +3745,7 @@ function adaptDdungMapInfo(source, index, format, unknownTokens, tileReporter) {
   ddungPositionGroups(source.watercolors, 4).forEach((group) => {
     const cellIndex = ddungGridIndex(size, Number(group[0]), Number(group[1]));
     const color = DDUNG_COLOR_IDS[Number(group[2]) - 1];
-    if (cellIndex >= 0 && color) layers.block[cellIndex] = color;
+    if (cellIndex >= 0 && color && layers.block[cellIndex] !== "ddung-dust-piece") layers.block[cellIndex] = color;
   });
   const usableBlocks = [...new Set(String(source.colors || "").split(",")
     .map((value) => value.trim())
