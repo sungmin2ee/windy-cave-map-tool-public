@@ -414,6 +414,25 @@
             <div class="terrain-rule-summary" id="terrainRuleSummary"></div>
           </section>
 
+          <section class="panel-section" id="selectedObjectRules" hidden>
+            <h2>선택한 오브젝트 설정</h2>
+            <form id="gimmickRulesForm" hidden>
+              <label class="field-label" for="gimmickReaction">피격 조건</label>
+              <select class="field" id="gimmickReaction">
+                <option value="direct">같은 칸 직접 타격</option>
+                <option value="adjacent">인접 블록 제거</option>
+                <option value="either">직접 타격 또는 인접 블록 제거</option>
+              </select>
+              <label class="field-label" for="gimmickDurability">내구도</label>
+              <input class="field" type="number" id="gimmickDurability" min="1" max="99" required />
+              <label class="field-label" for="gimmickNext">내구도 소진 후</label>
+              <select class="field" id="gimmickNext"></select>
+              <label class="check-field terrain-block-check"><input type="checkbox" id="gimmickBlocksFlow" /> 교환·매치·낙하·리필 막기</label>
+              <button class="button" type="submit">동작 저장</button>
+            </form>
+            <button class="button" type="button" id="addSelectedGoal">이 오브젝트를 목표로 추가</button>
+          </section>
+
           <section class="panel-section legend-section">
             <span class="eyebrow">LAYERS</span>
             <div class="legend-row"><i class="terrain-dot"></i> Terrain: 바닥과 벽</div>
@@ -676,7 +695,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=96"></script>
+    <script src="./app.js?v=97"></script>
   </body>
 </html>
 
