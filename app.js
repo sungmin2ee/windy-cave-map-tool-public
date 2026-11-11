@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.6.1";
+const CLIENT_VERSION = "2.6.2";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -286,11 +286,22 @@ function normalizeCave(data, index = 0) {
     ? source.usableBlocks.map(assetId).filter(Boolean)
     : layers.block.filter(Boolean);
   const objectives = normalizeObjectives(source);
+  const externalSource = source.externalSource;
+  const migrateWaterGoal = /^DDUNG MapInfo\b/.test(String(externalSource?.format || "")) && !externalSource.waterGoalNormalized;
+  let waterGoalChanged = false;
+  if (migrateWaterGoal) {
+    for (const objective of objectives) {
+      if (objective.layer !== "terrain" || objective.targetId !== "ddung-water" ||
+          !/^ddung-target-\d+-14$/.test(objective.id) || objective.countMode !== "manual") continue;
+      waterGoalChanged ||= objective.count !== resolvedObjectiveCount({ layers }, { ...objective, countMode: "auto-map" });
+      objective.countMode = "auto-map";
+    }
+  }
   const primaryBlockObjective = objectives.find((objective) => objective.layer === "block") || objectives[0];
   const targetType = primaryBlockObjective?.layer === "block" ? primaryBlockObjective.targetId : null;
   const targetCount = primaryBlockObjective?.count ?? 0;
   const moveLimit = clampNumber(source.moveLimit, 20, 1, 999);
-  const estimatedTargetCount = objectives.reduce((sum, objective) => sum + objective.count, 0);
+  const estimatedTargetCount = objectives.reduce((sum, objective) => sum + resolvedObjectiveCount({ layers }, objective), 0);
   const estimatedPar = Math.max(1, Math.ceil(estimatedTargetCount * 0.8 + usableBlocks.length * 0.7));
   const terrainRules = {};
   const terrainIds = new Set([...Object.keys(DEFAULT_TERRAIN_RULES), ...Object.keys(source.terrainRules || {}).filter(assetId)]);
@@ -312,7 +323,7 @@ function normalizeCave(data, index = 0) {
     usableBlocks: [...new Set(usableBlocks)],
     objectives, targetType, targetCount, moveLimit,
     parMoves: clampNumber(source.parMoves, Math.min(moveLimit, estimatedPar), 1, 999),
-    testClearMoves: clampNumber(source.testClearMoves, 0, 0, 999),
+    testClearMoves: waterGoalChanged ? 0 : clampNumber(source.testClearMoves, 0, 0, 999),
     simulationRuns: [10, 30, 100].includes(Number(source.simulationRuns)) ? Number(source.simulationRuns) : 30,
     randomSeed: String(source.randomSeed || `CAVE-${String(index + 1).padStart(4, "0")}`),
     randomDensity: clampNumber(source.randomDensity, 100, 10, 100),
@@ -321,6 +332,9 @@ function normalizeCave(data, index = 0) {
     failureBonus: Boolean(source.failureBonus),
     note: String(source.note || ""),
   };
+  if (migrateWaterGoal) {
+    normalized.externalSource = { ...externalSource, waterGoalNormalized: true };
+  }
   delete normalized.packedLayers;
   delete normalized.storageFormat;
   return normalized;
@@ -1737,7 +1751,7 @@ function ddungObjective(raw, index, unknownTokens) {
     layer,
     targetId,
     action: OBJECTIVE_ACTIONS[layer].action,
-    countMode: "manual",
+    countMode: type === 14 ? "auto-map" : "manual",
     count: raw?.count || 1,
   });
 }
