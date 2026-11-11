@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>3-Match Puzzle Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=20" />
+    <link rel="stylesheet" href="./styles.css?v=21" />
     <style>
     .map-cell.excluded-cell { background: transparent; border: 1px dashed #505564; box-shadow: none; opacity: .48; }
     #simulationGrid .excluded-cell { visibility: hidden; }
@@ -597,6 +597,7 @@
       <p id="playtestFrameStatus" role="status" style="min-height:1.3em;margin:4px 0;"></p>
       <div id="simulationGrid" class="simulation-grid"></div>
       <div class="dialog-footer">
+        <button class="button" id="playtestHintButton" hidden>힌트</button>
         <button class="button" id="playtestPauseButton" hidden>자동 플레이 시작</button>
         <button class="button" id="playtestResetButton" hidden>다시 시작</button>
         <button class="button primary" id="usePlaytestResultButton" hidden>이 기록을 난이도에 사용</button>
@@ -668,7 +669,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=84"></script>
+    <script src="./app.js?v=85"></script>
   </body>
 </html>
 

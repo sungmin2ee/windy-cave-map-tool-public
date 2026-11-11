@@ -1808,6 +1808,7 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
     cell.className = `map-cell${canActivate || canSwap ? " playable" : ""}${selected ? " selected" : ""}`;
     cell.type = interactive ? "button" : undefined;
     applyCellVisual(cell, cave, index);
+    if (interactive && [playtestState.hint?.first, playtestState.hint?.second].includes(index)) cell.classList.add("hinted");
     const targets = remainingTargets.filter(({ objective }) =>
       matchesObjectiveAsset(objective, cave.layers[objective.layer][index]) &&
       (objective.layer !== "gimmick" || !playtestState.activatedGimmicks.has(index)));
@@ -1894,6 +1895,7 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
   } else {
     playtestState = null;
     $("playtestPauseButton").hidden = true;
+    $("playtestHintButton").hidden = true;
     const baseline = blocked ? null : readValidationBaseline(cave);
     const simulationCave = baseline ? { ...cave, randomSeed: baseline.seed } : cave;
     const batch = blocked ? null : runBatchSimulation(simulationCave, baseline?.runs ?? cave.simulationRuns);
@@ -1905,7 +1907,7 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
       ${batch ? `자동 플레이 난이도 <b>${batch.label}</b> · 휴리스틱 ${validation.analysis.label} (${validation.analysis.score}점)<br>` : `휴리스틱 난이도 ${validation.analysis.label} (${validation.analysis.score}점)<br>`}
       목표 ${objectiveSummary} · 제한 ${cave.moveLimit} · 권장 ${cave.parMoves}${cave.testClearMoves ? ` · 테스트 ${cave.testClearMoves}` : ""}<br>
       여유 Moves ${validation.analysis.slack >= 0 ? "+" : ""}${validation.analysis.slack} · Gravity ${cave.gravity}
-      ${batch ? `<div class="batch-summary"><span><b>${batch.clearRate}%</b>클리어율 (${batch.wins}/${batch.runs})</span><span><b>${batch.average || "-"}</b>평균 Moves</span><span><b>${batch.median || "-"} / ${batch.p90 || "-"}</b>중앙 / 90%</span></div><div>${batch.runs}회 중 성공 ${batch.wins}회 · 이동 횟수 소진 ${batch.lost}회 · 가능한 매치 없음 ${batch.stuck}회</div><div>목표 우선 휴리스틱 자동 플레이 결과이며 실제 유저 난이도와는 차이가 날 수 있습니다.</div>` : ""}
+      ${batch ? `<div class="batch-summary"><span><b>${batch.clearRate}%</b>클리어율 (${batch.wins}/${batch.runs})</span><span><b>${batch.average || "-"}</b>평균 Moves</span><span><b>${batch.median || "-"} / ${batch.p90 || "-"}</b>중앙 / 90%</span></div><div>${batch.runs}회 중 성공 ${batch.wins}회 · 이동 횟수 소진 ${batch.lost}회 · 가능한 매치 없음 ${batch.stuck}회 · 셔플 총 ${batch.shuffles}회</div><div>목표 우선 휴리스틱 자동 플레이 결과이며 실제 유저 난이도와는 차이가 날 수 있습니다.</div>` : ""}
       ${issueHtml(validation)}
     `;
     if (batch) {
@@ -2343,7 +2345,7 @@ function scoreAutoMove(state, { hits: matches, targetedTerrain }) {
   return score;
 }
 
-function listPossibleSwaps(state) {
+function listPossibleSwaps(state, firstOnly = false) {
   const cave = state.cave;
   const blocks = cave.layers.block;
   const candidates = [];
@@ -2358,8 +2360,10 @@ function listPossibleSwaps(state) {
           specialEffect(cave, cave.playtestPieces[second])) continue;
       swapPlaytestBlocks(cave, first, second);
       const matches = findMatches(cave);
-      if (matches.has(first) || matches.has(second)) candidates.push({ first, second, score: scoreAutoMove(state, expandSpecialHits(state, matches)) });
+      const valid = matches.has(first) || matches.has(second);
+      if (valid && !firstOnly) candidates.push({ first, second, score: scoreAutoMove(state, expandSpecialHits(state, matches)) });
       swapPlaytestBlocks(cave, first, second);
+      if (valid && firstOnly) return [{ first, second }];
     }
   }
   return candidates;
@@ -2538,6 +2542,51 @@ function swapPlaytestBlocks(cave, first, second) {
   [pieces[first], pieces[second]] = [pieces[second], pieces[first]];
 }
 
+function findPlayableAction(state) {
+  const { cave } = state;
+  const special = cave.playtestPieces.findIndex((piece, index) =>
+    cave.layers.block[index] && !isBarrier(cave, index) && specialEffect(cave, piece));
+  return special >= 0 ? { first: special } : listPossibleSwaps(state, true)[0];
+}
+
+function ensurePlayableBoard(state, captureFrame) {
+  if (findPlayableAction(state)) return;
+  const { cave } = state;
+  const blocks = cave.layers.block;
+  const slots = blocks.flatMap((color, index) =>
+    color && !cave.playtestPieces[index] && !isBarrier(cave, index) ? [index] : []);
+  const original = slots.map((index) => blocks[index]);
+  if (slots.length >= 4 && new Set(original).size >= 2) {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const shuffled = [...original];
+      for (let index = shuffled.length - 1; index > 0; index -= 1) {
+        const other = Math.floor(state.shuffleRandom() * (index + 1));
+        [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
+      }
+      slots.forEach((slot, index) => { blocks[slot] = shuffled[index]; });
+      if (findMatches(cave).size || !listPossibleSwaps(state, true).length) continue;
+      state.shuffleCount += 1;
+      state.message += " · 가능한 교환이 없어 보드를 섞었습니다.";
+      captureFrame?.("보드 셔플", slots, "swap", 350);
+      return;
+    }
+    slots.forEach((slot, index) => { blocks[slot] = original[index]; });
+  }
+  state.status = "stuck";
+  state.message = "셔플로 가능한 교환을 만들 수 없습니다.";
+}
+
+function showPlaytestHint() {
+  const state = playtestState;
+  if (!state?.paused || state.status !== "playing" || state.animating) return;
+  const action = findPlayableAction(state);
+  if (!action) return;
+  state.selectedIndex = null;
+  state.hint = action;
+  state.message = action.second === undefined ? "강조된 특수 피스를 눌러 발동하세요." : "강조된 두 블록을 교환하세요.";
+  renderPlaytest();
+}
+
 function chooseAutoAction(state) {
   const cave = state.cave;
   const candidates = listPossibleSwaps(state);
@@ -2571,6 +2620,7 @@ function playSimulationTurn(state, action, captureFrame) {
   state.message = resolved.removed + "개 제거 · " + resolved.cascade + "연쇄 · Terrain " + resolved.terrainBroken + "개 파괴";
   if (allObjectivesComplete(state)) state.status = "won";
   else if (!state.movesLeft) state.status = "lost";
+  else ensurePlayableBoard(state, captureFrame);
 }
 
 function createPlayState(cave, seedSuffix, manual = false) {
@@ -2582,7 +2632,7 @@ function createPlayState(cave, seedSuffix, manual = false) {
     const piece = block ? initialPieceAt(copy, index) : null;
     return piece && (!piece.color || piece.color === block) ? piece : null;
   });
-  return {
+  const state = {
     cave: copy,
     movesLeft: copy.moveLimit,
     paused: manual,
@@ -2590,6 +2640,8 @@ function createPlayState(cave, seedSuffix, manual = false) {
     status: "playing",
     message: manual ? "교환할 인접 블록 두 개를 클릭하세요." : "자동 플레이를 시작합니다.",
     random: seededRandom(`${copy.randomSeed}|${seedSuffix}`),
+    shuffleRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|shuffle`),
+    shuffleCount: 0,
     terrainHits: Array(copy.width * copy.height).fill(0),
     gimmickHits: Array(copy.width * copy.height).fill(0),
     activatedGimmicks: new Set(),
@@ -2597,13 +2649,15 @@ function createPlayState(cave, seedSuffix, manual = false) {
     goalLimitations: copy.objectives.map((objective) => ddungGoalLimitation(copy, objective)),
     flowTurn: 0,
   };
+  ensurePlayableBoard(state);
+  return state;
 }
 
 function runAutoGame(cave, runIndex) {
   const state = createPlayState(cave, `batch-${runIndex}`);
   if (state.goalLimitations.some(Boolean)) return { status: "unsupported", moves: 0, runIndex };
   while (state.status === "playing") playSimulationTurn(state, chooseAutoAction(state));
-  return { status: state.status, moves: cave.moveLimit - state.movesLeft, runIndex };
+  return { status: state.status, moves: cave.moveLimit - state.movesLeft, shuffles: state.shuffleCount, runIndex };
 }
 
 function cavesInRange(input) {
@@ -2781,6 +2835,7 @@ function summarizeBatch(results) {
     wins: wins.length,
     lost: results.filter((result) => result.status === "lost").length,
     stuck: results.filter((result) => result.status === "stuck").length,
+    shuffles: results.reduce((total, result) => total + (result.shuffles || 0), 0),
     clearRate,
     average: Number(average.toFixed(1)),
     median: percentile(0.5),
@@ -2849,6 +2904,7 @@ function togglePlaytestPause() {
   const state = playtestState;
   if (!state || state.status !== "playing") return;
   state.paused = !state.paused;
+  state.hint = null;
   state.selectedIndex = null;
   state.message = state.paused ? "교환할 인접 블록 두 개를 클릭하세요." : "자동 플레이 중입니다.";
   $("playtestPauseButton").textContent = state.paused ? "자동 플레이 시작" : "직접 플레이로 전환";
@@ -2861,6 +2917,7 @@ function playtestCell(index) {
   if (!state || state.status !== "playing" || state.animating) return;
   const cave = state.cave;
   if (isBarrier(cave, index) || !cave.layers.block[index]) return;
+  state.hint = null;
 
   if (specialEffect(cave, cave.playtestPieces[index])) {
     state.selectedIndex = null;
@@ -2915,10 +2972,10 @@ function renderPlaytest() {
   result.className = `simulation-result ${state.status === "won" ? "success" : ["lost", "stuck"].includes(state.status) ? "error" : "warning"}`;
   result.innerHTML = `
     <strong>${practice ? "PLAYTEST 연습 · 클리어 판정 미지원" : state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 실패" : "PLAYTEST 진행 중"}</strong><br>
-    Moves <b>${state.movesLeft}</b> / ${state.cave.moveLimit} · 사용 ${usedMoves}회<br>
+    Moves <b>${state.movesLeft}</b> / ${state.cave.moveLimit} · 사용 ${usedMoves}회 · 셔플 ${state.shuffleCount}회<br>
     ${objectiveProgressHtml(state)}
     Gravity ${state.cave.gravity} · 막힘 우회 ${flowLabels[state.cave.flowRule]}<br>
-    ${failed ? `<strong>${state.status === "lost" ? "이동 횟수 소진" : "가능한 교환이나 특수 피스 발동 없음"}</strong>` : escapeHtml(state.message)}
+    ${failed ? `<strong>${state.status === "lost" ? "이동 횟수 소진" : escapeHtml(state.message)}</strong>` : escapeHtml(state.message)}
     ${remainingTargets.length ? `<ul aria-label="남은 목표">${remainingTargets.map(({ objective, remaining }) =>
       `<li>${escapeHtml(objectiveLabel(objective))} · ${remaining}개 남음</li>`).join("")}</ul>` : ""}
     ${practice ? issueHtml({ errors: [], warnings: [], unsupported: state.validation.unsupported }) : ""}
@@ -2926,6 +2983,7 @@ function renderPlaytest() {
   $("usePlaytestResultButton").hidden = state.status !== "won";
   const pause = $("playtestPauseButton");
   pause.hidden = state.status !== "playing";
+  $("playtestHintButton").hidden = !state.paused || state.status !== "playing";
   pause.textContent = state.paused ? "자동 플레이 시작" : "직접 플레이로 전환";
   renderSimulationGrid(state.cave, state.status === "playing", remainingTargets);
 }
@@ -4065,6 +4123,7 @@ function bindInputs() {
   $("closeSimulationFooterButton").addEventListener("click", () => $("simulationDialog").close());
   $("playtestResetButton").addEventListener("click", resetPlaytest);
   $("playtestPauseButton").addEventListener("click", togglePlaytestPause);
+  $("playtestHintButton").addEventListener("click", showPlaytestHint);
   $("usePlaytestResultButton").addEventListener("click", usePlaytestResult);
   $("saveButton").addEventListener("click", () => persist(true));
   $("exportButton").addEventListener("click", exportProject);
