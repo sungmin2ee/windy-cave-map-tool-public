@@ -376,6 +376,22 @@
 
     <div class="toast" id="toast" role="status"></div>
 
+    <dialog id="importPreview" class="simulation-dialog" aria-labelledby="importPreviewTitle">
+      <div class="dialog-header"><h2 id="importPreviewTitle">JSON 가져오기 미리보기</h2></div>
+      <div style="max-height: 50vh; overflow: auto; overflow-wrap: anywhere;">
+        <p id="importPreviewFile"></p>
+        <dl>
+          <dt>레벨 수</dt><dd id="importPreviewLevels"></dd>
+          <dt>맵 크기</dt><dd id="importPreviewSizes"></dd>
+          <dt>특수 피스 종류</dt><dd id="importPreviewPieces"></dd>
+          <dt>읽지 못한 타일 값</dt><dd id="importPreviewUnknown"></dd>
+        </dl>
+      </div>
+      <form method="dialog" class="dialog-footer">
+        <button class="button ghost" value="cancel" autofocus>취소</button>
+        <button class="button primary" value="import">가져오기</button>
+      </form>
+    </dialog>
     <dialog id="cellInspector" class="simulation-dialog" aria-labelledby="cellInspectorTitle">
       <div class="dialog-header"><h2 id="cellInspectorTitle">칸 속성</h2></div>
       <p id="cellInspectorText"></p>
@@ -463,7 +479,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=51"></script>
+    <script src="./app.js?v=52"></script>
   </body>
 </html>
 
