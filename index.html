@@ -369,6 +369,13 @@
       </div>
       <section id="patchBoardPanel" hidden>
         <h3 id="patchBoardTitle"></h3>
+        <section id="patchSettings" hidden aria-labelledby="patchSettingsTitle">
+          <h4 id="patchSettingsTitle">목표와 이동 횟수 변경</h4>
+          <table style="width:100%; text-align:left; overflow-wrap:anywhere">
+            <thead><tr><th scope="col">항목</th><th scope="col">변경 전</th><th scope="col">변경 후</th></tr></thead>
+            <tbody id="patchSettingsRows"></tbody>
+          </table>
+        </section>
         <div id="patchBoardGrid"></div>
         <p id="patchCellDetail" role="status"></p>
       </section>
@@ -422,7 +429,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=38"></script>
+    <script src="./app.js?v=39"></script>
   </body>
 </html>
 

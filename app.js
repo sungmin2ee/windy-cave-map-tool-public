@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.20";
+const CLIENT_VERSION = "2.7.21";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2253,7 +2253,39 @@ function patchCellChanges(previous, cave, x, y) {
   return changes;
 }
 
+function patchSettingChanges(previous, cave) {
+  const changes = [];
+  const formatGoal = (board, goal) => goal
+    ? `${goal.layer} · ${goal.targetId} × ${resolvedObjectiveCount(board, goal)} (${goal.countMode === "auto-map" ? "보드에서 계산" : "직접 입력"})`
+    : "없음";
+  const goalCount = Math.max(previous.objectives.length, cave.objectives.length);
+  for (let index = 0; index < goalCount; index++) {
+    const before = formatGoal(previous, previous.objectives[index]);
+    const after = formatGoal(cave, cave.objectives[index]);
+    if (before !== after) changes.push([`클리어 목표 ${index + 1}`, before, after]);
+  }
+  for (const [key, label] of [
+    ["moveLimit", "이동 횟수 제한"],
+    ["parMoves", "권장 이동 횟수"],
+    ["testClearMoves", "테스트 클리어 이동 횟수"],
+  ]) {
+    const before = previous[key] || "미설정";
+    const after = cave[key] || "미설정";
+    if (before !== after) changes.push([label, before, after]);
+  }
+  return changes;
+}
+
 function renderPatchBoard(previous, cave) {
+  const settings = $("patchSettings");
+  const settingRows = $("patchSettingsRows");
+  settingRows.replaceChildren();
+  const settingChanges = patchSettingChanges(previous, cave);
+  settings.hidden = !settingChanges.length;
+  for (const change of settingChanges) {
+    const row = settingRows.insertRow();
+    for (const value of change) row.insertCell().textContent = value;
+  }
   const panel = $("patchBoardPanel");
   const grid = $("patchBoardGrid");
   const detail = $("patchCellDetail");
