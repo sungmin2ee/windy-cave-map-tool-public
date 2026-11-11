@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.29";
+const CLIENT_VERSION = "2.7.30";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1008,9 +1008,10 @@ function applyCellVisual(cell, cave, index) {
       visual.style.background = blockColor(assetId);
       const initial = !playtestState || playtestState.cave !== cave || playtestState.movesLeft === cave.moveLimit;
       const piece = initial ? ddungInitialPiece(ddungCellSource(cave, index)?.tile) : null;
-      if (piece?.type > 0 && piece.color === assetId) {
+      const symbol = DDUNG_PIECE_ICONS[piece?.type];
+      if (symbol && piece.color === assetId) {
         visual.classList.add("ddung-initial-special");
-        visual.textContent = "✦";
+        visual.textContent = symbol;
         if (playtestState?.cave === cave) visual.title = `DDUNG 초기 피스 타입 ${piece.type}`;
       }
     }
@@ -3093,6 +3094,9 @@ function ddungCellSource(cave, index) {
   return { raw, x, y, tile: String(raw.tiles || "")[offset], gravity: String(raw.gravitys || "")[offset] };
 }
 
+// Display symbols distinguish original piece types without assigning gameplay effects.
+const DDUNG_PIECE_ICONS = Object.freeze({ 1: "◆", 2: "▲", 3: "■", 6: "✚", 8: "✦" });
+
 function ddungInitialPiece(tile) {
   if (!tile) return null;
   for (const [color, tokens] of Object.entries(DDUNG_BLOCK_CHARACTERS)) {
@@ -3112,7 +3116,7 @@ function describeCellProperties(cave, index) {
     fields.push(`DDUNG 원본 타일 · ${source.tile ?? "없음"}`);
     if (source.gravity !== undefined) fields.push(`원본 칸 중력 · ${source.gravity}`);
     const piece = ddungInitialPiece(source.tile);
-    if (piece) fields.push(`원본 초기 피스 · 색상 ${piece.color} · 타입 ${piece.type}`);
+    if (piece) fields.push(`원본 초기 피스 · 색상 ${piece.color} · 타입 ${piece.type}${DDUNG_PIECE_ICONS[piece.type] ? ` (${DDUNG_PIECE_ICONS[piece.type]})` : ""}`);
     for (const field of ["starts", "goals", "roads"]) {
       for (const token of ddungPositionGroups(source.raw[field], 6)) {
         if (Number(token.slice(2, 4)) === source.x && Number(token.slice(4, 6)) === source.y) fields.push(`${field} · ${token}`);
