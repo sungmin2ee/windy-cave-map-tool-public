@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.6.2";
+const CLIENT_VERSION = "2.7.0";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -287,14 +287,16 @@ function normalizeCave(data, index = 0) {
     : layers.block.filter(Boolean);
   const objectives = normalizeObjectives(source);
   const externalSource = source.externalSource;
-  const migrateWaterGoal = /^DDUNG MapInfo\b/.test(String(externalSource?.format || "")) && !externalSource.waterGoalNormalized;
-  let waterGoalChanged = false;
-  if (migrateWaterGoal) {
+  const migrateDdungGoals = isDdungSource(externalSource) && !externalSource.goalRulesVersion;
+  let goalChanged = false;
+  if (migrateDdungGoals) {
     for (const objective of objectives) {
-      if (objective.layer !== "terrain" || objective.targetId !== "ddung-water" ||
-          !/^ddung-target-\d+-14$/.test(objective.id) || objective.countMode !== "manual") continue;
-      waterGoalChanged ||= objective.count !== resolvedObjectiveCount({ layers }, { ...objective, countMode: "auto-map" });
+      const type = ddungObjectiveType(objective);
+      goalChanged ||= Boolean(ddungGoalLimitation({ externalSource }, objective));
+      if (!ddungUsesBoardCount(type) || (type === 14 && externalSource.waterGoalNormalized)) continue;
+      const previousCount = resolvedObjectiveCount({ layers }, objective);
       objective.countMode = "auto-map";
+      goalChanged ||= previousCount !== resolvedObjectiveCount({ layers }, objective);
     }
   }
   const primaryBlockObjective = objectives.find((objective) => objective.layer === "block") || objectives[0];
@@ -321,9 +323,10 @@ function normalizeCave(data, index = 0) {
     name: String(source.name || `Cave ${String(index + 1).padStart(4, "0")}`),
     width, height, gravity: normalizeGravity(source.gravity), layers,
     usableBlocks: [...new Set(usableBlocks)],
+    blockWeights: normalizeBlockWeights(source.blockWeights),
     objectives, targetType, targetCount, moveLimit,
     parMoves: clampNumber(source.parMoves, Math.min(moveLimit, estimatedPar), 1, 999),
-    testClearMoves: waterGoalChanged ? 0 : clampNumber(source.testClearMoves, 0, 0, 999),
+    testClearMoves: goalChanged ? 0 : clampNumber(source.testClearMoves, 0, 0, 999),
     simulationRuns: [10, 30, 100].includes(Number(source.simulationRuns)) ? Number(source.simulationRuns) : 30,
     randomSeed: String(source.randomSeed || `CAVE-${String(index + 1).padStart(4, "0")}`),
     randomDensity: clampNumber(source.randomDensity, 100, 10, 100),
@@ -332,9 +335,7 @@ function normalizeCave(data, index = 0) {
     failureBonus: Boolean(source.failureBonus),
     note: String(source.note || ""),
   };
-  if (migrateWaterGoal) {
-    normalized.externalSource = { ...externalSource, waterGoalNormalized: true };
-  }
+  if (migrateDdungGoals) normalized.externalSource = { ...externalSource, goalRulesVersion: 2 };
   delete normalized.packedLayers;
   delete normalized.storageFormat;
   return normalized;
@@ -399,6 +400,7 @@ function getAsset(layer, id) {
   if (!assetId(id)) return null;
   const known = ASSETS[layer].find((asset) => asset.id === id);
   const definition = project.assetDefinitions?.[layer]?.find((asset) => asset.id === id);
+  if (layer === "gimmick" && id === "ddung-iron-box" && !definition) return { id, name: "DDUNG Iron Box", visual: "▣" };
   return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer], ...known, id, name: definition?.name || known?.name || id };
 }
 
@@ -414,9 +416,47 @@ function paletteOptions(layer, extraId) {
     .map((id) => getAsset(layer, id));
 }
 
+function isDdungSource(source) {
+  return /^DDUNG MapInfo\b/.test(String(source?.format || ""));
+}
+
+function ddungObjectiveType(objective) {
+  const match = /^ddung-target-\d+-(\d+)$/.exec(objective.id);
+  return match ? Number(match[1]) : null;
+}
+
+function ddungUsesBoardCount(type) {
+  return type >= 7 && type <= 37 && type !== 11 && type !== 12;
+}
+
+function ddungGoalLimitation(cave, objective) {
+  if (!isDdungSource(cave.externalSource)) return null;
+  const type = ddungObjectiveType(objective);
+  if (type == null) return null;
+  if (type >= 1 && type <= 6) {
+    const specialColors = cave.externalSource.specialColors;
+    if (!Array.isArray(specialColors)) return "원본 JSON을 다시 가져와 특수 블록 목표 여부를 확인하세요.";
+    return specialColors.includes(objective.targetId) ? "특수 블록 목표" : null;
+  }
+  if (type === 11 || type === 12) return "보물 생성과 출구 도달";
+  if (type === 36) return "여러 칸으로 구성된 젤리 그룹 제거";
+  if (type === 9) return "더스트 블록의 이동과 파괴";
+  if (type === 7) return cave.externalSource.boxLayoutParsed ? null : "철 상자 배치를 확인하려면 원본 JSON을 다시 가져오세요.";
+  if ([8, 10, 13, 14, 24].includes(type)) return null;
+  return "원본 전용 오브젝트 동작";
+}
+
+function matchesObjectiveAsset(objective, id) {
+  return id === objective.targetId || (objective.layer === "gimmick" &&
+    objective.targetId === "ddung-box" && ddungObjectiveType(objective) === 7 && id === "ddung-iron-box");
+}
+
+function countObjectiveAssets(cave, objective) {
+  return cave.layers[objective.layer].filter((id) => matchesObjectiveAsset(objective, id)).length;
+}
+
 function resolvedObjectiveCount(cave, objective) {
-  if (objective.countMode === "auto-map") return cave.layers[objective.layer].filter((value) => value === objective.targetId).length;
-  return objective.count;
+  return objective.countMode === "auto-map" ? countObjectiveAssets(cave, objective) : objective.count;
 }
 
 function objectiveLabel(objective) {
@@ -451,7 +491,9 @@ function updateObjective(index, values) {
   const current = cave.objectives[index];
   if (!current) return;
   snapshot();
-  cave.objectives[index] = normalizeObjective({ ...current, ...values }, current);
+  const next = normalizeObjective({ ...current, ...values }, current);
+  if (next.layer !== current.layer || next.targetId !== current.targetId) next.id = crypto.randomUUID();
+  cave.objectives[index] = next;
   syncLegacyTarget(cave); renderRules(); persist();
 }
 
@@ -472,7 +514,7 @@ function renderObjectives() {
         <button class="button objective-remove" title="목표 삭제" aria-label="목표 삭제">×</button>
       </div>
       <div class="objective-row-bottom">
-        <label><span class="field-label">완료 조건</span><div class="objective-auto-count">${escapeHtml(OBJECTIVE_ACTIONS[objective.layer].label)}</div></label>
+        <label><span class="field-label">완료 조건</span><div class="objective-auto-count">${escapeHtml(ddungObjectiveType(objective) === 7 ? "내구도 소진 후 파괴" : OBJECTIVE_ACTIONS[objective.layer].label)}</div></label>
         <label><span class="field-label">수량 방식</span><select class="field objective-count-mode"><option value="manual"${objective.countMode === "manual" ? " selected" : ""}>직접 입력</option><option value="auto-map"${objective.countMode === "auto-map" ? " selected" : ""}>맵 개수 자동</option></select></label>
       </div>
       <div class="objective-row-bottom objective-count-row">
@@ -663,11 +705,52 @@ function renderPalette() {
       const usable = activeCave().usableBlocks;
       const enabling = !usable.includes(name);
       activeCave().usableBlocks = enabling ? [...usable, name] : usable.filter((value) => value !== name);
-      if (enabling && activeCave().blockWeights?.[name] === 0) activeCave().blockWeights[name] = 1;
       renderPalette(); persist();
     });
     colors.appendChild(button);
   });
+  renderBlockWeights();
+}
+
+function renderBlockWeights() {
+  const cave = activeCave();
+  const panel = $("blockWeightsPanel");
+  const list = $("blockWeightsList");
+  panel.hidden = !cave.usableBlocks.length;
+  list.replaceChildren();
+  const rows = [];
+  const updatePercentages = () => {
+    const total = cave.usableBlocks.reduce((sum, id) => sum + blockWeight(cave, id), 0);
+    for (const { id, output } of rows) output.textContent = total ? `${(100 * blockWeight(cave, id) / total).toFixed(1)}%` : "0%";
+  };
+  for (const id of cave.usableBlocks) {
+    const label = document.createElement("label");
+    label.className = "block-weight-row";
+    const name = document.createElement("span");
+    name.textContent = getAsset("block", id).name;
+    const input = document.createElement("input");
+    input.className = "field";
+    input.type = "number";
+    input.min = "0";
+    input.max = "100";
+    input.step = "any";
+    input.value = blockWeight(cave, id);
+    const output = document.createElement("output");
+    input.addEventListener("change", () => {
+      const weight = clampNumber(input.value, blockWeight(cave, id), 0, 100);
+      if (weight !== blockWeight(cave, id)) {
+        snapshot();
+        cave.blockWeights = { ...cave.blockWeights, [id]: weight };
+        persist();
+        updatePercentages();
+      }
+      input.value = weight;
+    });
+    label.append(name, input, output);
+    list.appendChild(label);
+    rows.push({ id, output });
+  }
+  updatePercentages();
 }
 
 function syncToolButtons() {
@@ -828,7 +911,7 @@ function randomizeBlocks() {
   const seed = ($("randomSeed").value.trim() || `CAVE-${Date.now().toString(36).toUpperCase()}`).slice(0, 40);
   const density = clampNumber($("randomDensity").value, 100, 10, 100);
   const colors = cave.usableBlocks.length ? cave.usableBlocks : project.paletteAssets.block || [];
-  if (!colors.length) return toast("먼저 사용할 블록 종류를 추가하세요.");
+  if (!colors.some((id) => blockWeight(cave, id) > 0)) return toast("생성 가중치가 0보다 큰 블록 종류를 선택하세요.");
   const random = seededRandom(`${seed}|${cave.width}x${cave.height}|${colors.join(",")}|${density}`);
   const blocks = Array(cave.width * cave.height).fill(null);
   const eligible = [];
@@ -836,8 +919,7 @@ function randomizeBlocks() {
     if (isBarrier(cave, index)) continue;
     eligible.push(index);
     if (random() * 100 >= density) continue;
-    const enabled = colors.filter((color) => cave.blockWeights?.[color] !== 0);
-    const candidates = (enabled.length ? enabled : colors).filter((color) => !wouldCreateMatch(blocks, index, color, cave));
+    const candidates = colors.filter((color) => blockWeight(cave, color) > 0 && !wouldCreateMatch(blocks, index, color, cave));
     blocks[index] = candidates.length ? chooseBlockColor(cave, candidates, random) : null;
   }
   const shortfalls = [];
@@ -900,6 +982,7 @@ function analyzeDifficulty(cave) {
 function validateCave(cave) {
   const errors = [];
   const warnings = [];
+  const unsupported = [];
   const analysis = analyzeDifficulty(cave);
   const teleportA = cave.layers.gimmick.filter((value) => value === "teleport-a").length;
   const teleportB = cave.layers.gimmick.filter((value) => value === "teleport-b").length;
@@ -911,14 +994,16 @@ function validateCave(cave) {
   cave.objectives.forEach((objective) => {
     const label = objectiveLabel(objective);
     const key = `${objective.layer}:${objective.targetId}:${objective.action}`;
-    const placed = cave.layers[objective.layer].filter((value) => value === objective.targetId).length;
+    const placed = countObjectiveAssets(cave, objective);
     const target = resolvedObjectiveCount(cave, objective);
     if (objectiveKeys.has(key)) errors.push(`${label} 목표가 중복되어 있습니다.`);
     objectiveKeys.add(key);
     if (!project.paletteAssets[objective.layer]?.includes(objective.targetId)) errors.push(`${label} 대상이 현재 팔레트에 없습니다.`);
-    if (target < 1) errors.push(`${label} 목표 수량은 1 이상이어야 합니다.`);
-    if (objective.countMode === "auto-map" && placed < 1) errors.push(`${label} 자동 수량 목표지만 맵에 배치된 대상이 없습니다.`);
-    if (objective.layer === "block" && !cave.usableBlocks.includes(objective.targetId)) errors.push(`${label} 색상이 사용 가능 블록에서 제외되어 있습니다.`);
+    const limitation = ddungGoalLimitation(cave, objective);
+    if (limitation) unsupported.push(`${label} · ${limitation}`);
+    if (target < 1 && !limitation) errors.push(`${label} 목표 수량은 1 이상이어야 합니다.`);
+    if (!limitation && objective.countMode === "auto-map" && placed < 1) errors.push(`${label} 자동 수량 목표지만 맵에 배치된 대상이 없습니다.`);
+    if (!limitation && objective.layer === "block" && !cave.usableBlocks.includes(objective.targetId) && (!isDdungSource(cave.externalSource) || placed < target)) errors.push(`${label} 색상이 사용 가능 블록에서 제외되어 있습니다.`);
     if (objective.layer === "terrain" && cave.terrainRules?.[objective.targetId]?.reaction === "none") errors.push(`${label} 목표는 제거 불가 규칙입니다. Terrain 반응을 같은 칸 또는 인접 매치로 바꾸세요.`);
     if (objective.countMode === "manual" && objective.layer !== "block" && target > placed) warnings.push(`${label} 목표 ${target}개보다 맵 배치 ${placed}개가 적습니다.`);
     if (objective.layer === "block" && placed < target) warnings.push(`${label}은 현재 ${placed}개입니다. 리필에서 생성될 수 있지만 목표 달성 편차가 커질 수 있습니다.`);
@@ -926,21 +1011,26 @@ function validateCave(cave) {
   if (cave.moveLimit < 1) errors.push("Moves는 1 이상이어야 합니다.");
   if (cave.parMoves < 1) errors.push("권장 클리어 Moves는 1 이상이어야 합니다.");
   if (!cave.usableBlocks.length) errors.push("사용 가능한 블록 색상을 하나 이상 선택해야 합니다.");
+  else if (!cave.usableBlocks.some((id) => blockWeight(cave, id) > 0)) errors.push("사용 색상 중 하나 이상의 생성 가중치를 0보다 높게 설정하세요.");
   if (teleportA !== teleportB) errors.push(`Teleport A/B 개수가 다릅니다. (${teleportA}/${teleportB})`);
-  if (cave.layers.block.some((block) => block && !cave.usableBlocks.includes(block))) errors.push("사용 색상에서 제외된 블록이 맵에 배치되어 있습니다.");
+  if (cave.layers.block.some((block) => block && !cave.usableBlocks.includes(block))) {
+    if (isDdungSource(cave.externalSource)) warnings.push("리필 색상에 없는 고정 배치 블록이 있습니다.");
+    else errors.push("사용 색상에서 제외된 블록이 맵에 배치되어 있습니다.");
+  }
   if (cave.moveLimit < cave.parMoves) errors.push(`Moves ${cave.moveLimit}회가 권장 클리어 ${cave.parMoves}회보다 적습니다.`);
   if (cave.testClearMoves > cave.moveLimit) errors.push(`테스트 클리어 ${cave.testClearMoves}회가 제한 ${cave.moveLimit}회를 초과합니다.`);
   if (!cave.testClearMoves) warnings.push("테스트 클리어 Moves가 없습니다. 실제 플레이 기록을 입력하면 난이도 판정이 더 정확해집니다.");
   if (cave.moveLimit >= cave.parMoves * 2) warnings.push("허용 Moves가 권장 클리어 횟수의 2배 이상이라 난이도가 크게 낮아질 수 있습니다.");
   if (initialMatches) warnings.push(`시작 상태에 이미 3-Match 블록이 ${initialMatches}개 있습니다. 랜덤 재배치를 권장합니다.`);
   if (analysis.totalBlocks && !initialMatches && !hasPossibleSwap(cave)) warnings.push("시작 상태에서 가능한 3-Match 교환을 찾지 못했습니다.");
-  return { errors, warnings, analysis };
+  return { errors, warnings, unsupported, analysis };
 }
 
 function issueHtml(validation) {
   const errorHtml = validation.errors.length ? `<div><b>오류</b><br>${validation.errors.map((issue) => `• ${escapeHtml(issue)}`).join("<br>")}</div>` : "";
   const warningHtml = validation.warnings.length ? `<div><b>경고</b><br>${validation.warnings.map((issue) => `• ${escapeHtml(issue)}`).join("<br>")}</div>` : "";
-  return errorHtml + warningHtml;
+  const unsupportedHtml = validation.unsupported.length ? `<div><b>원본 동작 판정 미지원</b><br>${validation.unsupported.map((issue) => `• ${escapeHtml(issue)}`).join("<br>")}</div>` : "";
+  return errorHtml + warningHtml + unsupportedHtml;
 }
 
 function renderSimulationGrid(cave, interactive = false) {
@@ -972,22 +1062,24 @@ function renderSimulationGrid(cave, interactive = false) {
 function showSimulation(playMode) {
   const cave = activeCave();
   const validation = validateCave(cave);
+  const blocked = validation.errors.length > 0 || validation.unsupported.length > 0;
   $("simulationTitle").textContent = cave.name;
-  $("playtestGuide").hidden = !playMode || Boolean(validation.errors.length);
-  $("playtestResetButton").hidden = !playMode || Boolean(validation.errors.length);
+  const canPractice = playMode && !validation.errors.length;
+  $("playtestGuide").hidden = !canPractice;
+  $("playtestResetButton").hidden = !canPractice;
   $("usePlaytestResultButton").hidden = true;
-  if (playMode && !validation.errors.length) {
-    playtestState = createPlayState(cave, "playtest");
+  if (canPractice) {
+    playtestState = createPlayState(cave, `playtest-${crypto.randomUUID()}`);
     playtestState.validation = validation;
     renderPlaytest();
   } else {
     playtestState = null;
-    const batch = validation.errors.length ? null : runBatchSimulation(cave, cave.simulationRuns);
+    const batch = blocked ? null : runBatchSimulation(cave, cave.simulationRuns);
     const objectiveSummary = cave.objectives.map((objective) => `${escapeHtml(objectiveLabel(objective))} × ${resolvedObjectiveCount(cave, objective)}`).join(" · ");
     const result = $("simulationResult");
-    result.className = `simulation-result ${validation.errors.length ? "error" : validation.warnings.length ? "warning" : "success"}`;
+    result.className = `simulation-result ${blocked ? "error" : validation.warnings.length ? "warning" : "success"}`;
     result.innerHTML = `
-      <strong>${validation.errors.length ? "검증 실패" : "검증 통과"}</strong><br>
+      <strong>${validation.unsupported.length ? "원본 동작 판정 미지원" : blocked ? "검증 실패" : "검증 통과"}</strong><br>
       ${batch ? `자동 플레이 난이도 <b>${batch.label}</b> · 휴리스틱 ${validation.analysis.label} (${validation.analysis.score}점)<br>` : `휴리스틱 난이도 ${validation.analysis.label} (${validation.analysis.score}점)<br>`}
       목표 ${objectiveSummary} · 제한 ${cave.moveLimit} · 권장 ${cave.parMoves}${cave.testClearMoves ? ` · 테스트 ${cave.testClearMoves}` : ""}<br>
       여유 Moves ${validation.analysis.slack >= 0 ? "+" : ""}${validation.analysis.slack} · Gravity ${cave.gravity}
@@ -1053,19 +1145,26 @@ function createObjectiveProgress(cave) {
 
 function advanceObjectives(state, layer, targetId, amount = 1) {
   state.cave.objectives.forEach((objective, index) => {
-    if (objective.layer !== layer || objective.targetId !== targetId) return;
+    if (objective.layer !== layer || !matchesObjectiveAsset(objective, targetId)) return;
     const progress = state.objectiveProgress[index];
     progress.current = Math.min(progress.target, progress.current + amount);
   });
 }
 
 function allObjectivesComplete(state) {
-  return state.objectiveProgress.length > 0 && state.objectiveProgress.every((progress) => progress.current >= progress.target);
+  return !state.goalLimitations.some(Boolean) && state.objectiveProgress.length > 0 &&
+    state.objectiveProgress.every((progress, index) => {
+      const objective = state.cave.objectives[index];
+      if (isDdungSource(state.cave.externalSource) && ddungUsesBoardCount(ddungObjectiveType(objective)) &&
+          objective.countMode === "auto-map") return countObjectiveAssets(state.cave, objective) === 0;
+      return progress.current >= progress.target;
+    });
 }
 
 function objectiveProgressHtml(state) {
   return `<div class="objective-progress">${state.cave.objectives.map((objective, index) => {
     const progress = state.objectiveProgress[index];
+    if (state.goalLimitations[index]) return `<div class="objective-progress-row"><span>${escapeHtml(objectiveLabel(objective))}</span><span></span><b>판정 미지원</b></div>`;
     const percent = Math.min(100, Math.round(progress.current / Math.max(1, progress.target) * 100));
     return `<div class="objective-progress-row"><span>${escapeHtml(objectiveLabel(objective))}</span><i style="--progress:${percent}%"></i><b>${Math.min(progress.current, progress.target)} / ${progress.target}</b></div>`;
   }).join("")}</div>`;
@@ -1091,8 +1190,16 @@ function gravityLines(cave) {
   return lines;
 }
 
+function ddungBoxDurability(cave, index) {
+  if (!isDdungSource(cave.externalSource)) return 0;
+  const id = cave.layers.gimmick[index];
+  if (id === "ddung-iron-box") return 6;
+  return id === "ddung-box" ? 3 : 0;
+}
+
 function isBarrier(cave, index) {
   if (index < 0 || index >= cave.width * cave.height) return true;
+  if (ddungBoxDurability(cave, index)) return true;
   const terrainId = cave.layers.terrain[index];
   return terrainId ? Boolean(cave.terrainRules?.[terrainId]?.blocksFlow) : false;
 }
@@ -1223,7 +1330,14 @@ function resolveMatches(state) {
       if (!gimmickId || state.activatedGimmicks.has(index)) continue;
       const affected = matches.has(index) || neighborsOf(state.cave, index).some((neighbor) => matches.has(neighbor));
       if (affected) {
-        state.activatedGimmicks.add(index);
+        const durability = ddungBoxDurability(state.cave, index);
+        if (durability) {
+          state.gimmickHits[index] += 1;
+          if (state.gimmickHits[index] < durability) continue;
+          state.cave.layers.gimmick[index] = null;
+        } else {
+          state.activatedGimmicks.add(index);
+        }
         advanceObjectives(state, "gimmick", gimmickId);
       }
     }
@@ -1311,6 +1425,9 @@ function listPossibleSwaps(state) {
 
 function createPlayState(cave, seedSuffix) {
   const copy = deepCopy(cave);
+  copy.layers.block.forEach((id, index) => {
+    if (id && ddungBoxDurability(copy, index)) copy.layers.block[index] = null;
+  });
   return {
     cave: copy,
     movesLeft: copy.moveLimit,
@@ -1319,14 +1436,17 @@ function createPlayState(cave, seedSuffix) {
     message: "교환할 첫 번째 블록을 선택하세요.",
     random: seededRandom(`${copy.randomSeed}|${seedSuffix}`),
     terrainHits: Array(copy.width * copy.height).fill(0),
+    gimmickHits: Array(copy.width * copy.height).fill(0),
     activatedGimmicks: new Set(),
     objectiveProgress: createObjectiveProgress(copy),
+    goalLimitations: copy.objectives.map((objective) => ddungGoalLimitation(copy, objective)),
     flowTurn: 0,
   };
 }
 
 function runAutoGame(cave, runIndex) {
   const state = createPlayState(cave, `batch-${runIndex}`);
+  if (state.goalLimitations.some(Boolean)) return { status: "unsupported", moves: 0 };
   while (state.movesLeft > 0 && !allObjectivesComplete(state)) {
     const candidates = listPossibleSwaps(state);
     if (!candidates.length) return { status: "stuck", moves: cave.moveLimit - state.movesLeft };
@@ -1349,7 +1469,7 @@ function runBatchSimulation(cave, runs) {
   const average = moves.length ? moves.reduce((sum, value) => sum + value, 0) / moves.length : 0;
   const percentile = (ratio) => moves.length ? moves[Math.min(moves.length - 1, Math.floor((moves.length - 1) * ratio))] : 0;
   const clearRate = Math.round(wins.length / runs * 100);
-  const label = clearRate >= 80 ? "Easy" : clearRate >= 55 ? "Normal" : clearRate >= 30 ? "Hard" : clearRate > 0 ? "Expert" : "Impossible";
+  const label = clearRate >= 80 ? "Easy" : clearRate >= 55 ? "Normal" : clearRate >= 30 ? "Hard" : clearRate > 0 ? "Expert" : "미클리어";
   return {
     runs,
     wins: wins.length,
@@ -1413,16 +1533,17 @@ function renderPlaytest() {
   const state = playtestState;
   if (!state) return;
   const usedMoves = state.cave.moveLimit - state.movesLeft;
+  const practice = state.goalLimitations.some(Boolean);
   const flowLabels = { "left-first": "왼쪽/위 우선", "right-first": "오른쪽/아래 우선", alternate: "교대", "seeded-random": "시드 랜덤", none: "우회 없음" };
   const result = $("simulationResult");
   result.className = `simulation-result ${state.status === "won" ? "success" : ["lost", "stuck"].includes(state.status) ? "error" : "warning"}`;
   result.innerHTML = `
-    <strong>${state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 종료" : "PLAYTEST 진행 중"}</strong><br>
+    <strong>${practice ? "PLAYTEST 연습 · 클리어 판정 미지원" : state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 종료" : "PLAYTEST 진행 중"}</strong><br>
     Moves <b>${state.movesLeft}</b> / ${state.cave.moveLimit} · 사용 ${usedMoves}회<br>
     ${objectiveProgressHtml(state)}
     Gravity ${state.cave.gravity} · 막힘 우회 ${flowLabels[state.cave.flowRule]}<br>
-    ${escapeHtml(state.message)}
-    <div>※ Block 제거, Terrain 파괴, Gimmick 활성화, Item 수집 목표를 모두 계산합니다.</div>
+    ${escapeHtml(practice && state.status !== "playing" ? "연습을 종료했습니다." : state.message)}
+    ${practice ? issueHtml({ errors: [], warnings: [], unsupported: state.validation.unsupported }) : ""}
   `;
   $("usePlaytestResultButton").hidden = state.status !== "won";
   renderSimulationGrid(state.cave, state.status === "playing");
@@ -1431,7 +1552,7 @@ function renderPlaytest() {
 function resetPlaytest() {
   if (!playtestState) return;
   const cave = activeCave();
-  playtestState = createPlayState(cave, "playtest");
+  playtestState = createPlayState(cave, `playtest-${crypto.randomUUID()}`);
   playtestState.validation = validateCave(cave);
   $("usePlaytestResultButton").hidden = true;
   renderPlaytest();
@@ -1739,11 +1860,12 @@ function ddungPositionGroups(value, chunkSize) {
 }
 
 function ddungObjective(raw, index, unknownTokens) {
-  const type = Number(raw?.type);
+  const rawType = Number(raw?.type);
+  const type = Number.isInteger(rawType) && rawType > 0 ? rawType : 999;
   const mapping = DDUNG_TARGETS[type];
   if (!mapping) {
     unknownTokens?.add(`ddung-target:${type}`);
-    return normalizeObjective({ id: `ddung-target-${index}-${type}`, layer: "gimmick", targetId: "switch", count: raw?.count || 1 });
+    return normalizeObjective({ id: `ddung-target-${index}-${type}`, layer: "gimmick", targetId: `ddung-target-type-${type}`, count: raw?.count || 1 });
   }
   const [layer, targetId] = mapping;
   return normalizeObjective({
@@ -1751,7 +1873,7 @@ function ddungObjective(raw, index, unknownTokens) {
     layer,
     targetId,
     action: OBJECTIVE_ACTIONS[layer].action,
-    countMode: type === 14 ? "auto-map" : "manual",
+    countMode: ddungUsesBoardCount(type) ? "auto-map" : "manual",
     count: raw?.count || 1,
   });
 }
@@ -1786,18 +1908,26 @@ function applyDdungTile(layers, index, character, unknownTokens) {
     "⑵": "ddung-octo", "⑶": "ddung-octo", "⑷": "ddung-octo", "⑸": "ddung-octo", "⑹": "ddung-octo",
   };
   if (gimmickMap[character]) { layers.gimmick[index] = gimmickMap[character]; return; }
-  if ("PX".includes(character)) { layers.terrain[index] = "wall"; return; }
+  if (character === "P") { layers.gimmick[index] = "ddung-iron-box"; return; }
+  if (character === "X") { layers.terrain[index] = "wall"; return; }
   unknownTokens?.add(`ddung-tile:${character}`);
   layers.gimmick[index] = "switch";
 }
 
+function normalizeBlockWeights(weights) {
+  return Object.fromEntries(Object.entries(weights || {})
+    .filter(([id, value]) => assetId(id) && typeof value === "number" && Number.isFinite(value))
+    .map(([id, value]) => [id, Math.min(100, Math.max(0, value))]));
+}
+
+function blockWeight(cave, id) {
+  return cave.blockWeights && Object.hasOwn(cave.blockWeights, id) ? cave.blockWeights[id] : 1;
+}
+
 function chooseBlockColor(cave, colors, random) {
-  const weights = colors.map((color) => {
-    const value = cave.blockWeights?.[color];
-    return value == null ? 1 : Math.max(0, Number(value) || 0);
-  });
+  const weights = colors.map((color) => blockWeight(cave, color));
   const total = weights.reduce((sum, weight) => sum + weight, 0);
-  if (!total) return colors[Math.floor(random() * colors.length)];
+  if (!total) return null;
   let cursor = random() * total;
   for (let index = 0; index < colors.length; index += 1) {
     cursor -= weights[index];
@@ -1844,9 +1974,10 @@ function adaptDdungMapInfo(source, index, format, unknownTokens) {
     .filter((value) => /^\d+$/.test(value))
     .map((value) => DDUNG_COLOR_IDS[Number(value)]).filter(Boolean))];
   const blockWeights = Number(source.objectcreate) !== 0 && /^\d{12}$/.test(String(source.objectpercent || ""))
-    ? Object.fromEntries(usableBlocks.map((color, position) => [color, Number(source.objectpercent.slice(position * 2, position * 2 + 2))]))
+    ? Object.fromEntries(usableBlocks.map((color, position) => [color, Number(String(source.objectpercent).slice(position * 2, position * 2 + 2))]))
     : undefined;
-  const objectives = (Array.isArray(source.targets) ? source.targets : []).slice(0, MAX_OBJECTIVES).map((target, targetIndex) => ddungObjective(target, targetIndex, unknownTokens));
+  const objectives = (Array.isArray(source.targets) ? source.targets : []).slice(0, MAX_OBJECTIVES)
+    .flatMap((target, targetIndex) => Number(target?.type) === 0 ? [] : [ddungObjective(target, targetIndex, unknownTokens)]);
   const gravity = ({ 0: "up", 1: "down", 2: "left", 3: "right" })[Number(source.GravityType)] || "down";
   const cave = normalizeCave({
     id: `ddung-level-${source.level ?? index + 1}`,
@@ -1863,13 +1994,20 @@ function adaptDdungMapInfo(source, index, format, unknownTokens) {
     flowRule: "left-first",
     failureBonus: false,
     note: `${format} · 원본 레벨 ${source.level ?? index + 1} · 특수 타일과 목표를 웹 맵툴 자산으로 변환`,
-    externalSource: { format, sourceId: source.level ?? index + 1, ddungVersion: format.match(/v(\d+)/i)?.[1] || null },
+    externalSource: {
+      format,
+      sourceId: source.level ?? index + 1,
+      ddungVersion: format.match(/v(\d+)/i)?.[1] || null,
+      goalRulesVersion: 2,
+      specialColors: String(source.special || "").split(",").map((value) => value.trim())
+        .filter((value) => /^\d+$/.test(value)).map((value) => DDUNG_COLOR_IDS[Number(value)]).filter(Boolean),
+      boxLayoutParsed: true,
+    },
   }, index);
   const random = seededRandom(`${cave.randomSeed}|import`);
   for (let cellIndex = 0; cellIndex < cave.layers.block.length; cellIndex += 1) {
     if (cave.layers.block[cellIndex] || isBarrier(cave, cellIndex)) continue;
-    const enabled = cave.usableBlocks.filter((color) => cave.blockWeights?.[color] !== 0);
-    const colors = enabled.length ? enabled : cave.usableBlocks;
+    const colors = cave.usableBlocks.filter((color) => blockWeight(cave, color) > 0);
     const candidates = colors.filter((color) => !wouldCreateMatch(cave.layers.block, cellIndex, color, cave));
     cave.layers.block[cellIndex] = chooseBlockColor(cave, candidates.length ? candidates : colors, random);
   }

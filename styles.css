@@ -323,3 +323,9 @@ h2 { font-size: 16px; margin-top: 3px; }
   .map-grid { --cell-size: 36px; }
 }
 
+
+.block-weights { margin-top: 12px; }
+.block-weights summary { cursor: pointer; font-size: 12px; }
+.block-weight-row { display: grid; grid-template-columns: minmax(0, 1fr) 60px 44px; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; }
+.block-weight-row .field { min-width: 0; padding: 5px; }
+.block-weight-row output { text-align: right; color: var(--muted); }
