@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.11";
+const CLIENT_VERSION = "2.7.12";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1678,6 +1678,18 @@ function sortRangeRows(key) {
   rows.append(...ordered);
 }
 
+function csvField(value) {
+  return '"' + String(value ?? "").replace(/"/g, '""') + '"';
+}
+
+function exportRangeCsv() {
+  if ($("rangeCsv").disabled) return;
+  const headers = ["Cave 번호", "이름", "실행 횟수", "성공", "클리어율", "이동 횟수 소진", "가능한 매치 없음", "검증 상태"];
+  const rows = Array.from($("rangeRows").rows, (row) => JSON.parse(row.dataset.csv));
+  const csv = [headers, ...rows].map((row) => row.map(csvField).join(",")).join("\r\n");
+  downloadBlob(new Blob(["\uFEFF", csv, "\r\n"], { type: "text/csv;charset=utf-8" }), "cave-validation.csv");
+}
+
 async function validateCaveRange() {
   const start = $("rangeStart");
   if (start.disabled) return;
@@ -1690,6 +1702,7 @@ async function validateCaveRange() {
 
   const dialog = $("rangeDialog");
   const rows = $("rangeRows");
+  $("rangeCsv").disabled = true;
   rows.replaceChildren();
   sortRangeRows("number");
   start.disabled = true;
@@ -1711,6 +1724,11 @@ async function validateCaveRange() {
       const batch = blocked ? null : summarizeBatch(results);
       const row = rows.insertRow();
       row.dataset.number = cave.number;
+      // Protect spreadsheet users from formulas in imported Cave names.
+      const csvName = /^[\s\uFEFF]*[=+@-]|^[\t\r\n]/.test(cave.name) ? "'" + cave.name : cave.name;
+      const metrics = batch ? [batch.runs, batch.wins, batch.clearRate + "%", batch.lost, batch.stuck] : ["", "", "", "", ""];
+      const resultStatus = batch ? "완료" : validation.errors.length ? "검증 오류" : "판정 미지원";
+      row.dataset.csv = JSON.stringify([cave.number, csvName, ...metrics, resultStatus]);
       if (batch) {
         row.dataset.clear = batch.wins / batch.runs;
         row.dataset.stuck = batch.stuck;
@@ -1735,6 +1753,7 @@ async function validateCaveRange() {
       if (canceled || !dialog.open) return;
     }
     status.textContent = `${caves.length}개 Cave 검증 완료`;
+    $("rangeCsv").disabled = false;
   } catch (error) {
     console.error(error);
     status.textContent = "검증 중 오류가 발생했습니다.";
@@ -1928,7 +1947,10 @@ function stepContentVersion(delta) {
 }
 
 function downloadJson(payload, filename) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), filename);
+}
+
+function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -2517,6 +2539,7 @@ function bindInputs() {
   $("rangeDialog").querySelectorAll("[data-range-sort]").forEach((button) => {
     button.addEventListener("click", () => sortRangeRows(button.dataset.rangeSort));
   });
+  $("rangeCsv").addEventListener("click", exportRangeCsv);
   $("rangeForm").addEventListener("submit", (event) => {
     event.preventDefault();
     validateCaveRange();
