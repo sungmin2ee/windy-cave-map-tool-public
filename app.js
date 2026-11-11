@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.34";
+const CLIENT_VERSION = "2.7.35";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2762,14 +2762,14 @@ function chooseBlockColor(cave, colors, random) {
   return colors[colors.length - 1];
 }
 
-function adaptDdungMapInfo(source, index, format, unknownTokens) {
+function adaptDdungMapInfo(source, index, format, unknownTokens, tileReporter) {
   const size = clampNumber(source.size, 9, 4, 20);
   const layers = emptyLayers(size * size);
   const tiles = Array.from(String(source.tiles || "").padEnd(size * size, "y"));
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       const sourceIndex = (size - y - 1) * size + x;
-      applyDdungTile(layers, y * size + x, tiles[sourceIndex], unknownTokens);
+      applyDdungTile(layers, y * size + x, tiles[sourceIndex], tileReporter(y * size + x, size));
     }
   }
   const applySixDigitPositions = (value, callback) => ddungPositionGroups(value, 6).forEach((group) => {
@@ -2875,8 +2875,8 @@ function externalInitialPieces(source, grid, width, height) {
   };
 }
 
-function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers) {
-  if (/^DDUNG MapInfo/i.test(format)) return adaptDdungMapInfo(level, index, format, unknownTokens);
+function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers, tileReporter) {
+  if (/^DDUNG MapInfo/i.test(format)) return adaptDdungMapInfo(level, index, format, unknownTokens, tileReporter);
   const source = level && typeof level === "object" ? level : {};
   const gridPaths = ["grid.tiles", "grid.cells", "grid", "board", "cells", "tiles", "map.grid", "map.cells", "map.tiles"];
   const grid = gridPaths.map((path) => valueAt(source, [path])).find((value) => flatArray(value).length) || [];
@@ -2903,7 +2903,7 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers)
     });
   });
   if (!tiles.length && !hasLayerTiles) throw new Error("타일 배열을 찾지 못했습니다.");
-  tiles.slice(0, size).forEach((token, cellIndex) => applyCellToken(layers, cellIndex, token, unknownTokens, declaredLayers));
+  tiles.slice(0, size).forEach((token, cellIndex) => applyCellToken(layers, cellIndex, token, tileReporter(cellIndex, width), declaredLayers));
   const target = valueAt(source, ["target", "goal", "objective", "objectives.0"], null);
   const rawUsable = valueAt(source, ["usableBlocks", "availableColors", "colors", "palette"], layers.block.filter(Boolean));
   const usableBlocks = (Array.isArray(rawUsable) ? rawUsable : String(rawUsable).split(","))
@@ -2959,9 +2959,23 @@ function adaptImportedJson(data) {
   for (const [layer, assets] of Object.entries(definitions)) {
     for (const { id } of assets) declaredLayers.set(id, declaredLayers.has(id) ? null : layer);
   }
-  const caves = levels.map((level, index) => adaptExternalLevel(level, index, format, unknownTokens, declaredLayers));
+  const unknownTiles = new Map();
+  const caves = levels.map((level, index) => {
+    const tileReporter = (cellIndex, width) => ({
+      add(value) {
+        const cells = unknownTiles.get(value) || new Map();
+        cells.set(`${index}:${cellIndex}`, {
+          levelIndex: index,
+          row: Math.floor(cellIndex / width) + 1,
+          column: cellIndex % width + 1,
+        });
+        unknownTiles.set(value, cells);
+      },
+    });
+    return adaptExternalLevel(level, index, format, unknownTokens, declaredLayers, tileReporter);
+  });
   const next = normalizeProject({ version: String(data?.version || data?.gameVersion || "IMPORTED"), caves, activeCaveId: caves[0].id, assetDefinitions: data?.assetDefinitions });
-  return { project: next, format, unknownTokens: [...unknownTokens] };
+  return { project: next, format, unknownTokens: [...unknownTokens], unknownTiles };
 }
 
 function previewImport(imported, filename) {
@@ -2985,7 +2999,24 @@ function previewImport(imported, filename) {
   $("importPreviewSizes").textContent = [...sizes].map(([size, count]) => sizes.size === 1 ? size : `${size} (${count}개)`).join(", ");
   $("importPreviewPieces").textContent = pieces.size ? `${pieces.size}종 · ${[...pieces].join(", ")}` : "없음";
   const unknown = imported.unknownTokens;
-  $("importPreviewUnknown").textContent = unknown.length ? `${unknown.length}종 · ${unknown.join(", ")}` : "없음";
+  const warnings = $("importPreviewUnknown");
+  warnings.replaceChildren();
+  for (const [value, cells] of imported.unknownTiles || []) {
+    const group = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = `${value} · 총 ${cells.size}칸`;
+    group.append(summary);
+    const list = document.createElement("ul");
+    for (const { levelIndex, row, column } of cells.values()) {
+      const location = document.createElement("li");
+      location.textContent = `레벨 ${caves[levelIndex].number ?? levelIndex + 1} · ${row}행 ${column}열`;
+      list.append(location);
+    }
+    group.append(list);
+    warnings.append(group);
+  }
+  if (!warnings.childElementCount) warnings.textContent = "없음";
+  $("importPreviewOtherWarnings").textContent = unknown.length ? `읽지 못한 기타 값 · ${unknown.join(", ")}` : "";
   dialog.returnValue = "";
   dialog.addEventListener("close", () => {
     if (dialog.returnValue !== "import") return;
