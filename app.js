@@ -1026,7 +1026,7 @@ function renderGrid() {
     cell.className = "map-cell";
     cell.dataset.index = index;
     cell.setAttribute("role", "button");
-    cell.setAttribute("aria-label", cellDescription(cave, index));
+    cell.setAttribute("aria-label", [cellDescription(cave, index), cell.title].filter(Boolean).join(" · "));
     applyCellVisual(cell, cave, index);
     if (replacement && previewCurrentCave && cave.layers[replacement.layer][index] === replacement.id) cell.classList.add("asset-replace-preview");
     if (locatedSet.has(index)) {
@@ -1796,7 +1796,7 @@ function issueHtml(validation) {
   return errorHtml + warningHtml + unsupportedHtml;
 }
 
-function renderSimulationGrid(cave, interactive = false, remainingTargets = []) {
+function renderSimulationGrid(cave, interactive = false, remainingTargets = [], damage = playtestState?.cave === cave ? playtestState : null) {
   const grid = $("simulationGrid");
   grid.style.gridTemplateColumns = `repeat(${cave.width}, 30px)`;
   grid.innerHTML = "";
@@ -1816,24 +1816,46 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = []) 
       cell.title = targets.map(({ objective }) => objectiveLabel(objective)).join(", ");
       cell.setAttribute("aria-label", `남은 목표 · ${cell.title}`);
     }
-    if (playtestState?.cave === cave) {
+    if (damage && !isExcluded(cave, index)) {
+      const details = [];
+      if (isBarrier(cave, index)) {
+        cell.classList.add("locked-cell");
+        const lock = document.createElement("span");
+        lock.className = "cell-lock";
+        lock.textContent = "🔒";
+        lock.setAttribute("aria-hidden", "true");
+        cell.appendChild(lock);
+        details.push("잠긴 칸");
+      }
       const terrainId = cave.layers.terrain[index];
       const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
-      if (rule && rule.reaction !== "none") {
-        const remaining = Math.max(0, rule.durability - (playtestState.terrainHits[index] || 0));
+      const boxDurability = ddungBoxDurability(cave, index);
+      const durability = boxDurability || (rule && rule.reaction !== "none" ? rule.durability : 0);
+      if (durability) {
+        const hits = boxDurability ? damage.gimmickHits[index] : damage.terrainHits[index];
+        const remaining = Math.max(0, durability - (hits || 0));
         const badge = document.createElement("span");
-        badge.className = `terrain-hp${remaining < rule.durability ? " damaged" : ""}`;
+        badge.className = `terrain-hp${remaining < durability ? " damaged" : ""}`;
         badge.textContent = remaining;
-        badge.title = `${terrainId} 남은 내구도 ${remaining}`;
+        badge.setAttribute("aria-hidden", "true");
         cell.appendChild(badge);
+        const layer = boxDurability ? "gimmick" : "terrain";
+        const assetId = cave.layers[layer][index];
+        details.push(`${getAsset(layer, assetId).name} 내구도 ${remaining}/${durability}`);
+      }
+      if (details.length) {
+        cell.title = [cell.title, ...details].filter(Boolean).join(" · ");
+        cell.setAttribute("aria-label", cell.title);
       }
     }
     if (interactive) {
       cell.disabled ||= !(canActivate || canSwap);
       const piece = cave.playtestPieces[index];
-      if (piece && !canActivate) cell.title = "발동 효과가 연결되지 않은 특수 피스";
+      if (piece && !canActivate && !isBarrier(cave, index)) {
+        cell.title = [cell.title, "발동 효과가 연결되지 않은 특수 피스"].filter(Boolean).join(" · ");
+      }
       if (canActivate) {
-        cell.setAttribute("aria-label", `특수 피스 발동 · ${specialEffectLabel(canActivate)}`);
+        cell.setAttribute("aria-label", [`특수 피스 발동 · ${specialEffectLabel(canActivate)}`, cell.title].filter(Boolean).join(" · "));
       } else if (canSwap) {
         cell.setAttribute("aria-label", cellDescription(cave, index));
         cell.setAttribute("aria-pressed", String(selected));
@@ -2780,7 +2802,7 @@ function startBatchReplay(cave, validation, example) {
 async function showPlaytestFrames(state, frames, stopOnPause) {
   for (const frame of frames) {
     if (playtestState !== state || !$("simulationDialog").open || (stopOnPause && state.paused)) return;
-    renderSimulationGrid(frame.cave);
+    renderSimulationGrid(frame.cave, false, [], frame);
     const grid = $("simulationGrid");
     for (const index of frame.cells) grid.children[index]?.classList.add("playtest-frame-" + frame.kind);
     $("playtestFrameStatus").textContent = frame.label;
@@ -2792,7 +2814,11 @@ async function animatePlaytestTurn(state, action) {
   const frames = [];
   const capture = (label, cells, kind, delay = 180) => {
     const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
-    frames.push({ cave: { ...state.cave, layers, playtestPieces: [...state.cave.playtestPieces] }, label, cells, kind, delay });
+    frames.push({
+      cave: { ...state.cave, layers, playtestPieces: [...state.cave.playtestPieces] },
+      terrainHits: [...state.terrainHits], gimmickHits: [...state.gimmickHits],
+      label, cells, kind, delay,
+    });
   };
   state.animating = true;
   try {
