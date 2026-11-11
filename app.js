@@ -136,8 +136,8 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
   return {
     id: crypto.randomUUID(), name, width, height, gravity: "down", layers,
     usableBlocks: Object.keys(COLORS),
-    objectives: [{ id: crypto.randomUUID(), layer: "block", targetId: "purple", action: "match", countMode: "manual", count: 8 }],
-    targetType: "purple", targetCount: 8,
+    objectives: [],
+    targetType: null, targetCount: 0,
     moveLimit: 20, parMoves: 14, testClearMoves: 0,
     simulationRuns: 30,
     randomSeed: `CAVE-${String(number).padStart(4, "0")}`, randomDensity: 100,
@@ -220,12 +220,11 @@ function normalizeObjective(value, fallback = {}) {
 }
 
 function normalizeObjectives(source) {
-  const incoming = Array.isArray(source.objectives) ? source.objectives : [];
+  if (Array.isArray(source.objectives)) {
+    return source.objectives.slice(0, MAX_OBJECTIVES).map((objective) => normalizeObjective(objective));
+  }
   const legacyTarget = normalizeColor(source.targetType) || "purple";
-  const values = incoming.length
-    ? incoming
-    : [{ layer: "block", targetId: legacyTarget, action: "match", countMode: "manual", count: clampNumber(source.targetCount, 8, 1, 999) }];
-  return values.slice(0, MAX_OBJECTIVES).map((objective) => normalizeObjective(objective));
+  return [normalizeObjective({ layer: "block", targetId: legacyTarget, action: "match", countMode: "manual", count: clampNumber(source.targetCount, 8, 1, 999) })];
 }
 
 function collectPaletteAssets(caves, saved = {}) {
@@ -268,8 +267,8 @@ function normalizeCave(data, index = 0) {
     : Object.keys(COLORS);
   const objectives = normalizeObjectives(source);
   const primaryBlockObjective = objectives.find((objective) => objective.layer === "block") || objectives[0];
-  const targetType = primaryBlockObjective.layer === "block" ? primaryBlockObjective.targetId : "purple";
-  const targetCount = primaryBlockObjective.count;
+  const targetType = primaryBlockObjective?.layer === "block" ? primaryBlockObjective.targetId : null;
+  const targetCount = primaryBlockObjective?.count ?? 0;
   const moveLimit = clampNumber(source.moveLimit, 20, 1, 999);
   const estimatedTargetCount = objectives.reduce((sum, objective) => sum + objective.count, 0);
   const estimatedPar = Math.max(1, Math.ceil(estimatedTargetCount * 0.8 + usableBlocks.length * 0.7));
@@ -369,23 +368,22 @@ function objectiveLabel(objective) {
 
 function syncLegacyTarget(cave) {
   const primary = cave.objectives.find((objective) => objective.layer === "block");
-  if (primary) {
-    cave.targetType = primary.targetId;
-    cave.targetCount = resolvedObjectiveCount(cave, primary);
-  }
+  cave.targetType = primary?.targetId ?? null;
+  cave.targetCount = primary ? resolvedObjectiveCount(cave, primary) : 0;
 }
 
 function addObjective() {
   const cave = activeCave();
   if (cave.objectives.length >= MAX_OBJECTIVES) return toast(`목표는 최대 ${MAX_OBJECTIVES}개까지 설정할 수 있습니다.`);
+  const layer = Object.keys(ASSETS).find((key) => project.paletteAssets[key]?.length);
+  if (!layer) return toast("먼저 팔레트에 오브젝트 종류를 추가하세요.");
   snapshot();
-  cave.objectives.push(normalizeObjective({ layer: "terrain", targetId: "ice", action: "destroy", countMode: "auto-map", count: 1 }));
+  cave.objectives.push(normalizeObjective({ layer, targetId: project.paletteAssets[layer][0], countMode: "auto-map", count: 1 }));
   syncLegacyTarget(cave); renderRules(); persist();
 }
 
 function removeObjective(index) {
   const cave = activeCave();
-  if (cave.objectives.length <= 1) return toast("목표는 하나 이상 필요합니다.");
   snapshot(); cave.objectives.splice(index, 1); syncLegacyTarget(cave); renderRules(); persist();
 }
 
@@ -405,11 +403,13 @@ function renderObjectives() {
   cave.objectives.forEach((objective, index) => {
     const row = document.createElement("div");
     row.className = "objective-row";
-    const targetOptions = ASSETS[objective.layer].map((asset) => `<option value="${asset.id}"${asset.id === objective.targetId ? " selected" : ""}>${escapeHtml(asset.name)}</option>`).join("");
+    const targetOptions = ASSETS[objective.layer]
+      .filter((asset) => asset.id === objective.targetId || project.paletteAssets[objective.layer]?.includes(asset.id))
+      .map((asset) => `<option value="${asset.id}"${asset.id === objective.targetId ? " selected" : ""}>${escapeHtml(asset.name)}</option>`).join("");
     const autoCount = resolvedObjectiveCount(cave, objective);
     row.innerHTML = `
       <div class="objective-row-top">
-        <label><span class="field-label">레이어</span><select class="field objective-layer">${Object.keys(ASSETS).map((layer) => `<option value="${layer}"${layer === objective.layer ? " selected" : ""}>${layer[0].toUpperCase() + layer.slice(1)}</option>`).join("")}</select></label>
+        <label><span class="field-label">레이어</span><select class="field objective-layer">${Object.keys(ASSETS).filter((layer) => layer === objective.layer || project.paletteAssets[layer]?.length).map((layer) => `<option value="${layer}"${layer === objective.layer ? " selected" : ""}>${layer[0].toUpperCase() + layer.slice(1)}</option>`).join("")}</select></label>
         <label><span class="field-label">대상</span><select class="field objective-target">${targetOptions}</select></label>
         <button class="button objective-remove" title="목표 삭제" aria-label="목표 삭제">×</button>
       </div>
@@ -423,7 +423,7 @@ function renderObjectives() {
       </div>`;
     row.querySelector(".objective-layer").addEventListener("change", (event) => {
       const layer = event.target.value;
-      updateObjective(index, { layer, targetId: ASSETS[layer][0].id, action: OBJECTIVE_ACTIONS[layer].action });
+      updateObjective(index, { layer, targetId: project.paletteAssets[layer][0], action: OBJECTIVE_ACTIONS[layer].action });
     });
     row.querySelector(".objective-target").addEventListener("change", (event) => updateObjective(index, { targetId: event.target.value }));
     row.querySelector(".objective-count-mode").addEventListener("change", (event) => updateObjective(index, { countMode: event.target.value }));
@@ -510,8 +510,11 @@ function renderRules() {
 function renderTerrainRuleEditor() {
   const cave = activeCave();
   const terrainSelect = $("terrainRuleType");
-  terrainSelect.innerHTML = ASSETS.terrain.map((asset) => `<option value="${asset.id}">${escapeHtml(asset.name)}</option>`).join("");
-  if (!ASSETS.terrain.some((asset) => asset.id === selectedTerrainRule)) selectedTerrainRule = "ice";
+  const terrainIds = project.paletteAssets.terrain || [];
+  $("terrainRuleSection").hidden = terrainIds.length === 0;
+  if (!terrainIds.length) return;
+  terrainSelect.innerHTML = ASSETS.terrain.filter((asset) => terrainIds.includes(asset.id)).map((asset) => `<option value="${asset.id}">${escapeHtml(asset.name)}</option>`).join("");
+  if (!terrainIds.includes(selectedTerrainRule)) selectedTerrainRule = terrainIds[0];
   const rule = cave.terrainRules[selectedTerrainRule] || DEFAULT_TERRAIN_RULES[selectedTerrainRule];
   terrainSelect.value = selectedTerrainRule;
   $("terrainReaction").value = rule.reaction;
@@ -559,10 +562,9 @@ function renderPalette() {
   if (!paletteIds.includes(selectedAssets[layer])) selectedAssets[layer] = null;
 
   const addAsset = $("addPaletteAsset");
-  const available = ASSETS[layer].filter((asset) => !paletteIds.includes(asset.id));
-  addAsset.replaceChildren(new Option("오브젝트 종류 추가", ""));
-  for (const asset of available) addAsset.add(new Option(asset.name, asset.id));
-  addAsset.disabled = available.length === 0;
+  addAsset.hidden = true;
+  addAsset.replaceChildren();
+  $("showPaletteCatalog").disabled = paletteIds.length === ASSETS[layer].length;
 
   ASSETS[layer].filter((asset) => paletteIds.includes(asset.id)).forEach((asset) => {
     const button = document.createElement("button");
@@ -587,7 +589,10 @@ function renderPalette() {
     : `${activeLayer.toUpperCase()} · ${current?.name || "선택 없음"}`;
   const colors = $("usableColors");
   colors.innerHTML = "";
-  Object.entries(COLORS).forEach(([name, color]) => {
+  const blockIds = project.paletteAssets.block || [];
+  $("usableColorsSection").hidden = blockIds.length === 0;
+  blockIds.forEach((name) => {
+    const color = COLORS[name];
     const button = document.createElement("button");
     button.className = `color-toggle${activeCave().usableBlocks.includes(name) ? " active" : ""}`;
     button.style.background = color;
@@ -1879,6 +1884,23 @@ function bindInputs() {
   window.addEventListener("pointercancel", stopPainting);
   window.addEventListener("blur", stopPainting);
   document.addEventListener("visibilitychange", () => { if (document.hidden) stopPainting(); });
+  $("newProjectButton").addEventListener("click", () => {
+    if (!window.confirm("현재 작업을 비우고 새 프로젝트를 시작할까요?")) return;
+    snapshot();
+    project = normalizeProject(defaultProject());
+    renderAll();
+    persist();
+  });
+  $("showPaletteCatalog").addEventListener("click", () => {
+    const select = $("addPaletteAsset");
+    const ids = project.paletteAssets[activeLayer] || [];
+    select.replaceChildren(new Option("종류 선택", ""));
+    for (const asset of ASSETS[activeLayer]) {
+      if (!ids.includes(asset.id)) select.add(new Option(asset.name, asset.id));
+    }
+    select.hidden = false;
+    select.focus();
+  });
   $("addPaletteAsset").addEventListener("change", (event) => {
     const id = event.target.value;
     if (!getAsset(activeLayer, id)) return;
@@ -1887,6 +1909,7 @@ function bindInputs() {
     selectedAssets[activeLayer] = id;
     activeTool = "brush";
     if (activeLayer === "terrain") selectedTerrainRule = id;
+    if (activeLayer === "block" && !activeCave().usableBlocks.includes(id)) activeCave().usableBlocks.push(id);
     renderAll();
     persist();
   });
