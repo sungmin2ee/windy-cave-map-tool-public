@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.9";
+const CLIENT_VERSION = "2.7.10";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1644,9 +1644,82 @@ function runAutoGame(cave, runIndex) {
   return { status: allObjectivesComplete(state) ? "won" : "lost", moves: cave.moveLimit - state.movesLeft, runIndex, swaps };
 }
 
+function cavesInRange(input) {
+  const match = /^(\d+)(?:\s*[-~–]\s*(\d+))?$/.exec(input.trim());
+  if (!match) return null;
+  const first = parseCaveNumber(match[1]);
+  const last = parseCaveNumber(match[2] ?? match[1]);
+  if (!first || !last || first > last) return null;
+  return project.caves.filter(({ number }) => number >= first && number <= last)
+    .sort((a, b) => a.number - b.number);
+}
+
+async function validateCaveRange() {
+  const start = $("rangeStart");
+  if (start.disabled) return;
+  const status = $("rangeStatus");
+  const caves = cavesInRange($("rangeInput").value);
+  if (!caves?.length) {
+    status.textContent = caves ? "범위에 해당하는 Cave가 없습니다." : "Cave 번호를 1~20 형식으로 입력하세요.";
+    return;
+  }
+
+  const dialog = $("rangeDialog");
+  const rows = $("rangeRows");
+  rows.replaceChildren();
+  start.disabled = true;
+  let canceled = false;
+  dialog.addEventListener("close", () => { canceled = true; }, { once: true });
+  try {
+    for (const [index, cave] of caves.entries()) {
+      status.textContent = `${index + 1} / ${caves.length} · Cave ${cave.number} 검증 중`;
+      const validation = validateCave(cave);
+      const blocked = validation.errors.length || validation.unsupported.length;
+      const results = [];
+      if (!blocked) {
+        for (let run = 0; run < cave.simulationRuns; run += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (canceled || !dialog.open) return;
+          results.push(runAutoGame(cave, run));
+        }
+      }
+      const batch = blocked ? null : summarizeBatch(results);
+      const row = rows.insertRow();
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button ghost";
+      button.textContent = cave.number;
+      button.setAttribute("aria-label", `Cave ${cave.number} 열기`);
+      button.addEventListener("click", () => {
+        dialog.close();
+        $("caveJump").value = String(cave.number);
+        jumpToCave();
+      });
+      row.insertCell().appendChild(button);
+      const values = batch
+        ? [cave.name, `${batch.clearRate}% (${batch.wins}/${batch.runs})`, batch.lost, batch.stuck]
+        : [cave.name, validation.errors.length ? "검증 오류" : "판정 미지원", "—", "—"];
+      for (const value of values) row.insertCell().textContent = value;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (canceled || !dialog.open) return;
+    }
+    status.textContent = `${caves.length}개 Cave 검증 완료`;
+  } catch (error) {
+    console.error(error);
+    status.textContent = "검증 중 오류가 발생했습니다.";
+  } finally {
+    start.disabled = false;
+  }
+}
+
 function runBatchSimulation(cave, runs) {
   const results = [];
   for (let index = 0; index < runs; index += 1) results.push(runAutoGame(cave, index));
+  return summarizeBatch(results);
+}
+
+function summarizeBatch(results) {
+  const runs = results.length;
   const wins = results.filter((result) => result.status === "won");
   const moves = wins.map((result) => result.moves).sort((a, b) => a - b);
   const average = moves.length ? moves.reduce((sum, value) => sum + value, 0) / moves.length : 0;
@@ -2406,6 +2479,14 @@ function bindInputs() {
   $("redoButton").addEventListener("click", redo);
   $("prevCaveButton").addEventListener("click", () => switchCave(-1));
   $("nextCaveButton").addEventListener("click", () => switchCave(1));
+  $("rangeButton").addEventListener("click", () => {
+    $("rangeInput").value ||= String(activeCave().number);
+    $("rangeDialog").showModal();
+  });
+  $("rangeForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    validateCaveRange();
+  });
   $("validateButton").addEventListener("click", () => showSimulation(false));
   $("playButton").addEventListener("click", () => showSimulation(true));
   $("closeSimulationButton").addEventListener("click", () => $("simulationDialog").close());

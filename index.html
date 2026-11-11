@@ -192,6 +192,7 @@
             </div>
             <div class="toolbar-spacer"></div>
             <button class="button validate" id="validateButton">검증</button>
+            <button class="button validate" id="rangeButton">범위 검증</button>
             <button class="button play" id="playButton"><span>▶</span> Playtest</button>
           </div>
 
@@ -304,6 +305,23 @@
 
     <div class="toast" id="toast" role="status"></div>
 
+    <dialog id="rangeDialog" class="simulation-dialog" aria-labelledby="rangeTitle">
+      <div class="dialog-header"><h2 id="rangeTitle">Cave 범위 검증</h2></div>
+      <form id="rangeForm">
+        <label for="rangeInput">Cave 번호 범위</label>
+        <input class="field" id="rangeInput" placeholder="1~20" required />
+        <button class="button validate" id="rangeStart" type="submit">검증 시작</button>
+      </form>
+      <p id="rangeStatus" role="status"></p>
+      <div style="overflow:auto; max-height:50vh">
+        <table style="width:100%; text-align:left">
+          <thead><tr><th scope="col">번호</th><th scope="col">이름</th><th scope="col">클리어율</th><th scope="col">이동 횟수 소진</th><th scope="col">매치 없음</th></tr></thead>
+          <tbody id="rangeRows"></tbody>
+        </table>
+      </div>
+      <form class="dialog-footer" method="dialog"><button class="button ghost">닫기</button></form>
+    </dialog>
+
     <dialog id="simulationDialog" class="simulation-dialog">
       <div class="dialog-header">
         <div>
@@ -322,7 +340,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=27"></script>
+    <script src="./app.js?v=28"></script>
   </body>
 </html>
 
