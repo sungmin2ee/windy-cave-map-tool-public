@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.27";
+const CLIENT_VERSION = "2.7.28";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -972,12 +972,13 @@ function renderGrid() {
     }
     cell.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
+      if (activeTool === "inspect") { inspectCell(index); return; }
       event.preventDefault(); isPainting = true; strokeSnapshotTaken = false;
       editCell(index, activeTool === "fill");
     });
     cell.addEventListener("pointerenter", (event) => {
       if ((event.buttons & 1) === 0) { isPainting = false; strokeSnapshotTaken = false; return; }
-      if (isPainting && activeTool !== "fill" && activeTool !== "shape") editCell(index, false);
+      if (isPainting && activeTool !== "fill" && activeTool !== "shape" && activeTool !== "inspect") editCell(index, false);
     });
     cell.addEventListener("mouseenter", () => showCellStatus(index));
     grid.appendChild(cell);
@@ -1000,7 +1001,16 @@ function applyCellVisual(cell, cave, index) {
     if (!asset) continue;
     const visual = document.createElement("span");
     visual.className = `cell-${layer} ${asset.className || ""}`;
-    if (layer === "block") visual.style.background = blockColor(assetId);
+    if (layer === "block") {
+      visual.style.background = blockColor(assetId);
+      const initial = !playtestState || playtestState.cave !== cave || playtestState.movesLeft === cave.moveLimit;
+      const piece = initial ? ddungInitialPiece(ddungCellSource(cave, index)?.tile) : null;
+      if (piece?.type > 0 && piece.color === assetId) {
+        visual.classList.add("ddung-initial-special");
+        visual.textContent = "✦";
+        visual.title = `DDUNG 초기 피스 타입 ${piece.type}`;
+      }
+    }
     if (layer === "gimmick" || layer === "item" || (layer === "terrain" && !asset.className)) visual.textContent = asset.visual;
     cell.appendChild(visual);
   }
@@ -2806,6 +2816,7 @@ function adaptDdungMapInfo(source, index, format, unknownTokens) {
       specialColors: String(source.special || "").split(",").map((value) => value.trim())
         .filter((value) => /^\d+$/.test(value)).map((value) => DDUNG_COLOR_IDS[Number(value)]).filter(Boolean),
       boxLayoutParsed: true,
+      rawMap: deepCopy(source),
     },
   }, index);
   const random = seededRandom(`${cave.randomSeed}|import`);
@@ -3066,6 +3077,55 @@ function updateRule() {
   cave.failureBonus = $("failureBonus").checked;
   syncLegacyTarget(cave);
   renderDifficultySummary(cave); persist();
+}
+
+function ddungCellSource(cave, index) {
+  const raw = cave.externalSource?.rawMap;
+  if (!raw) return null;
+  const size = clampNumber(raw.size, 9, 4, 20);
+  const x = index % cave.width;
+  const y = size - 1 - Math.floor(index / cave.width);
+  if (x >= size || y < 0) return null;
+  const offset = y * size + x;
+  return { raw, x, y, tile: String(raw.tiles || "")[offset], gravity: String(raw.gravitys || "")[offset] };
+}
+
+function ddungInitialPiece(tile) {
+  if (!tile) return null;
+  for (const [color, tokens] of Object.entries(DDUNG_BLOCK_CHARACTERS)) {
+    const variant = tokens.indexOf(tile);
+    if (variant >= 0) return { color, type: variant === 5 ? 8 : variant === 4 ? 6 : variant };
+  }
+  return null;
+}
+
+function inspectCell(index) {
+  const cave = activeCave();
+  const fields = [cellDescription(cave, index)];
+  for (const [layer, values] of Object.entries(cave.layers)) {
+    if (values[index]) fields.push(`${layer} · ${getAsset(layer, values[index])?.name || values[index]} (${values[index]})`);
+  }
+  const source = ddungCellSource(cave, index);
+  if (source) {
+    fields.push(`DDUNG 원본 타일 · ${source.tile ?? "없음"}`);
+    if (source.gravity !== undefined) fields.push(`원본 칸 중력 · ${source.gravity}`);
+    const piece = ddungInitialPiece(source.tile);
+    if (piece) fields.push(`원본 초기 피스 · 색상 ${piece.color} · 타입 ${piece.type}`);
+    for (const field of ["starts", "goals", "roads"]) {
+      for (const token of ddungPositionGroups(source.raw[field], 6)) {
+        if (Number(token.slice(2, 4)) === source.x && Number(token.slice(4, 6)) === source.y) fields.push(`${field} · ${token}`);
+      }
+    }
+    for (const field of ["warps", "gears", "watercolors"]) {
+      for (const token of ddungPositionGroups(source.raw[field], 4)) {
+        const pairs = field === "warps" ? [token.slice(0, 2), token.slice(2)] :
+          [field === "gears" ? token.slice(2) : token.slice(0, 2)];
+        if (pairs.some((pair) => Number(pair[0]) === source.x && Number(pair[1]) === source.y)) fields.push(`${field} · ${token}`);
+      }
+    }
+  }
+  $("cellInspectorText").textContent = fields.join("\n");
+  $("cellInspector").showModal();
 }
 
 function showCellStatus(index) {

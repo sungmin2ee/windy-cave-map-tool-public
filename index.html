@@ -38,6 +38,8 @@
     button.patch-board-cell { cursor: pointer; color: #15111d; background: #ffd166; }
     button.patch-board-cell[aria-pressed="true"] { outline: 2px solid white; outline-offset: -3px; }
     #patchCellDetail { white-space: pre-line; overflow-wrap: anywhere; }
+      #cellInspectorText { padding: 0 16px; white-space: pre-line; overflow-wrap: anywhere; }
+    .ddung-initial-special { display: grid; place-items: center; color: white; font-weight: bold; }
   </style>
   </head>
   <body>
@@ -211,6 +213,7 @@
               <button class="tool-button active" data-tool="brush"><span>✎</span>브러시</button>
               <button class="tool-button" data-tool="fill"><span>◩</span>채우기</button>
               <button class="tool-button" data-tool="eraser"><span>◇</span>지우개</button>
+              <button type="button" class="tool-button" data-tool="inspect">칸 속성</button>
               <button class="tool-button" data-tool="shape" title="칸을 클릭해 제외하거나 빈 칸으로 복원합니다. 제외하면 해당 칸의 오브젝트가 지워집니다."><span>▧</span>칸 비활성화</button>
             </div>
             <div class="toolbar-divider"></div>
@@ -352,6 +355,12 @@
 
     <div class="toast" id="toast" role="status"></div>
 
+    <dialog id="cellInspector" class="simulation-dialog" aria-labelledby="cellInspectorTitle">
+      <div class="dialog-header"><h2 id="cellInspectorTitle">칸 속성</h2></div>
+      <p id="cellInspectorText"></p>
+      <form method="dialog" class="dialog-footer"><button class="button ghost">닫기</button></form>
+    </dialog>
+
     <dialog id="assetUsageDialog" class="simulation-dialog" aria-labelledby="assetUsageTitle">
       <div class="dialog-header"><h2 id="assetUsageTitle">오브젝트 사용처</h2></div>
       <p id="assetUsageMessage"></p>
@@ -433,7 +442,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=45"></script>
+    <script src="./app.js?v=46"></script>
   </body>
 </html>
 
