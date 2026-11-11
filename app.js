@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.13";
+const CLIENT_VERSION = "2.7.14";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -704,6 +704,7 @@ function renderPalette() {
   $("selectedAssetSummary").textContent = activeTool === "eraser"
     ? `${activeLayer.toUpperCase()} · 지우기 (이 레이어만)`
     : `${activeLayer.toUpperCase()} · ${current?.name || "선택 없음"}`;
+  $("deleteSelectedAsset").hidden = !current || activeTool === "eraser";
   const colors = $("usableColors");
   colors.innerHTML = "";
   const blockIds = project.paletteAssets.block || [];
@@ -730,6 +731,54 @@ function renderPalette() {
     colors.appendChild(button);
   });
   renderBlockWeights();
+}
+
+function findAssetUsage(caves, layer, id) {
+  return caves.flatMap((cave) => {
+    const reasons = [];
+    const placed = cave.layers[layer].filter((value) => value === id).length;
+    if (placed) reasons.push(`${placed}칸 배치`);
+    if (cave.objectives.some((goal) => goal.layer === layer && matchesObjectiveAsset(goal, id))) reasons.push("클리어 목표");
+    if (layer === "block" && cave.usableBlocks.includes(id)) reasons.push("사용 색상");
+    return reasons.length ? [{ cave, reasons }] : [];
+  }).sort((a, b) => a.cave.number - b.cave.number);
+}
+
+function deleteSelectedAsset() {
+  const layer = activeLayer;
+  const id = selectedAssets[layer];
+  if (!project.paletteAssets[layer]?.includes(id)) return;
+  const name = getAsset(layer, id).name;
+  const usage = findAssetUsage(project.caves, layer, id);
+  if (usage.length) {
+    const dialog = $("assetUsageDialog");
+    $("assetUsageMessage").textContent = `‘${name}’을(를) 사용하는 Cave가 있습니다. 배치나 설정에서 제거한 뒤 다시 시도하세요.`;
+    const list = $("assetUsageList");
+    list.replaceChildren();
+    for (const { cave, reasons } of usage) {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button ghost";
+      button.textContent = `Cave ${cave.number} · ${cave.name} · ${reasons.join(", ")}`;
+      button.addEventListener("click", () => {
+        dialog.close();
+        $("caveJump").value = String(cave.number);
+        jumpToCave();
+      });
+      item.appendChild(button);
+      list.appendChild(item);
+    }
+    dialog.showModal();
+    return;
+  }
+  if (!window.confirm(`‘${name}’을(를) 팔레트에서 삭제할까요?`)) return;
+  snapshot();
+  project.paletteAssets[layer] = project.paletteAssets[layer].filter((value) => value !== id);
+  project.assetDefinitions[layer] = (project.assetDefinitions[layer] || []).filter((asset) => asset.id !== id);
+  selectedAssets[layer] = null;
+  renderAll();
+  persist();
 }
 
 function renderBlockWeights() {
@@ -1682,10 +1731,31 @@ function csvField(value) {
   return '"' + String(value ?? "").replace(/"/g, '""') + '"';
 }
 
+function matchesRangeFilter(row, filter) {
+  switch (filter) {
+    case "blocked": return row.dataset.clear === undefined;
+    case "warnings": return Number(row.dataset.warnings) > 0;
+    case "low": return row.dataset.clear !== undefined && Number(row.dataset.clear) < 0.3;
+    default: return true;
+  }
+}
+
+function applyRangeFilter() {
+  const filter = $("rangeFilter").value;
+  const rows = $("rangeRows").rows;
+  let visible = 0;
+  for (const row of rows) {
+    row.hidden = !matchesRangeFilter(row, filter);
+    if (!row.hidden) visible++;
+  }
+  $("rangeFilterCount").textContent = rows.length ? `${visible} / ${rows.length}개 표시` : "";
+  $("rangeCsv").disabled = $("rangeStart").disabled || visible === 0;
+}
+
 function exportRangeCsv() {
   if ($("rangeCsv").disabled) return;
   const headers = ["Cave 번호", "이름", "실행 횟수", "성공", "클리어율", "이동 횟수 소진", "가능한 매치 없음", "검증 상태"];
-  const rows = Array.from($("rangeRows").rows, (row) => JSON.parse(row.dataset.csv));
+  const rows = Array.from($("rangeRows").rows).filter((row) => !row.hidden).map((row) => JSON.parse(row.dataset.csv));
   const csv = [headers, ...rows].map((row) => row.map(csvField).join(",")).join("\r\n");
   downloadBlob(new Blob(["\uFEFF", csv, "\r\n"], { type: "text/csv;charset=utf-8" }), "cave-validation.csv");
 }
@@ -1706,6 +1776,7 @@ async function validateCaveRange() {
   rows.replaceChildren();
   sortRangeRows("number");
   start.disabled = true;
+  applyRangeFilter();
   let canceled = false;
   dialog.addEventListener("close", () => { canceled = true; }, { once: true });
   try {
@@ -1724,6 +1795,7 @@ async function validateCaveRange() {
       const batch = blocked ? null : summarizeBatch(results);
       const row = rows.insertRow();
       row.dataset.number = cave.number;
+      row.dataset.warnings = validation.warnings.length;
       // Protect spreadsheet users from formulas in imported Cave names.
       const csvName = /^[\s\uFEFF]*[=+@-]|^[\t\r\n]/.test(cave.name) ? "'" + cave.name : cave.name;
       const metrics = batch ? [batch.runs, batch.wins, batch.clearRate + "%", batch.lost, batch.stuck] : ["", "", "", "", ""];
@@ -1762,16 +1834,17 @@ async function validateCaveRange() {
       row.insertCell().textContent = batch?.lost ?? "—";
       row.insertCell().textContent = batch?.stuck ?? "—";
       if (rows.dataset.sort !== "number") sortRangeRows(rows.dataset.sort);
+      applyRangeFilter();
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (canceled || !dialog.open) return;
     }
     status.textContent = `${caves.length}개 Cave 검증 완료`;
-    $("rangeCsv").disabled = false;
   } catch (error) {
     console.error(error);
     status.textContent = "검증 중 오류가 발생했습니다.";
   } finally {
     start.disabled = false;
+    if (status.textContent.endsWith("검증 완료")) applyRangeFilter();
   }
 }
 
@@ -2500,10 +2573,12 @@ function bindInputs() {
     renderAll();
     persist();
   });
+  $("deleteSelectedAsset").addEventListener("click", deleteSelectedAsset);
   $("showAssetDefinition").addEventListener("click", () => {
     $("assetDefinitionForm").reset();
     $("assetDefinitionForm").hidden = false;
-    $("assetDefinitionName").focus();
+    $("assetDefinitionForm").scrollIntoView({ block: "nearest" });
+    $("assetDefinitionName").focus({ preventScroll: true });
   });
   $("assetDefinitionForm").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -2552,6 +2627,7 @@ function bindInputs() {
   $("rangeDialog").querySelectorAll("[data-range-sort]").forEach((button) => {
     button.addEventListener("click", () => sortRangeRows(button.dataset.rangeSort));
   });
+  $("rangeFilter").addEventListener("change", applyRangeFilter);
   $("rangeCsv").addEventListener("click", exportRangeCsv);
   $("rangeForm").addEventListener("submit", (event) => {
     event.preventDefault();

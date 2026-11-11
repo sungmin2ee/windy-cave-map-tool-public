@@ -11,6 +11,17 @@
     .map-cell.excluded-cell { background: transparent; border: 1px dashed #505564; box-shadow: none; opacity: .48; }
     #simulationGrid .excluded-cell { visibility: hidden; }
     #simulationGrid .remaining-target { outline: 2px solid #ffd166; outline-offset: -3px; z-index: 1; }
+      .editor-toolbar, .tool-group { flex-wrap: wrap; }
+    .editor-area { grid-template-rows: auto minmax(0, 1fr) 104px; }
+    .left-panel, .right-panel { scrollbar-gutter: stable; scroll-padding-block: 12px; }
+    @media (max-width: 1050px), (max-height: 540px) {
+      .app-shell { height: auto; min-height: 100dvh; }
+      .topbar { height: auto; flex: none; flex-wrap: wrap; gap: 10px; padding-block: 10px; }
+      .top-actions { margin-left: 0; flex-wrap: wrap; }
+      .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
+      .editor-area { grid-template-rows: auto minmax(280px, 55vh) 104px; }
+      .left-panel, .right-panel { overflow: visible; }
+    }
   </style>
   </head>
   <body>
@@ -248,6 +259,7 @@
             <div class="selected-asset" id="selectedAssetSummary"></div>
             <div class="asset-grid" id="assetGrid"></div>
             <button type="button" class="button ghost" id="showAssetDefinition">오브젝트 만들기</button>
+            <button type="button" class="button ghost" id="deleteSelectedAsset" hidden>선택 오브젝트 삭제</button>
             <form id="assetDefinitionForm" hidden>
               <label class="field-label" for="assetDefinitionName">오브젝트 이름</label>
               <input class="field" id="assetDefinitionName" required maxlength="80" />
@@ -305,6 +317,13 @@
 
     <div class="toast" id="toast" role="status"></div>
 
+    <dialog id="assetUsageDialog" class="simulation-dialog" aria-labelledby="assetUsageTitle">
+      <div class="dialog-header"><h2 id="assetUsageTitle">사용 중인 오브젝트</h2></div>
+      <p id="assetUsageMessage"></p>
+      <ul id="assetUsageList" style="max-height:50vh; overflow:auto"></ul>
+      <form class="dialog-footer" method="dialog"><button class="button ghost">닫기</button></form>
+    </dialog>
+
     <dialog id="rangeDialog" class="simulation-dialog" aria-labelledby="rangeTitle">
       <div class="dialog-header"><h2 id="rangeTitle">Cave 범위 검증</h2></div>
       <form id="rangeForm">
@@ -313,6 +332,14 @@
         <button class="button validate" id="rangeStart" type="submit">검증 시작</button>
       </form>
       <p id="rangeStatus" role="status"></p>
+      <label for="rangeFilter">결과 필터</label>
+      <select class="field" id="rangeFilter">
+        <option value="all">전체</option>
+        <option value="blocked">오류·미지원만</option>
+        <option value="warnings">경고만</option>
+        <option value="low">클리어율 30% 미만</option>
+      </select>
+      <span id="rangeFilterCount" role="status"></span>
       <button class="button ghost" id="rangeCsv" type="button" disabled>CSV 내보내기</button>
       <div style="overflow:auto; max-height:50vh">
         <table style="width:100%; text-align:left">
@@ -341,7 +368,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=31"></script>
+    <script src="./app.js?v=32"></script>
   </body>
 </html>
 
