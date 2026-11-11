@@ -1923,9 +1923,11 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
   if (!dialogAlreadyOpen) $("simulationDialog").showModal();
 }
 
-function findMatches(cave, runs) {
+function findMatches(cave, runs, protectedCells) {
   const matches = new Set();
-  const blocks = cave.layers.block;
+  const blocks = protectedCells?.size
+    ? cave.layers.block.map((color, index) => protectedCells.has(index) ? null : color)
+    : cave.layers.block;
   for (let y = 0; y < cave.height; y += 1) {
     let start = 0;
     for (let x = 1; x <= cave.width; x += 1) {
@@ -2209,8 +2211,10 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
   let terrainDamaged = 0;
   let terrainBroken = 0;
   let flowMoves = 0;
+  const newPieces = new Set();
+  let protectedCells = new Set();
   while (matches.size && cascade < 20) {
-    const expanded = expandSpecialHits(state, matches);
+    const expanded = expandSpecialHits(state, matches, protectedCells);
     const created = createdSpecials(state.cave, runs, preferred, matches);
     const triggered = [...expanded.hits].some((index) => specialEffect(state.cave, state.cave.playtestPieces[index]));
     matches = expanded.hits;
@@ -2250,6 +2254,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
       state.cave.playtestPieces[index] = created.get(index) ?? null;
       if (!created.has(index)) state.cave.layers.block[index] = null;
     });
+    for (const piece of created.values()) newPieces.add(piece);
     captureFrame?.(created.size ? "특수 피스 생성" : "블록 제거", created.size ? [...created.keys()] : [...matches], "match");
     flowMoves += applyGravity(state.cave, state);
     refillBlocks(state);
@@ -2257,7 +2262,13 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
     cascade += 1;
     runs = [];
     preferred = [];
-    matches = findMatches(state.cave, runs);
+    protectedCells = new Set();
+    if (newPieces.size) {
+      state.cave.playtestPieces.forEach((piece, index) => {
+        if (newPieces.has(piece)) protectedCells.add(index);
+      });
+    }
+    matches = findMatches(state.cave, runs, protectedCells);
   }
   return { cascade, removed, terrainDamaged, terrainBroken, flowMoves, capped: matches.size > 0 };
 }
@@ -2418,7 +2429,7 @@ function findRemainingTerrainTarget(state, origin, selected) {
   return nearest;
 }
 
-function expandSpecialHits(state, matches) {
+function expandSpecialHits(state, matches, protectedCells = new Set()) {
   const { cave } = state;
   const hits = new Set(matches);
   const targetedTerrain = new Set();
@@ -2442,7 +2453,7 @@ function expandSpecialHits(state, matches) {
           const targetY = y + dy;
           if (targetX < 0 || targetX >= cave.width || targetY < 0 || targetY >= cave.height) continue;
           const other = targetY * cave.width + targetX;
-          if (!isExcluded(cave, other)) hits.add(other);
+          if (!isExcluded(cave, other) && !protectedCells.has(other)) hits.add(other);
         }
         continue;
       }
@@ -2452,7 +2463,7 @@ function expandSpecialHits(state, matches) {
         const affected = (op === "row" && dy === 0) || (op === "column" && dx === 0) ||
           (op === "cross" && (dx === 0 || dy === 0)) || (op === "area" && dx <= radius && dy <= radius) ||
           (op === "color" && color && cave.layers.block[other] === color);
-        if (affected && !isExcluded(cave, other)) hits.add(other);
+        if (affected && !isExcluded(cave, other) && !protectedCells.has(other)) hits.add(other);
       }
     }
   }
