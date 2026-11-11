@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.24";
+const CLIENT_VERSION = "2.7.25";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -2384,12 +2384,14 @@ async function validatePatchCaves(dialog, entries) {
 }
 
 let patchBaseData = null;
+let lastPatchCaveId = null;
 
 async function exportPatch(file) {
   try {
     const candidate = file ? JSON.parse(await file.text()) : patchBaseData;
     if (!candidate) return;
     const { payload, baseCaves, base } = buildPatch(candidate);
+    if (file) lastPatchCaveId = null;
     patchBaseData = candidate;
     $("reopenPatchPreview").hidden = false;
     const dialog = $("patchPreview");
@@ -2397,6 +2399,7 @@ async function exportPatch(file) {
     rows.replaceChildren();
     $("patchBoardPanel").hidden = true;
     const entries = [];
+    let restoreDetails = null;
     const counts = { "추가": 0, "수정": 0, "삭제": 0 };
     const append = (status, cave, details, previous) => {
       counts[status]++;
@@ -2409,10 +2412,13 @@ async function exportPatch(file) {
         button.type = "button";
         button.className = "button ghost";
         button.textContent = cave.name;
-        button.addEventListener("click", () => {
+        const openDetails = () => {
+          lastPatchCaveId = cave.id;
           renderPatchBoard(previous, cave);
           $("patchBoardPanel").scrollIntoView({ block: "nearest" });
-        });
+        };
+        button.addEventListener("click", openDetails);
+        if (lastPatchCaveId === cave.id) restoreDetails = openDetails;
         name.appendChild(button);
       } else name.textContent = cave.name;
       row.insertCell().textContent = details;
@@ -2436,6 +2442,7 @@ async function exportPatch(file) {
       toast("패치 JSON을 내보냈습니다.");
     };
     dialog.showModal();
+    restoreDetails?.();
   } catch (error) {
     toast(error.message || "패치 JSON을 만들 수 없습니다.");
   }
