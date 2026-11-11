@@ -2094,8 +2094,7 @@ function gravityLines(cave) {
 function ddungBoxDurability(cave, index) {
   if (!isDdungSource(cave.externalSource)) return 0;
   const id = cave.layers.gimmick[index];
-  if (id === "ddung-iron-box") return 6;
-  return id === "ddung-box" ? 3 : 0;
+  return id === "ddung-iron-box" || id === "ddung-box" ? 3 : 0;
 }
 
 function isSwapBlocked(cave, index) {
@@ -2301,7 +2300,9 @@ function* gimmickHitResults(state, matches, removedBlocks) {
     if (isDdungSource(cave.externalSource) && !durability) continue;
     const nearbyHits = durability ? removedBlocks : matches;
     if (matches.has(index) || neighborsOf(cave, index).some((neighbor) => nearbyHits.has(neighbor))) {
-      yield { index, id, durability, broken: !durability || state.gimmickHits[index] + 1 >= durability };
+      const exhausted = durability > 0 && state.gimmickHits[index] + 1 >= durability;
+      const replacement = exhausted && id === "ddung-iron-box" ? "ddung-box" : null;
+      yield { index, id, durability, replacement, broken: !durability || (exhausted && !replacement) };
     }
   }
 }
@@ -2331,11 +2332,19 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
     terrainResult.brokenDetails.forEach(({ terrainId }) => advanceObjectives(state, "terrain", terrainId));
-    for (const { index, id, durability, broken } of gimmickHitResults(state, matches, removedBlocks)) {
+    const convertedBoxes = [];
+    for (const { index, id, durability, replacement, broken } of gimmickHitResults(state, matches, removedBlocks)) {
       if (durability) {
         state.gimmickHits[index] += 1;
+        if (replacement) {
+          state.cave.layers.gimmick[index] = replacement;
+          state.gimmickHits[index] = 0;
+          convertedBoxes.push(index);
+          continue;
+        }
         if (!broken) continue;
         state.cave.layers.gimmick[index] = null;
+        state.gimmickHits[index] = 0;
       } else {
         state.activatedGimmicks.add(index);
       }
@@ -2355,6 +2364,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
       state.cave.playtestPieces[index] = created.get(index) ?? null;
       if (!created.has(index)) state.cave.layers.block[index] = null;
     });
+    if (convertedBoxes.length) captureFrame?.("철 상자 → 일반 상자", convertedBoxes, "match");
     for (const piece of created.values()) newPieces.add(piece);
     captureFrame?.(created.size ? "특수 피스 생성" : "블록 제거", created.size ? [...created.keys()] : [...matches], "match");
     flowMoves += applyGravity(state.cave, state);
