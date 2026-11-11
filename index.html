@@ -59,6 +59,11 @@
               </div>
               <button class="icon-button" id="newCaveButton" title="새 Cave">＋</button>
             </div>
+            <form id="caveJumpForm" class="cave-search" style="display:flex; gap:6px">
+              <input class="field" id="caveJump" style="flex:1; min-width:0" inputmode="numeric" aria-label="이동할 Cave 번호" placeholder="Cave 번호로 이동" autocomplete="off" />
+              <button class="button ghost" type="submit">이동</button>
+            </form>
+            <div class="muted" id="caveJumpStatus" role="status"></div>
             <label class="cave-search" for="caveSearch">
               <span class="visually-hidden">레벨 검색</span>
               <input class="field" id="caveSearch" type="search" placeholder="레벨 번호 또는 이름 검색" autocomplete="off" />
@@ -317,7 +322,7 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=23"></script>
+    <script src="./app.js?v=24"></script>
   </body>
 </html>
 

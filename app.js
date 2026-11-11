@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.5";
+const CLIENT_VERSION = "2.7.6";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -972,6 +972,26 @@ function deleteCave() {
   snapshot();
   const index = project.caves.findIndex((c) => c.id === project.activeCaveId);
   project.caves.splice(index, 1); project.activeCaveId = project.caves[Math.max(0, index - 1)].id; renderAll(); persist();
+}
+
+function jumpToCave() {
+  const number = parseCaveNumber($("caveJump").value);
+  const cave = project.caves.find((entry) => entry.number === number);
+  if (!cave) {
+    $("caveJumpStatus").textContent = number === null ? "유효한 Cave 번호를 입력하세요." : `Cave ${number}번이 없습니다.`;
+    return;
+  }
+  if (project.activeCaveId !== cave.id) {
+    project.activeCaveId = cave.id;
+    undoStack = [];
+    redoStack = [];
+  }
+  caveSearchQuery = "";
+  $("caveSearch").value = "";
+  renderAll();
+  $("caveList").querySelector(".active")?.scrollIntoView({ block: "nearest" });
+  $("caveJumpStatus").textContent = `Cave ${number}번으로 이동했습니다.`;
+  persist();
 }
 
 function switchCave(delta) {
@@ -2305,6 +2325,11 @@ function bindInputs() {
   $("exportButton").addEventListener("click", exportProject);
   $("importButton").addEventListener("click", () => $("importFile").click());
   $("importFile").addEventListener("change", (event) => importProject(event.target.files[0]));
+  $("caveJumpForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    jumpToCave();
+  });
+  $("caveJump").addEventListener("input", () => { $("caveJumpStatus").textContent = ""; });
   $("caveSearch").addEventListener("input", (event) => { caveSearchQuery = event.target.value; renderCaveList(); });
   $("versionInput").addEventListener("change", (event) => setContentVersion(event.target.value));
   $("versionDown").addEventListener("click", () => stepContentVersion(-1));
