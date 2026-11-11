@@ -2503,10 +2503,42 @@ function buildGridTilesExport(cave) {
   return source;
 }
 
+function buildDdungLevelExport(cave) {
+  const source = deepCopy(cave.externalSource.rawMap);
+  const baseline = adaptDdungMapInfo(source, 0, cave.externalSource.format, new Set(), () => new Set());
+  const fields = ["width", "height", "layers", "excludedCells", "objectives", "usableBlocks", "blockWeights", "gravity", "initialPieceTypes"];
+  if (fields.some((key) => JSON.stringify(cave[key]) !== JSON.stringify(baseline[key]))) {
+    throw new Error("이 레벨의 보드나 목표 편집은 DDUNG 형식으로 변환할 수 없습니다. 프로젝트 내보내기로 저장하세요.");
+  }
+  const settings = cave.levelSettings;
+  const before = baseline.levelSettings;
+  if (cave.moveLimit !== baseline.moveLimit) source.count = cave.moveLimit;
+  if (settings.difficulty !== before.difficulty) source.levelclass = settings.difficulty;
+  if (settings.spawnMode !== before.spawnMode) {
+    if (settings.spawnMode !== 0 && !/^\d{12}$/.test(String(source.objectpercent || ""))) {
+      throw new Error("DDUNG 확률방식에는 원본 색별 확률 데이터가 필요합니다.");
+    }
+    source.objectcreate = settings.spawnMode;
+  }
+  if (JSON.stringify(settings.starScores) !== JSON.stringify(before.starScores)) {
+    if (settings.starScores.some((score) => !Number.isInteger(score) || score < 0 || score > 999999)) {
+      throw new Error("DDUNG 별 점수는 세 기준 모두 0~999999 사이로 입력하세요.");
+    }
+    source.starscores = settings.starScores.map((score, index) =>
+      String(index + 1).padStart(2, "0") + String(score).padStart(6, "0")
+    ).join("");
+  }
+  return { version: cave.externalSource.ddungVersion ?? project.version, mapinfos: [source] };
+}
+
 function exportGridTilesProfile() {
   const cave = activeCave();
-  if (!cave.externalSource?.gridTilesTemplate) return toast("이 레벨은 grid.tiles 형식에서 가져오지 않았습니다.");
   try {
+    if (isDdungSource(cave.externalSource) && cave.externalSource.rawMap) {
+      downloadJson(buildDdungLevelExport(cave), "DDUNG-level-" + cave.externalSource.sourceId + ".json");
+      return;
+    }
+    if (!cave.externalSource?.gridTilesTemplate) return toast("이 레벨의 원본 형식 내보내기는 지원하지 않습니다. 프로젝트 내보내기로 저장하세요.");
     const source = buildGridTilesExport(cave);
     downloadJson(source, "grid-tiles-" + (cave.number ?? 1) + ".json");
   } catch (error) {
