@@ -78,8 +78,8 @@ const DEFAULT_TERRAIN_RULES = {
   "ddung-stone": { blocksFlow: true, reaction: "adjacent", durability: 2 },
   "ddung-water": { blocksFlow: false, reaction: "under", durability: 1 },
   "ddung-ice": { locksBlock: true, blocksFlow: false, reaction: "adjacent", durability: 1 },
-  "ddung-heather-small": { blocksFlow: false, reaction: "adjacent", durability: 1 },
-  "ddung-heather-large": { blocksFlow: false, reaction: "adjacent", durability: 2 },
+  "ddung-heather-small": { locksBlock: true, blocksFlow: false, reaction: "adjacent-only", durability: 1 },
+  "ddung-heather-large": { locksBlock: true, blocksFlow: false, reaction: "adjacent-only", durability: 2 },
   "ddung-jelly": { blocksFlow: false, reaction: "adjacent", durability: 1 },
 };
 
@@ -382,7 +382,7 @@ function normalizeCave(data, index = 0) {
   terrainIds.forEach((terrainId) => {
     const fallback = getDefaultTerrainRule(terrainId);
     const rule = terrainId === "ddung-water" && oldWaterRule ? fallback : source.terrainRules?.[terrainId] || {};
-    const reaction = ["none", "under", "adjacent"].includes(rule.reaction) ? rule.reaction : fallback.reaction;
+    const reaction = ["none", "under", "adjacent", "adjacent-only"].includes(rule.reaction) ? rule.reaction : fallback.reaction;
     terrainRules[terrainId] = {
       blocksFlow: rule.blocksFlow == null ? fallback.blocksFlow : Boolean(rule.blocksFlow),
       locksBlock: rule.locksBlock == null ? Boolean(fallback.locksBlock) : Boolean(rule.locksBlock),
@@ -519,7 +519,7 @@ function ddungGoalLimitation(cave, objective) {
   if (type === 36) return "여러 칸으로 구성된 젤리 그룹 제거";
   if (type === 9) return "더스트 블록의 이동과 파괴";
   if (type === 7) return cave.externalSource.boxLayoutParsed ? null : "철 상자 배치를 확인하려면 원본 JSON을 다시 가져오세요.";
-  if ([8, 10, 13, 14, 24].includes(type)) return null;
+  if ([8, 10, 13, 14, 24, 34, 35].includes(type)) return null;
   return "원본 전용 오브젝트 동작";
 }
 
@@ -2201,7 +2201,7 @@ function refillBlocks(state) {
   }
 }
 
-function damageTerrainFromMatches(state, matches, forcedTerrain = new Set()) {
+function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), removedBlocks = new Set()) {
   const cave = state.cave;
   let damaged = 0;
   let broken = 0;
@@ -2212,7 +2212,10 @@ function damageTerrainFromMatches(state, matches, forcedTerrain = new Set()) {
     const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
     const forced = forcedTerrain.has(index);
     if (!forced && (!rule || rule.reaction === "none")) continue;
-    let affected = forced || matches.has(index);
+    let affected = forced || (rule.reaction !== "adjacent-only" && matches.has(index));
+    if (!affected && rule.reaction === "adjacent-only") {
+      affected = neighborsOf(cave, index).some((neighbor) => removedBlocks.has(neighbor));
+    }
     if (!affected && rule.reaction === "adjacent") {
       affected = neighborsOf(cave, index).some((neighbor) => matches.has(neighbor));
     }
@@ -2249,7 +2252,8 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
     captureFrame?.(triggered ? "특수 피스 폭발" : "매치", [...highlighted], "match");
     // A blast can break an obstacle without clearing the piece it was protecting.
     const clearableCells = [...matches].filter((index) => !isBarrier(state.cave, index));
-    const terrainResult = damageTerrainFromMatches(state, matches, expanded.targetedTerrain);
+    const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
+    const terrainResult = damageTerrainFromMatches(state, matches, expanded.targetedTerrain, removedBlocks);
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
     terrainResult.brokenDetails.forEach(({ terrainId }) => advanceObjectives(state, "terrain", terrainId));
@@ -2333,7 +2337,12 @@ function scoreAutoMove(state, { hits: matches, targetedTerrain }) {
       state.cave.layers.terrain.forEach((terrainId, index) => {
         if (terrainId !== objective.targetId) return;
         const reaction = state.cave.terrainRules?.[terrainId]?.reaction;
-        if (matches.has(index) || (reaction === "adjacent" && neighborsOf(state.cave, index).some((neighbor) => matches.has(neighbor)))) score += 8;
+        const adjacent = neighborsOf(state.cave, index);
+        if (reaction === "adjacent-only") {
+          if (adjacent.some((cell) => matches.has(cell) && state.cave.layers.block[cell] && !isBarrier(state.cave, cell))) score += 8;
+        } else if (matches.has(index) || (reaction === "adjacent" && adjacent.some((cell) => matches.has(cell)))) {
+          score += 8;
+        }
       });
     } else if (objective.layer === "gimmick") {
       state.cave.layers.gimmick.forEach((gimmickId, index) => {
@@ -2452,6 +2461,7 @@ function findRemainingTerrainTarget(state, origin, selected) {
   let distance = Infinity;
   for (const [index, terrainId] of cave.layers.terrain.entries()) {
     if (!terrainId || selected.has(index) || isExcluded(cave, index)) continue;
+    if (cave.terrainRules?.[terrainId]?.reaction === "adjacent-only") continue;
     if (!remaining.some((objective) => matchesObjectiveAsset(objective, terrainId))) continue;
     const steps = Math.abs(index % cave.width - x) + Math.abs(Math.floor(index / cave.width) - y);
     if (steps >= distance) continue;
