@@ -20,6 +20,7 @@ const ASSETS = {
     { id: "ddung-dust", name: "DDUNG Dust", className: "terrain-ddung-dust", visual: "░" },
     { id: "ddung-oak", name: "DDUNG Oak", className: "terrain-ddung-oak", visual: "♣" },
     { id: "ddung-stone", name: "DDUNG Stone", className: "terrain-ddung-stone", visual: "▰" },
+    { id: "ddung-stone-thick", name: "DDUNG Stone (2단계)", className: "terrain-ddung-stone", visual: "▰" },
     { id: "ddung-water", name: "DDUNG Water", className: "terrain-ddung-water", visual: "≈" },
     { id: "ddung-frost", name: "DDUNG Frost", className: "terrain-ddung-ice", visual: "❅" },
     { id: "ddung-ice", name: "DDUNG Ice", className: "terrain-ddung-ice", visual: "❅" },
@@ -76,15 +77,16 @@ const DEFAULT_TERRAIN_RULES = {
   ice: { blocksFlow: false, reaction: "adjacent", durability: 2 },
   pit: { blocksFlow: true, reaction: "none", durability: 1 },
   conveyor: { blocksFlow: false, reaction: "none", durability: 1 },
-  "ddung-web": { locksBlock: true, blocksFlow: false, reaction: "adjacent", durability: 1 },
+  "ddung-web": { blocksSwap: true, blocksFlow: false, reaction: "under", durability: 1 },
   "ddung-dust": { blocksFlow: false, reaction: "adjacent", durability: 1 },
   "ddung-oak": { blocksFlow: true, reaction: "adjacent", durability: 2 },
-  "ddung-stone": { blocksFlow: true, reaction: "adjacent", durability: 2 },
+  "ddung-stone": { blocksFlow: false, reaction: "under", durability: 1 },
+  "ddung-stone-thick": { blocksFlow: false, reaction: "under", durability: 2 },
   "ddung-water": { blocksFlow: false, reaction: "under", durability: 1 },
-  "ddung-frost": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 1 },
-  "ddung-ice": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 1 },
+  "ddung-frost": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 3 },
+  "ddung-ice": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 2 },
   "ddung-heather-small": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 1 },
-  "ddung-heather-large": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 2 },
+  "ddung-heather-large": { locksBlock: true, blocksFlow: false, reaction: "splash", durability: 15 },
   "ddung-jelly": { blocksFlow: false, reaction: "adjacent", durability: 1 },
 };
 
@@ -390,6 +392,7 @@ function normalizeCave(data, index = 0) {
     const reaction = ["none", "under", "adjacent", "adjacent-only", "splash"].includes(rule.reaction) ? rule.reaction : fallback.reaction;
     terrainRules[terrainId] = {
       blocksFlow: rule.blocksFlow == null ? fallback.blocksFlow : Boolean(rule.blocksFlow),
+      blocksSwap: rule.blocksSwap == null ? Boolean(fallback.blocksSwap) : Boolean(rule.blocksSwap),
       locksBlock: rule.locksBlock == null ? Boolean(fallback.locksBlock) : Boolean(rule.locksBlock),
       reaction,
       durability: clampNumber(rule.durability, fallback.durability, 1, 99),
@@ -529,12 +532,15 @@ function ddungGoalLimitation(cave, objective) {
 }
 
 function matchesObjectiveAsset(objective, id) {
-  return id === objective.targetId || (objective.layer === "gimmick" &&
+  return id === objective.targetId ||
+    (objective.layer === "terrain" && objective.targetId === "ddung-oak" && id === "ddung-frost") ||
+    (objective.layer === "terrain" && objective.targetId === "ddung-stone" && id === "ddung-stone-thick") || (objective.layer === "gimmick" &&
     objective.targetId === "ddung-box" && ddungObjectiveType(objective) === 7 && id === "ddung-iron-box");
 }
 
 function countObjectiveAssets(cave, objective) {
-  return cave.layers[objective.layer].filter((id) => matchesObjectiveAsset(objective, id)).length;
+  return cave.layers[objective.layer].filter((id, index) => matchesObjectiveAsset(objective, id) &&
+    (id !== "ddung-heather-large" || heatherGroup(cave, index)[0] === index)).length;
 }
 
 function resolvedObjectiveCount(cave, objective) {
@@ -704,13 +710,14 @@ function renderTerrainRuleEditor() {
   $("terrainReaction").value = rule.reaction;
   $("terrainDurability").value = rule.durability;
   $("terrainBlocksFlow").checked = rule.blocksFlow;
+  $("terrainBlocksSwap").checked = Boolean(rule.blocksSwap);
   $("terrainLocksBlock").checked = Boolean(rule.locksBlock);
   $("terrainDurability").disabled = rule.reaction === "none";
   const terrainName = getAsset("terrain", selectedTerrainRule)?.name || selectedTerrainRule;
   const reactionLabel = rule.reaction === "none"
     ? "3-Match로 제거할 수 없습니다."
     : `${rule.durability}번 반응하면 사라집니다.`;
-  $("terrainRuleSummary").innerHTML = `<strong>${escapeHtml(terrainName)}</strong><span>${rule.blocksFlow || rule.locksBlock ? "블록의 교환, 매치, 낙하를 막습니다." : "이 지형 위의 블록은 교환하고 매치할 수 있습니다."} ${reactionLabel}</span>`;
+  $("terrainRuleSummary").innerHTML = `<strong>${escapeHtml(terrainName)}</strong><span>${rule.blocksFlow || rule.locksBlock ? "블록의 교환, 매치, 낙하를 막습니다." : rule.blocksSwap ? "직접 교환은 막고 매치와 낙하는 허용합니다." : "이 지형 위의 블록은 교환하고 매치할 수 있습니다."} ${reactionLabel}</span>`;
 }
 
 function renderDifficultySummary(cave) {
@@ -1809,7 +1816,7 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
   for (let index = 0; index < cave.width * cave.height; index += 1) {
     const cell = document.createElement(interactive ? "button" : "div");
     const canActivate = interactive && !isBarrier(cave, index) && specialEffect(cave, cave.playtestPieces[index]);
-    const canSwap = interactive && playtestState.paused && cave.layers.block[index] && !isBarrier(cave, index);
+    const canSwap = interactive && playtestState.paused && cave.layers.block[index] && !isSwapBlocked(cave, index);
     const selected = canSwap && playtestState.selectedIndex === index;
     cell.className = `map-cell${canActivate || canSwap ? " playable" : ""}${selected ? " selected" : ""}`;
     cell.type = interactive ? "button" : undefined;
@@ -1825,21 +1832,22 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
     }
     if (damage && !isExcluded(cave, index)) {
       const details = [];
-      if (isBarrier(cave, index)) {
+      if (isSwapBlocked(cave, index)) {
         cell.classList.add("locked-cell");
         const lock = document.createElement("span");
         lock.className = "cell-lock";
         lock.textContent = "🔒";
         lock.setAttribute("aria-hidden", "true");
         cell.appendChild(lock);
-        details.push("잠긴 칸");
+        details.push(isBarrier(cave, index) ? "잠긴 칸" : "교환만 잠김 · 매치 가능");
       }
       const terrainId = cave.layers.terrain[index];
       const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
       const boxDurability = ddungBoxDurability(cave, index);
-      const durability = boxDurability || (rule && rule.reaction !== "none" ? rule.durability : 0);
+      const hpIndex = terrainId === "ddung-heather-large" ? heatherGroup(cave, index)[0] : index;
+      const durability = boxDurability || (rule && rule.reaction !== "none" ? terrainDurabilityAt(cave, hpIndex, rule) : 0);
       if (durability) {
-        const hits = boxDurability ? damage.gimmickHits[index] : damage.terrainHits[index];
+        const hits = boxDurability ? damage.gimmickHits[index] : damage.terrainHits[hpIndex];
         const remaining = Math.max(0, durability - (hits || 0));
         const badge = document.createElement("span");
         badge.className = `terrain-hp${remaining < durability ? " damaged" : ""}`;
@@ -2083,6 +2091,10 @@ function ddungBoxDurability(cave, index) {
   return id === "ddung-box" ? 3 : 0;
 }
 
+function isSwapBlocked(cave, index) {
+  return isBarrier(cave, index) || Boolean(cave.terrainRules?.[cave.layers.terrain[index]]?.blocksSwap);
+}
+
 function isBarrier(cave, index) {
   if (index < 0 || index >= cave.width * cave.height || isExcluded(cave, index)) return true;
   if (ddungBoxDurability(cave, index)) return true;
@@ -2207,31 +2219,56 @@ function refillBlocks(state) {
   }
 }
 
+function heatherGroup(cave, index) {
+  const tile = ddungCellSource(cave, index)?.tile;
+  const offset = { t: 0, u: 1, v: cave.width, w: cave.width + 1 }[tile];
+  if (offset === undefined) return [index];
+  const anchor = index - offset;
+  const group = [anchor, anchor + 1, anchor + cave.width, anchor + cave.width + 1];
+  return anchor % cave.width < cave.width - 1 &&
+    group.every((cell, position) => !isExcluded(cave, cell) &&
+      cave.layers.terrain[cell] === "ddung-heather-large" && ddungCellSource(cave, cell)?.tile === "tuvw"[position])
+    ? group : [index];
+}
+
+function terrainDurabilityAt(cave, index, rule) {
+  if (cave.layers.terrain[index] === "ddung-frost" && rule.durability === DEFAULT_TERRAIN_RULES["ddung-frost"].durability) {
+    const tile = ddungCellSource(cave, index)?.tile;
+    const variant = tile ? "⒜⒝⒞⒟⒠⒡⒢⒣⒤⒥".indexOf(tile) : -1;
+    if (variant >= 0) return variant % 5 + 1;
+  }
+  return rule.durability;
+}
+
 function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), removedBlocks = new Set()) {
   const cave = state.cave;
   let damaged = 0;
   let broken = 0;
   const brokenDetails = [];
+  const damagedGroups = new Set();
   for (let index = 0; index < cave.layers.terrain.length; index += 1) {
     if (isExcluded(cave, index)) continue;
     const terrainId = cave.layers.terrain[index];
     const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
-    const forced = forcedTerrain.has(index);
+    const group = terrainId === "ddung-heather-large" ? heatherGroup(cave, index) : [index];
+    const anchor = group[0];
+    if (damagedGroups.has(anchor)) continue;
+    const forced = group.some((cell) => forcedTerrain.has(cell));
     if (!forced && (!rule || rule.reaction === "none")) continue;
-    let affected = forced || (rule.reaction !== "adjacent-only" && matches.has(index));
-    if (!affected && (rule.reaction === "adjacent-only" || rule.reaction === "splash")) {
-      affected = neighborsOf(cave, index).some((neighbor) => removedBlocks.has(neighbor));
+    let damage = group.filter((cell) => rule?.reaction !== "adjacent-only" && matches.has(cell)).length;
+    if (rule?.reaction === "adjacent-only" || rule?.reaction === "splash") {
+      for (const cell of group) damage += neighborsOf(cave, cell).filter((neighbor) => removedBlocks.has(neighbor)).length;
+    } else if (!damage && rule?.reaction === "adjacent") {
+      damage = Number(neighborsOf(cave, index).some((neighbor) => matches.has(neighbor)));
     }
-    if (!affected && rule.reaction === "adjacent") {
-      affected = neighborsOf(cave, index).some((neighbor) => matches.has(neighbor));
-    }
-    if (!affected) continue;
-    state.terrainHits[index] = (state.terrainHits[index] || 0) + 1;
+    if (!damage && !forced) continue;
+    damagedGroups.add(anchor);
+    state.terrainHits[anchor] = (state.terrainHits[anchor] || 0) + Math.max(damage, 1);
     damaged += 1;
-    if (forced || state.terrainHits[index] >= rule.durability) {
-      brokenDetails.push({ index, terrainId });
-      cave.layers.terrain[index] = null;
-      state.terrainHits[index] = 0;
+    if (forced || state.terrainHits[anchor] >= terrainDurabilityAt(cave, anchor, rule)) {
+      brokenDetails.push({ index: anchor, terrainId });
+      for (const cell of group) cave.layers.terrain[cell] = null;
+      state.terrainHits[anchor] = 0;
       broken += 1;
     }
   }
@@ -2315,13 +2352,13 @@ function resolveMatches(state, captureFrame, activation = [], preferred = []) {
 function hasPossibleSwap(cave) {
   const blocks = cave.layers.block;
   for (let index = 0; index < blocks.length; index += 1) {
-    if (!blocks[index] || isBarrier(cave, index)) continue;
+    if (!blocks[index] || isSwapBlocked(cave, index)) continue;
     const x = index % cave.width;
     const candidates = [];
     if (x < cave.width - 1) candidates.push(index + 1);
     if (index + cave.width < blocks.length) candidates.push(index + cave.width);
     for (const other of candidates) {
-      if (!blocks[other] || blocks[other] === blocks[index] || isBarrier(cave, other)) continue;
+      if (!blocks[other] || blocks[other] === blocks[index] || isSwapBlocked(cave, other)) continue;
       [blocks[index], blocks[other]] = [blocks[other], blocks[index]];
       const matches = findMatches(cave);
       const possible = matches.has(index) || matches.has(other);
@@ -2366,13 +2403,13 @@ function listPossibleSwaps(state, firstOnly = false) {
   const blocks = cave.layers.block;
   const candidates = [];
   for (let first = 0; first < blocks.length; first += 1) {
-    if (!blocks[first] || isBarrier(cave, first) || specialEffect(cave, cave.playtestPieces[first])) continue;
+    if (!blocks[first] || isSwapBlocked(cave, first) || specialEffect(cave, cave.playtestPieces[first])) continue;
     const x = first % cave.width;
     const others = [];
     if (x < cave.width - 1) others.push(first + 1);
     if (first + cave.width < blocks.length) others.push(first + cave.width);
     for (const second of others) {
-      if (!blocks[second] || blocks[first] === blocks[second] || isBarrier(cave, second) ||
+      if (!blocks[second] || blocks[first] === blocks[second] || isSwapBlocked(cave, second) ||
           specialEffect(cave, cave.playtestPieces[second])) continue;
       swapPlaytestBlocks(cave, first, second);
       const matches = findMatches(cave);
@@ -2597,7 +2634,7 @@ function ensurePlayableBoard(state, captureFrame) {
   const { cave } = state;
   const blocks = cave.layers.block;
   const slots = blocks.flatMap((color, index) =>
-    color && color !== "ddung-dust-piece" && !cave.playtestPieces[index] && !isBarrier(cave, index) ? [index] : []);
+    color && color !== "ddung-dust-piece" && !cave.playtestPieces[index] && !isSwapBlocked(cave, index) ? [index] : []);
   const original = slots.map((index) => blocks[index]);
   if (slots.length >= 4 && new Set(original).size >= 2) {
     for (let attempt = 0; attempt < 80; attempt += 1) {
@@ -2974,7 +3011,7 @@ function playtestCell(index) {
     }
     return;
   }
-  if (!state.paused) return;
+  if (!state.paused || isSwapBlocked(cave, index)) return;
 
   const first = state.selectedIndex;
   state.selectedIndex = null;
@@ -3686,15 +3723,20 @@ function applyDdungTile(layers, index, character, unknownTokens) {
     if (characters.includes(character)) { layers.block[index] = color; return; }
   }
   if (".ㄱㄲㄳ⑴ㄴy".includes(character)) return;
-  const dustTerrain = { D: "floor", C: "ddung-frost", V: "ddung-web", E: "ddung-ice" };
+  if ("⒜⒝⒞⒟⒠⒡⒢⒣⒤⒥".includes(character)) {
+    layers.terrain[index] = "ddung-frost";
+    if ("⒡⒢⒣⒤⒥".includes(character)) layers.block[index] = "ddung-dust-piece";
+    return;
+  }
+  const dustTerrain = { D: "floor", C: "ddung-frost", V: "ddung-web", E: "ddung-ice", 6: "ddung-water", 7: "ddung-stone", 8: "ddung-stone-thick" };
   if (Object.hasOwn(dustTerrain, character)) {
     layers.terrain[index] = dustTerrain[character];
     layers.block[index] = "ddung-dust-piece";
     return;
   }
   const terrainCharacters = [
-    ["ddung-web", "W"], ["ddung-oak", "I⒝⒞⒟⒠⒣⒤⒥!@#$"],
-    ["ddung-stone", "FG78"], ["ddung-water", "U6⒦⒧⒨⒩⒪⒫⒬⒭⒮⒯"],
+    ["ddung-web", "W"], ["ddung-frost", "I"], ["ddung-oak", "!@#$"],
+    ["ddung-stone", "F"], ["ddung-stone-thick", "G"], ["ddung-water", "U⒦⒧⒨⒩⒪⒫⒬⒭⒮⒯"],
     ["ddung-ice", "N"], ["ddung-heather-small", "s"], ["ddung-heather-large", "tuvw"],
     ["ddung-jelly", "①②③④⑤⑥⑦⑧⑨⑩ⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ"],
   ];
@@ -4217,6 +4259,7 @@ function bindInputs() {
   $("terrainRuleType").addEventListener("change", (event) => { selectedTerrainRule = event.target.value; renderTerrainRuleEditor(); });
   $("terrainReaction").addEventListener("change", updateTerrainRule);
   $("terrainBlocksFlow").addEventListener("change", updateTerrainRule);
+  $("terrainBlocksSwap").addEventListener("change", updateTerrainRule);
   $("terrainLocksBlock").addEventListener("change", updateTerrainRule);
   $("terrainDurability").addEventListener("input", updateTerrainRule);
   $("noteInput").addEventListener("change", (event) => { snapshot(); activeCave().note = event.target.value; persist(); });
@@ -4227,6 +4270,7 @@ function updateTerrainRule() {
   const cave = activeCave();
   cave.terrainRules[selectedTerrainRule] = {
     blocksFlow: $("terrainBlocksFlow").checked,
+    blocksSwap: $("terrainBlocksSwap").checked,
     locksBlock: $("terrainLocksBlock").checked,
     reaction: $("terrainReaction").value,
     durability: clampNumber($("terrainDurability").value, 1, 1, 99),
