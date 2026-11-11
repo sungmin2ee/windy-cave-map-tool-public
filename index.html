@@ -272,7 +272,7 @@
               <button class="tool-button active" data-tool="brush"><span>✎</span>브러시</button>
               <button class="tool-button" data-tool="fill"><span>◩</span>채우기</button>
               <button class="tool-button" data-tool="eraser"><span>◇</span>지우개</button>
-              <button type="button" class="tool-button" data-tool="inspect">칸 속성</button>
+              <button type="button" class="tool-button" data-tool="inspect" title="칸을 클릭해 블록 색과 특수 타입을 편집합니다. 칸 우클릭으로도 열 수 있습니다.">칸 속성</button>
               <button class="tool-button" data-tool="shape" title="칸을 클릭해 제외하거나 빈 칸으로 복원합니다. 제외하면 해당 칸의 오브젝트가 지워집니다."><span>▧</span>칸 비활성화</button>
             </div>
             <div class="toolbar-divider"></div>
@@ -539,6 +539,7 @@
       <div class="dialog-header"><h2 id="cellInspectorTitle">칸 속성</h2></div>
       <p id="cellInspectorText"></p>
       <form id="initialPieceForm">
+        <p>일반 블록으로 바꾸려면 ‘일반 블록 · 특수 타입 해제’를 선택하세요.</p>
         <label>블록 색<select class="field" id="initialPieceColor"></select></label>
         <label>초기 특수 타입<select class="field" id="initialPieceType"></select></label>
         <button class="button primary" id="initialPieceApply" type="submit">피스 설정 적용</button>
@@ -695,7 +696,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=97"></script>
+    <script src="./app.js?v=98"></script>
   </body>
 </html>
 

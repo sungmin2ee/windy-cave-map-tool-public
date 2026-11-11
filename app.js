@@ -1117,6 +1117,10 @@ function renderGrid() {
       event.preventDefault(); isPainting = true; strokeSnapshotTaken = false;
       editCell(index, activeTool === "fill");
     });
+    cell.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      inspectCell(index);
+    });
     cell.addEventListener("pointerenter", (event) => {
       if ((event.buttons & 1) === 0) { isPainting = false; strokeSnapshotTaken = false; return; }
       if (isPainting && activeTool !== "fill" && activeTool !== "shape") editCell(index, false);
@@ -1170,7 +1174,10 @@ function editCell(index, fillMode) {
     if (!excluded && (cave.excludedCells?.length || 0) >= cave.width * cave.height - 1) return toast("보드에는 최소 한 칸이 필요합니다.");
     snapshot();
     cave.excludedCells = excluded ? cave.excludedCells.filter((cell) => cell !== index) : [...(cave.excludedCells || []), index].sort((a, b) => a - b);
-    if (!excluded) for (const layer of Object.values(cave.layers)) layer[index] = null;
+    if (!excluded) {
+      for (const layer of Object.values(cave.layers)) layer[index] = null;
+      clearInitialPiece(cave, index);
+    }
     cave.testClearMoves = 0;
     renderAll(); persist(); showCellStatus(index);
     return;
@@ -1184,22 +1191,35 @@ function editCell(index, fillMode) {
   if (!strokeSnapshotTaken) { snapshot(); strokeSnapshotTaken = true; }
   const value = activeTool === "eraser" ? null : selectedAssets[activeLayer];
   if (fillMode) floodFill(cave, activeLayer, index, value);
-  else cave.layers[activeLayer][index] = value;
+  else paintLayerCell(cave, activeLayer, index, value);
   renderGrid();
   if (cave.objectives.some((objective) => objective.layer === activeLayer && objective.countMode === "auto-map")) renderObjectives();
   persist(); showCellStatus(index);
 }
 
+function clearInitialPiece(cave, index) {
+  if (!initialPieceAt(cave, index)) return;
+  cave.initialPieceTypes ??= {};
+  // An explicit null also overrides a special type encoded in the imported DDUNG tile.
+  cave.initialPieceTypes[index] = null;
+}
+
+function paintLayerCell(cave, layer, index, value) {
+  if (layer === "block") clearInitialPiece(cave, index);
+  cave.layers[layer][index] = value;
+}
+
 function floodFill(cave, layer, start, replacement) {
   const cells = cave.layers[layer];
   const target = cells[start];
-  if (target === replacement) return;
+  if (target === replacement && layer !== "block") return;
   const queue = [start];
   const visited = new Set();
   while (queue.length) {
     const index = queue.shift();
     if (visited.has(index) || isExcluded(cave, index) || cells[index] !== target) continue;
-    visited.add(index); cells[index] = replacement;
+    visited.add(index);
+    paintLayerCell(cave, layer, index, replacement);
     const x = index % cave.width;
     const y = Math.floor(index / cave.width);
     if (x > 0) queue.push(index - 1);
