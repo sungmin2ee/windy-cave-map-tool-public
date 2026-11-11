@@ -1285,12 +1285,18 @@ function seededRandom(seedText) {
     hash = Math.imul(hash ^ seedText.charCodeAt(i), 3432918353);
     hash = hash << 13 | hash >>> 19;
   }
-  return () => {
+  return randomFromHash(hash);
+}
+
+function randomFromHash(hash) {
+  const random = () => {
     hash = Math.imul(hash ^ hash >>> 16, 2246822507);
     hash = Math.imul(hash ^ hash >>> 13, 3266489909);
     const value = (hash ^= hash >>> 16) >>> 0;
     return value / 4294967296;
   };
+  random.copy = () => randomFromHash(hash);
+  return random;
 }
 
 function wouldCreateMatch(blocks, index, color, cave) {
@@ -2245,11 +2251,8 @@ function terrainDurabilityAt(cave, index, rule) {
   return rule.durability;
 }
 
-function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), removedBlocks = new Set()) {
+function* terrainHitResults(state, matches, forcedTerrain, removedBlocks) {
   const cave = state.cave;
-  let damaged = 0;
-  let broken = 0;
-  const brokenDetails = [];
   const damagedGroups = new Set();
   for (let index = 0; index < cave.layers.terrain.length; index += 1) {
     if (isExcluded(cave, index)) continue;
@@ -2268,16 +2271,39 @@ function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), rem
     }
     if (!damage && !forced) continue;
     damagedGroups.add(anchor);
-    state.terrainHits[anchor] = (state.terrainHits[anchor] || 0) + Math.max(damage, 1);
+    const remaining = Math.max(1, (rule ? terrainDurabilityAt(cave, anchor, rule) : 1) - (state.terrainHits[anchor] || 0));
+    const amount = forced ? remaining : Math.min(damage, remaining);
+    yield { index: anchor, terrainId, group, amount, broken: amount === remaining };
+  }
+}
+
+function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), removedBlocks = new Set()) {
+  let damaged = 0;
+  const brokenDetails = [];
+  for (const hit of terrainHitResults(state, matches, forcedTerrain, removedBlocks)) {
     damaged += 1;
-    if (forced || state.terrainHits[anchor] >= terrainDurabilityAt(cave, anchor, rule)) {
-      brokenDetails.push({ index: anchor, terrainId });
-      for (const cell of group) cave.layers.terrain[cell] = null;
-      state.terrainHits[anchor] = 0;
-      broken += 1;
+    if (hit.broken) {
+      brokenDetails.push({ index: hit.index, terrainId: hit.terrainId });
+      for (const cell of hit.group) state.cave.layers.terrain[cell] = null;
+      state.terrainHits[hit.index] = 0;
+    } else {
+      state.terrainHits[hit.index] += hit.amount;
     }
   }
-  return { damaged, broken, brokenDetails };
+  return { damaged, broken: brokenDetails.length, brokenDetails };
+}
+
+function* gimmickHitResults(state, matches, removedBlocks) {
+  const { cave } = state;
+  for (const [index, id] of cave.layers.gimmick.entries()) {
+    if (!id || isExcluded(cave, index) || state.activatedGimmicks.has(index)) continue;
+    const durability = ddungBoxDurability(cave, index);
+    if (isDdungSource(cave.externalSource) && !durability) continue;
+    const nearbyHits = durability ? removedBlocks : matches;
+    if (matches.has(index) || neighborsOf(cave, index).some((neighbor) => nearbyHits.has(neighbor))) {
+      yield { index, id, durability, broken: !durability || state.gimmickHits[index] + 1 >= durability };
+    }
+  }
 }
 
 function resolveMatches(state, captureFrame, activation = [], preferred = [], combo = null) {
@@ -2305,23 +2331,15 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
     terrainResult.brokenDetails.forEach(({ terrainId }) => advanceObjectives(state, "terrain", terrainId));
-    for (let index = 0; index < state.cave.layers.gimmick.length; index += 1) {
-      const gimmickId = state.cave.layers.gimmick[index];
-      if (!gimmickId || isExcluded(state.cave, index) || state.activatedGimmicks.has(index)) continue;
-      const durability = ddungBoxDurability(state.cave, index);
-      if (isDdungSource(state.cave.externalSource) && !durability) continue;
-      const nearbyHits = durability ? removedBlocks : matches;
-      const affected = matches.has(index) || neighborsOf(state.cave, index).some((neighbor) => nearbyHits.has(neighbor));
-      if (affected) {
-        if (durability) {
-          state.gimmickHits[index] += 1;
-          if (state.gimmickHits[index] < durability) continue;
-          state.cave.layers.gimmick[index] = null;
-        } else {
-          state.activatedGimmicks.add(index);
-        }
-        advanceObjectives(state, "gimmick", gimmickId);
+    for (const { index, id, durability, broken } of gimmickHitResults(state, matches, removedBlocks)) {
+      if (durability) {
+        state.gimmickHits[index] += 1;
+        if (!broken) continue;
+        state.cave.layers.gimmick[index] = null;
+      } else {
+        state.activatedGimmicks.add(index);
       }
+      advanceObjectives(state, "gimmick", id);
     }
     clearableCells.forEach((index) => {
       const blockId = state.cave.layers.block[index];
@@ -2376,36 +2394,45 @@ function hasPossibleSwap(cave) {
   return false;
 }
 
-function scoreAutoMove(state, { hits: matches, targetedTerrain }) {
-  let score = matches.size + 12 * targetedTerrain.size;
-  state.cave.objectives.forEach((objective) => {
-    if (objective.layer === "block") {
-      matches.forEach((index) => { if (!isBarrier(state.cave, index) && state.cave.layers.block[index] === objective.targetId) score += 6; });
-    } else if (objective.layer === "item") {
-      matches.forEach((index) => { if (!isBarrier(state.cave, index) && state.cave.layers.item[index] === objective.targetId) score += 10; });
-    } else if (objective.layer === "terrain") {
-      state.cave.layers.terrain.forEach((terrainId, index) => {
-        if (terrainId !== objective.targetId) return;
-        const reaction = state.cave.terrainRules?.[terrainId]?.reaction;
-        const adjacent = neighborsOf(state.cave, index);
-        if (reaction === "adjacent-only" || reaction === "splash") {
-          if ((reaction === "splash" && matches.has(index)) ||
-              adjacent.some((cell) => matches.has(cell) && state.cave.layers.block[cell] && !isBarrier(state.cave, cell))) score += 8;
-        } else if (matches.has(index) || (reaction === "adjacent" && adjacent.some((cell) => matches.has(cell)))) {
-          score += 8;
-        }
-      });
-    } else if (objective.layer === "gimmick") {
-      state.cave.layers.gimmick.forEach((gimmickId, index) => {
-        if (gimmickId !== objective.targetId || state.activatedGimmicks.has(index)) return;
-        if (matches.has(index) || neighborsOf(state.cave, index).some((neighbor) => matches.has(neighbor))) score += 7;
-      });
-    }
-  });
-  return score;
+function remainingObjectiveCount(state, objective, index) {
+  if (state.goalLimitations[index]) return 0;
+  if (isDdungSource(state.cave.externalSource) && ddungUsesBoardCount(ddungObjectiveType(objective)) &&
+      objective.countMode === "auto-map") return countObjectiveAssets(state.cave, objective);
+  const progress = state.objectiveProgress[index];
+  return Math.max(0, progress.target - progress.current);
 }
 
-function listPossibleSwaps(state, firstOnly = false) {
+function scoreAutoMove(state, { hits, targetedTerrain }, goals, created = new Map()) {
+  const { cave } = state;
+  const clearableCells = [...hits].filter((index) => !isBarrier(cave, index));
+  const removedBlocks = new Set(clearableCells.filter((index) => cave.layers.block[index] && !created.has(index)));
+  const terrain = goals.some(({ objective }) => objective.layer === "terrain")
+    ? [...terrainHitResults(state, hits, targetedTerrain, removedBlocks)] : [];
+  const gimmicks = goals.some(({ objective }) => objective.layer === "gimmick")
+    ? [...gimmickHitResults(state, hits, removedBlocks)] : [];
+  let progress = 0;
+  let damage = 0;
+  for (const { objective, remaining } of goals) {
+    const matchesId = (id) => id && matchesObjectiveAsset(objective, id);
+    const { layer } = objective;
+    if (layer === "terrain" || layer === "gimmick") {
+      const relevant = layer === "terrain" ? terrain.filter((hit) => matchesId(hit.terrainId))
+        : gimmicks.filter((hit) => matchesId(hit.id));
+      const cleared = relevant.filter((hit) => hit.broken).length;
+      progress += Math.min(remaining, cleared);
+      if (cleared < remaining) {
+        const damaged = relevant.filter((hit) => !hit.broken).map((hit) => hit.amount ?? 1).sort((a, b) => b - a);
+        damage += damaged.slice(0, remaining - cleared).reduce((total, amount) => total + amount, 0);
+      }
+    } else if (layer === "block" || layer === "item") {
+      const cells = layer === "block" ? [...removedBlocks] : clearableCells;
+      progress += Math.min(remaining, cells.filter((index) => matchesId(cave.layers[layer][index])).length);
+    }
+  }
+  return { progress, damage, hitCount: new Set([...hits, ...targetedTerrain]).size };
+}
+
+function listPossibleSwaps(state, firstOnly = false, goals = []) {
   const cave = state.cave;
   const blocks = cave.layers.block;
   const candidates = [];
@@ -2420,16 +2447,21 @@ function listPossibleSwaps(state, firstOnly = false) {
       if (canCombineSpecials(cave, first, second)) {
         const action = { first, second, combo: true };
         if (firstOnly) return [action];
-        candidates.push({ ...action, score: scoreAutoMove(state, specialComboHits(state, first, second)) });
+        candidates.push({ ...action, score: scoreAutoMove(state, specialComboHits(state, first, second, state.beeRandom.copy()), goals) });
         continue;
       }
       if (firstIsSpecial) continue;
       if (!blocks[second] || blocks[first] === blocks[second] || isSwapBlocked(cave, second) ||
           specialEffect(cave, cave.playtestPieces[second])) continue;
       swapPlaytestBlocks(cave, first, second);
-      const matches = findMatches(cave);
+      const runs = firstOnly ? undefined : [];
+      const matches = findMatches(cave, runs);
       const valid = matches.has(first) || matches.has(second);
-      if (valid && !firstOnly) candidates.push({ first, second, score: scoreAutoMove(state, expandSpecialHits(state, matches)) });
+      if (valid && !firstOnly) {
+        const expanded = expandSpecialHits(state, matches, new Set(), state.beeRandom.copy());
+        const created = createdSpecials(cave, runs, [second, first], matches);
+        candidates.push({ first, second, score: scoreAutoMove(state, expanded, goals, created) });
+      }
       swapPlaytestBlocks(cave, first, second);
       if (valid && firstOnly) return [{ first, second }];
     }
@@ -2512,8 +2544,7 @@ function specialEffect(cave, piece) {
 function findRemainingTerrainTarget(state, origin, selected) {
   const { cave } = state;
   const remaining = cave.objectives.filter((objective, index) => {
-    const progress = state.objectiveProgress[index];
-    return objective.layer === "terrain" && !state.goalLimitations[index] && progress.current < progress.target;
+    return objective.layer === "terrain" && remainingObjectiveCount(state, objective, index) > 0;
   });
   const x = origin % cave.width;
   const y = Math.floor(origin / cave.width);
@@ -2534,8 +2565,7 @@ function findRemainingTerrainTarget(state, origin, selected) {
 function findBeeTarget(state, hits, protectedCells, random) {
   const { cave } = state;
   const goals = cave.objectives.filter((objective, index) => {
-    const progress = state.objectiveProgress[index];
-    return !state.goalLimitations[index] && progress.current < progress.target;
+    return remainingObjectiveCount(state, objective, index) > 0;
   });
   const targets = [];
   const fallback = [];
@@ -2751,15 +2781,28 @@ function showPlaytestHint() {
 
 function chooseAutoAction(state) {
   const cave = state.cave;
-  const candidates = listPossibleSwaps(state);
+  const goals = cave.objectives.map((objective, index) => ({
+    objective, remaining: remainingObjectiveCount(state, objective, index),
+  })).filter(({ remaining }) => remaining > 0);
+  const candidates = listPossibleSwaps(state, false, goals);
+  const runs = [];
+  const existingMatches = findMatches(cave, runs);
   cave.playtestPieces.forEach((piece, index) => {
     if (!specialEffect(cave, piece) || isBarrier(cave, index)) return;
-    candidates.push({ first: index, score: scoreAutoMove(state, expandSpecialHits(state, [index])) });
+    const matches = new Set([...existingMatches, index]);
+    const expanded = expandSpecialHits(state, matches, new Set(), state.beeRandom.copy());
+    const created = createdSpecials(cave, runs, [], matches);
+    candidates.push({ first: index, score: scoreAutoMove(state, expanded, goals, created) });
   });
-  if (!candidates.length) return null;
-  const bestScore = Math.max(...candidates.map(({ score }) => score));
-  const best = candidates.filter(({ score }) => score === bestScore);
-  return best[Math.floor(state.random() * best.length)];
+  let best = [];
+  for (const candidate of candidates) {
+    const previous = best[0]?.score;
+    const { progress, damage, hitCount } = candidate.score;
+    const comparison = previous ? progress - previous.progress || damage - previous.damage || hitCount - previous.hitCount : 1;
+    if (comparison > 0) best = [candidate];
+    else if (comparison === 0) best.push(candidate);
+  }
+  return best.length ? best[Math.floor(state.random() * best.length)] : null;
 }
 
 function playSimulationTurn(state, action, captureFrame) {
