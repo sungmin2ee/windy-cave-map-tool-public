@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>3-Match Puzzle Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=18" />
+    <link rel="stylesheet" href="./styles.css?v=19" />
     <style>
     .map-cell.excluded-cell { background: transparent; border: 1px dashed #505564; box-shadow: none; opacity: .48; }
     #simulationGrid .excluded-cell { visibility: hidden; }
@@ -16,8 +16,8 @@
     .left-panel, .right-panel { scrollbar-gutter: stable; scroll-padding-block: 12px; }
     @media (max-width: 1050px), (max-height: 540px) {
       .app-shell { height: auto; min-height: 100dvh; }
-      .topbar { height: auto; flex: none; flex-wrap: wrap; gap: 10px; padding-block: 10px; }
-      .top-actions { margin-left: 0; flex-wrap: wrap; }
+      .topbar { gap: 10px; padding-inline: 12px; }
+      .top-actions { margin-left: 0; }
       .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
       .editor-area { grid-template-rows: auto minmax(280px, 55vh) 104px; }
       .left-panel, .right-panel { overflow: visible; }
