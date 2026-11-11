@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.36";
+const CLIENT_VERSION = "2.7.37";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -3052,6 +3052,23 @@ function previewImport(imported, filename) {
     warnings.append(group);
   }
   if (!warnings.childElementCount) warnings.textContent = "없음";
+  const copyButton = $("importPreviewCopy");
+  const copyStatus = $("importPreviewCopyStatus");
+  copyButton.hidden = !warnings.childElementCount;
+  copyStatus.textContent = "";
+  copyButton.onclick = async () => {
+    const report = [...warnings.querySelectorAll("details")].map((group) => {
+      const summary = group.querySelector("summary").textContent;
+      const locations = [...group.querySelectorAll("li button")].map((button) => `  - ${button.textContent}`);
+      return [summary, ...locations].join("\n");
+    }).join("\n\n");
+    try {
+      await navigator.clipboard.writeText(report);
+      copyStatus.textContent = "타일 목록을 복사했습니다.";
+    } catch {
+      copyStatus.textContent = "복사하지 못했습니다. 브라우저의 클립보드 권한을 확인해 주세요.";
+    }
+  };
   $("importPreviewOtherWarnings").textContent = unknown.length ? `읽지 못한 기타 값 · ${unknown.join(", ")}` : "";
   dialog.returnValue = "";
   dialog.addEventListener("close", () => {
