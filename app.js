@@ -2413,7 +2413,23 @@ function isBarrier(cave, index) {
   return Boolean(rule?.blocksFlow || rule?.locksBlock);
 }
 
-function settleStraight(cave, trackMove) {
+function ddungWarpRoutes(cave) {
+  const source = cave.externalSource;
+  if (!isDdungSource(source) || cave.width !== Number(source.rawMap?.size) || cave.height !== cave.width) return new Map();
+  const hasMarker = (index, id) => cave.layers.gimmick[index] === id || ddungMarkersAt(cave, index).includes(id);
+  const routes = new Map();
+  for (const group of ddungPositionGroups(source.rawMap.warps, 4)) {
+    if (!/^\d{4}$/.test(group)) continue;
+    const [x1, y1, x2, y2] = [...group].map(Number);
+    const entry = ddungGridIndex(cave.width, x1, y1);
+    const exit = ddungGridIndex(cave.width, x2, y2);
+    if (entry < 0 || exit < 0 || entry === exit || routes.has(exit)) continue;
+    if (hasMarker(entry, "teleport-a") && hasMarker(exit, "teleport-b")) routes.set(exit, entry);
+  }
+  return routes;
+}
+
+function settleStraight(cave, trackMove, warpRoutes) {
   const pieces = cave.playtestPieces;
   for (const line of gravityLines(cave)) {
     let segment = [];
@@ -2433,7 +2449,10 @@ function settleStraight(cave, trackMove) {
     };
     for (const index of line) {
       if (isBarrier(cave, index)) settle();
-      else segment.push(index);
+      else {
+        segment.push(index);
+        if (warpRoutes.has(index)) settle();
+      }
     }
     settle();
   }
@@ -2459,14 +2478,22 @@ function flowOffsets(cave, state) {
 }
 
 function applyGravity(cave, state, trackMove) {
-  settleStraight(cave, trackMove);
-  if (!state || cave.flowRule === "none") return 0;
+  const warpRoutes = ddungWarpRoutes(cave);
+  settleStraight(cave, trackMove, warpRoutes);
+  if (!state) return 0;
   const directVectors = { down: [0, 1], up: [0, -1], left: [-1, 0], right: [1, 0] };
   const [directX, directY] = directVectors[cave.gravity];
   let flowMoves = 0;
   for (let pass = 0; pass < cave.width * cave.height * 4; pass += 1) {
     let moved = false;
-    const order = gravityLines(cave).flat();
+    for (const [exit, entry] of warpRoutes) {
+      if (cave.layers.block[exit] || !cave.layers.block[entry] || isBarrier(cave, entry) || isBarrier(cave, exit)) continue;
+      trackMove?.(entry, exit);
+      swapPlaytestBlocks(cave, entry, exit);
+      moved = true;
+      flowMoves += 1;
+    }
+    const order = cave.flowRule === "none" ? [] : gravityLines(cave).flat();
     for (const index of order) {
       if (!cave.layers.block[index]) continue;
       const x = index % cave.width;
@@ -2485,7 +2512,7 @@ function applyGravity(cave, state, trackMove) {
         const targetY = y + offsetY;
         if (targetX < 0 || targetX >= cave.width || targetY < 0 || targetY >= cave.height) continue;
         const targetIndex = targetY * cave.width + targetX;
-        if (isBarrier(cave, targetIndex) || cave.layers.block[targetIndex]) continue;
+        if (isBarrier(cave, targetIndex) || warpRoutes.has(targetIndex) || cave.layers.block[targetIndex]) continue;
         const targetUpstream = (targetY - directY) * cave.width + targetX - directX;
         // A gap below a barrier can receive a block from the neighboring lane.
         if (!blockedAhead && !isBarrier(cave, targetUpstream)) continue;
@@ -2497,7 +2524,7 @@ function applyGravity(cave, state, trackMove) {
       }
     }
     if (!moved) break;
-    settleStraight(cave, trackMove);
+    settleStraight(cave, trackMove, warpRoutes);
   }
   return flowMoves;
 }
