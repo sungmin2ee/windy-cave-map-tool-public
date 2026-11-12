@@ -8,6 +8,9 @@
     <title>3-Match Puzzle Map Tool</title>
     <link rel="stylesheet" href="./styles.css?v=23" />
     <style>
+    .file-picker { position: relative; display: inline-grid; place-items: center; text-align: center; }
+    .file-picker input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+    .file-picker:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
     .map-cell.excluded-cell { background: transparent; border: 1px dashed #505564; box-shadow: none; opacity: .48; }
     #simulationGrid .excluded-cell { visibility: hidden; }
     #simulationGrid .remaining-target { outline: 2px solid #ffd166; outline-offset: -3px; z-index: 1; }
@@ -111,14 +114,16 @@
         <div class="top-actions">
           <button type="button" class="button ghost" aria-haspopup="dialog" onclick="document.getElementById('mapToolGuide').showModal()">사용법</button>
           <button class="button ghost" id="newProjectButton">새 프로젝트</button>
-          <button class="button ghost" id="importButton">JSON 가져오기</button>
+          <label class="button ghost file-picker" id="importButton">
+            <span>JSON 가져오기</span>
+            <input id="importFile" type="file" aria-label="JSON 가져오기" />
+          </label>
           <button class="button ghost" id="exportButton">전체 레벨 JSON으로 내보내기</button>
         <button class="button ghost" id="exportGridTiles" type="button">현재 레벨 JSON으로 내보내기</button>
           <button class="button primary" id="saveButton">저장</button>
           <button class="button ghost" id="exportPatchButton" title="기준 전체 JSON을 선택해 변경분을 내보냅니다">패치 내보내기</button>
           <button type="button" class="button ghost" id="reopenPatchPreview" hidden>같은 기준으로 패치 미리보기</button>
           <input id="patchBaseFile" type="file" accept=".json,application/json" hidden />
-          <input id="importFile" type="file" accept="application/json" hidden />
         </div>
       </header>
 
@@ -710,7 +715,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=104"></script>
+    <script src="./app.js?v=105"></script>
   </body>
 </html>
 
