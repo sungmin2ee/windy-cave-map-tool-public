@@ -590,7 +590,7 @@ function ddungGoalLimitation(cave, objective) {
   if (type === 9 && objective.targetId !== "ddung-dust-piece") return "먼지 목표를 판정하려면 원본 JSON을 다시 가져오세요.";
   if (type === 36) return ddungJellyCells(cave).size ? null : "원본 젤리 그룹 좌표가 필요합니다.";
   if (type === 7) return cave.externalSource.boxLayoutParsed ? null : "철 상자 배치를 확인하려면 원본 JSON을 다시 가져오세요.";
-  if ([8, 9, 10, 13, 14, 16, 17, 18, 24, 34, 35].includes(type)) return null;
+  if ([8, 9, 10, 13, 14, 16, 17, 18, 24, 25, 34, 35].includes(type)) return null;
   return "원본 전용 오브젝트 동작";
 }
 
@@ -1325,6 +1325,14 @@ function applyCellVisual(cell, cave, index) {
     if (layer === "gimmick" || layer === "item" || (layer === "terrain" && !asset.className)) visual.textContent = asset.visual;
     if (!usesSpecialImage) showObjectImage(visual, asset.image);
     cell.appendChild(visual);
+  }
+  const markers = ddungMarkersAt(cave, index);
+  if (markers.length) {
+    const badge = document.createElement("span");
+    badge.className = "ddung-overlapping-markers";
+    badge.textContent = markers.map((id) => ({ "teleport-a": "A", "teleport-b": "B" })[id] || getAsset("gimmick", id, cave)?.visual || "·").join(" ");
+    badge.title = markers.map((id) => getAsset("gimmick", id, cave)?.name || id).join(" · ");
+    cell.appendChild(badge);
   }
 }
 
@@ -2542,14 +2550,21 @@ function chooseDdungTreasure(state) {
   return eligible[Math.floor(state.treasureRandom() * eligible.length)].targetId;
 }
 
+function ddungMarkersAt(cave, index) {
+  const rawSize = Number(cave.externalSource?.rawMap?.size);
+  if (cave.width !== rawSize || cave.height !== rawSize) return [];
+  return cave.externalSource?.overlappingMarkers?.[index] ?? [];
+}
+
 function collectDdungTreasure(state) {
   if (!state.treasureGoals.length) return 0;
   const { cave } = state;
-  const explicit = cave.layers.gimmick.includes("exit");
+  const isExit = (id, index) => id === "exit" || ddungMarkersAt(cave, index).includes("exit");
+  const explicit = cave.layers.gimmick.some(isExit);
   let collected = 0;
   cave.layers.block.forEach((id, index) => {
     if (!isDdungTreasure(id)) return;
-    const atExit = explicit ? cave.layers.gimmick[index] === "exit"
+    const atExit = explicit ? isExit(cave.layers.gimmick[index], index)
       : index >= (cave.height - 1) * cave.width;
     if (!atExit) return;
     advanceObjectives(state, "item", id);
@@ -2563,7 +2578,8 @@ function refillBlocks(state, origins, trackMove) {
   const { cave } = state;
   const colors = cave.usableBlocks;
   if (!colors.length) return;
-  const spawners = cave.layers.gimmick.flatMap((id, index) => id === SPAWNER_ID ? [index] : []);
+  const spawners = cave.layers.gimmick.flatMap((id, index) =>
+    id === SPAWNER_ID || ddungMarkersAt(cave, index).includes(SPAWNER_ID) ? [index] : []);
   const sourceSet = new Set(spawners);
   const sources = isDdungSource(cave.externalSource)
     ? gravityLines(cave).flatMap((line) => {
@@ -4557,18 +4573,27 @@ function adaptDdungMapInfo(source, index, format, unknownTokens, tileReporter) {
     const cellIndex = ddungGridIndex(size, Number(group.slice(2, 4)), Number(group.slice(4, 6)));
     if (cellIndex >= 0) callback(cellIndex, key);
   });
-  applySixDigitPositions(source.starts, (cellIndex) => { layers.gimmick[cellIndex] = "spawner"; });
-  applySixDigitPositions(source.goals, (cellIndex) => { layers.gimmick[cellIndex] = "exit"; });
+  const overlappingMarkers = {};
+  const addMarker = (index, id) => {
+    const existing = layers.gimmick[index];
+    if (!existing) layers.gimmick[index] = id;
+    else if (existing !== id) {
+      const markers = overlappingMarkers[index] ??= [];
+      if (!markers.includes(id)) markers.push(id);
+    }
+  };
+  applySixDigitPositions(source.starts, (index) => addMarker(index, SPAWNER_ID));
+  applySixDigitPositions(source.goals, (index) => addMarker(index, "exit"));
   applySixDigitPositions(source.roads, (cellIndex) => { layers.terrain[cellIndex] = "conveyor"; });
   ddungPositionGroups(source.warps, 4).forEach((group) => {
     const first = ddungGridIndex(size, Number(group[0]), Number(group[1]));
     const second = ddungGridIndex(size, Number(group[2]), Number(group[3]));
-    if (first >= 0) layers.gimmick[first] = "teleport-a";
-    if (second >= 0) layers.gimmick[second] = "teleport-b";
+    if (first >= 0) addMarker(first, "teleport-a");
+    if (second >= 0) addMarker(second, "teleport-b");
   });
   ddungPositionGroups(source.gears, 4).forEach((group) => {
     const cellIndex = ddungGridIndex(size, Number(group[2]), Number(group[3]));
-    if (cellIndex >= 0) layers.gimmick[cellIndex] = "switch";
+    if (cellIndex >= 0) addMarker(cellIndex, "switch");
   });
   ddungPositionGroups(source.watercolors, 4).forEach((group) => {
     const cellIndex = ddungGridIndex(size, Number(group[0]), Number(group[1]));
@@ -4609,6 +4634,7 @@ function adaptDdungMapInfo(source, index, format, unknownTokens, tileReporter) {
       specialColors: String(source.special || "").split(",").map((value) => value.trim())
         .filter((value) => /^\d+$/.test(value)).map((value) => DDUNG_COLOR_IDS[Number(value)]).filter(Boolean),
       boxLayoutParsed: true,
+      overlappingMarkers,
       rawMap: deepCopy(source),
     },
   }, index);

@@ -34,6 +34,18 @@
       font-size: clamp(9px, 1.5vmin, 15px);
       filter: drop-shadow(0 1px 2px #000);
     }
+    .ddung-overlapping-markers {
+      position: absolute;
+      left: 2px;
+      bottom: 2px;
+      z-index: 4;
+      padding: 2px 3px;
+      color: #fff;
+      background: #171125e8;
+      border-radius: 3px;
+      font: 700 9px/1 system-ui;
+      pointer-events: none;
+    }
     .cell-gimmick[data-warp-end].has-object-image::after {
       content: attr(data-warp-end);
       position: absolute;
@@ -757,7 +769,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=112"></script>
+    <script src="./app.js?v=113"></script>
   </body>
 </html>
 
