@@ -1097,6 +1097,7 @@ function renderGrid() {
     $("assetLocatorNext").disabled = located.length < 2;
   }
   const locatedSet = new Set(located);
+  grid.style.setProperty("--board-columns", cave.width);
   grid.style.gridTemplateColumns = `repeat(${cave.width}, var(--cell-size))`;
   grid.innerHTML = "";
   for (let index = 0; index < cave.width * cave.height; index += 1) {
@@ -1904,7 +1905,9 @@ function issueHtml(validation) {
 
 function renderSimulationGrid(cave, interactive = false, remainingTargets = [], damage = playtestState?.cave === cave ? playtestState : null) {
   const grid = $("simulationGrid");
-  grid.style.gridTemplateColumns = `repeat(${cave.width}, 30px)`;
+  grid.style.setProperty("--board-columns", cave.width);
+  grid.style.setProperty("--board-rows", cave.height);
+  grid.style.gridTemplateColumns = `repeat(${cave.width}, var(--cell-size))`;
   grid.innerHTML = "";
   for (let index = 0; index < cave.width * cave.height; index += 1) {
     const cell = document.createElement(interactive ? "button" : "div");
