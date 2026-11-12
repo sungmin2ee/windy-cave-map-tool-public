@@ -44,9 +44,9 @@ const ASSETS = {
     { id: "ddung-box", name: "DDUNG Box", visual: "□" },
     { id: "ddung-mouse-panel", name: "DDUNG Mouse Panel", visual: "◉" },
     { id: "ddung-dungs", name: "DDUNG Dungs", visual: "♟" },
-    { id: "ddung-bulldozer", name: "DDUNG Bulldozer", visual: "▸" },
+    { id: "ddung-bulldozer", name: "DDUNG Ghost", visual: "▸" },
     { id: "ddung-spider-cave", name: "DDUNG Spider Cave", visual: "⌂" },
-    { id: "ddung-bee", name: "DDUNG Bee", visual: "♢" },
+    { id: "ddung-bee", name: "DDUNG Honey", visual: "♢" },
     { id: "ddung-feng", name: "DDUNG Feng", visual: "風" },
     { id: "ddung-mayor-small", name: "DDUNG Mayor Small", visual: "♙" },
     { id: "ddung-mayor-large", name: "DDUNG Mayor Large", visual: "♛" },
@@ -512,6 +512,15 @@ function getDefaultTerrainRule(id) {
     : { blocksFlow: false, reaction: "none", durability: 1 };
 }
 
+const DDUNG_GIMMICK_ART = Object.freeze({
+  "ddung-mayor-small": "ddung-mayor-small", "ddung-mayor-large": "ddung-mayor-large",
+  "ddung-bulldozer": "ddung-bulldozer", "ddung-spider-cave": "ddung-spider-cave",
+  "ddung-bee": "ddung-bee", "ddung-bee-up": "ddung-bee-up",
+  "ddung-octo": "ddung-octo", "ddung-feng": "ddung-feng",
+  "arrow-up": "arrow-up", "arrow-down": "arrow-down", switch: "switch", door: "door",
+  "teleport-a": "warp", "teleport-b": "warp",
+});
+
 function getAsset(layer, id, cave = activeCave()) {
   if (!assetId(id)) return null;
   const known = ASSETS[layer].find((asset) => asset.id === id) ??
@@ -519,7 +528,10 @@ function getAsset(layer, id, cave = activeCave()) {
   const definition = project.assetDefinitions?.[layer]?.find((asset) => asset.id === id);
   const original = DDUNG_ART.has(id) && (id.startsWith("ddung-") ||
     (layer === "block" && isDdungSource(cave?.externalSource)));
-  const image = definition?.image || (original ? `./art/ddung/${id}.png` : null);
+  const gimmickArt = layer === "gimmick" && Object.hasOwn(DDUNG_GIMMICK_ART, id) &&
+    (id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[id] : null;
+  const image = definition?.image || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
+    original ? `./art/ddung/${id}.png` : null);
   return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer],
     ...known, id, name: definition?.name || known?.name || id, image };
 }
@@ -1284,8 +1296,14 @@ function applyCellVisual(cell, cave, index) {
     if (!asset) continue;
     const visual = document.createElement("span");
     visual.className = `cell-${layer} ${asset.className || ""}`;
-    if (layer === "gimmick" && assetId === SPAWNER_ID && cave.layers.block[index]) {
-      visual.classList.add("cell-spawner-badge");
+    if (layer === "gimmick" && cave.layers.block[index]) {
+      if (assetId === SPAWNER_ID) visual.classList.add("cell-spawner-badge");
+      else if (asset.image?.endsWith(".webp") && asset.image.startsWith("./art/ddung/")) {
+        visual.classList.add("cell-ddung-gimmick-badge");
+      }
+    }
+    if (layer === "gimmick" && asset.image === "./art/ddung/warp.webp") {
+      visual.dataset.warpEnd = assetId === "teleport-a" ? "A" : "B";
     }
     let usesSpecialImage = false;
     if (layer === "block") {

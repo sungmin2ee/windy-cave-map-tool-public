@@ -26,6 +26,25 @@
       border-radius: 4px;
       background: #171125d9;
     }
+    .map-cell .cell-ddung-gimmick-badge, .map-cell.has-initial-piece .cell-ddung-gimmick-badge {
+      inset: auto 2px 2px auto;
+      width: 42%;
+      height: 42%;
+      z-index: 4;
+      font-size: clamp(9px, 1.5vmin, 15px);
+      filter: drop-shadow(0 1px 2px #000);
+    }
+    .cell-gimmick[data-warp-end].has-object-image::after {
+      content: attr(data-warp-end);
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      color: white;
+      background: #171125e8;
+      padding: 1px 3px;
+      border-radius: 3px;
+      font: 700 9px/1 system-ui;
+    }
     .file-picker { position: relative; display: inline-grid; place-items: center; text-align: center; }
     .file-picker input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
     .file-picker:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -738,7 +757,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=110"></script>
+    <script src="./app.js?v=111"></script>
   </body>
 </html>
 
