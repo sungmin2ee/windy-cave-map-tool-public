@@ -74,7 +74,7 @@ const ASSETS = {
     { id: "ddung-mayor-small", name: "DDUNG Mayor Small", visual: "♙" },
     { id: "ddung-mayor-large", name: "DDUNG Mayor Large", visual: "♛" },
     { id: "ddung-bee-up", name: "DDUNG Bee Up", visual: "⇧" },
-    { id: "ddung-octo", name: "DDUNG Octo", visual: "◈" },
+    { id: "ddung-octo", name: "DDUNG 얼음 속 가방", visual: "👜" },
     ...Object.entries(DDUNG_PANELS).map(([id, [, name, visual]]) => ({ id, name, visual })),
   ],
   item: [
@@ -685,7 +685,7 @@ const DDUNG_GIMMICK_ART = Object.freeze({
   "ddung-mayor-small": "ddung-mayor-small", "ddung-mayor-large": "ddung-mayor-large",
   "ddung-bulldozer": "ddung-bulldozer", "ddung-spider-cave": "ddung-spider-cave",
   "ddung-bee": "ddung-bee", "ddung-bee-up": "ddung-bee-up",
-  "ddung-octo": "ddung-octo", "ddung-feng": "ddung-feng",
+  "ddung-feng": "ddung-feng",
   "arrow-up": "arrow-up", "arrow-down": "arrow-down", switch: "switch", door: "door",
   "teleport-a": "warp", "teleport-b": "warp",
 });
@@ -705,7 +705,9 @@ function getAsset(layer, id, cave = activeCave()) {
   const panel = layer === "gimmick" ? DDUNG_PANELS[baseId] : null;
   const gimmickArt = panel?.[3] || (layer === "gimmick" && Object.hasOwn(DDUNG_GIMMICK_ART, baseId) &&
     (id === "switch" || id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[baseId] : null);
-  const image = definition?.image || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
+  const iceArt = id === "ddung-octo" ? "./art/ddung/ice-bag.png" :
+    id === "ddung-frost" ? "./art/ddung/frost-3.png" : null;
+  const image = definition?.image || iceArt || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
     itemArt ? `./art/ddung/item-${id === "ddung-bomb-panel" ? "bomb" : id}.webp` : original ? `./art/ddung/${id}.png` : null);
   return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer],
     ...known, id, name: definition?.name || known?.name || id, image, panelMark: panel && "AQZY1234r".includes(panel[0]) ? panel[2] : null };
@@ -852,7 +854,7 @@ function renderObjectives() {
         <button class="button objective-remove" title="목표 삭제" aria-label="목표 삭제">×</button>
       </div>
       <div class="objective-row-bottom">
-        <label><span class="field-label">완료 조건</span><div class="objective-auto-count">${escapeHtml(objective.targetId === "ddung-dust-piece" ? "특수 피스로 먼지 제거" : ddungObjectiveType(objective) === 7 ? "내구도 소진 후 파괴" : OBJECTIVE_ACTIONS[objective.layer].label)}</div></label>
+        <label><span class="field-label">완료 조건</span><div class="objective-auto-count">${escapeHtml(objective.targetId === "ddung-octo" ? "얼음 파괴 후 가방 수집" : objective.targetId === "ddung-dust-piece" ? "특수 피스로 먼지 제거" : ddungObjectiveType(objective) === 7 ? "내구도 소진 후 파괴" : OBJECTIVE_ACTIONS[objective.layer].label)}</div></label>
         <label><span class="field-label">수량 방식</span><select class="field objective-count-mode"><option value="manual"${objective.countMode === "manual" ? " selected" : ""}>직접 입력</option><option value="auto-map"${objective.countMode === "auto-map" ? " selected" : ""}>맵 개수 자동</option></select></label>
       </div>
       <div class="objective-row-bottom objective-count-row">
@@ -1480,15 +1482,17 @@ function showDdungSpecialImage(element, cave, piece, color, fallbackImage, badge
   return true;
 }
 
-function applyCellVisual(cell, cave, index) {
+function applyCellVisual(cell, cave, index, damage = null) {
   if (isExcluded(cave, index)) {
     cell.classList.add("excluded-cell");
     if (cell.tagName === "BUTTON") cell.disabled = true;
     return;
   }
   const solidGimmick = isDdungGimmickBarrier(cave, index) || ddungBoxDurability(cave, index);
+  const frost = cave.layers.terrain[index] === "ddung-frost" && cave.terrainRules?.["ddung-frost"];
+  const opaqueFrost = frost && terrainDurabilityAt(cave, index, frost) - (damage?.terrainHits[index] || 0) >= 3;
   for (const layer of ["terrain", "block", "gimmick", "item"]) {
-    if (layer === "block" && solidGimmick) continue;
+    if (layer === "block" && (solidGimmick || opaqueFrost)) continue;
     const assetId = cave.layers[layer][index];
     if (!assetId) continue;
     const asset = getAsset(layer, assetId, cave);
@@ -1524,7 +1528,19 @@ function applyCellVisual(cell, cave, index) {
       }
     }
     if (layer === "gimmick" || layer === "item" || (layer === "terrain" && !asset.className)) visual.textContent = asset.visual;
-    if (!usesSpecialImage) showObjectImage(visual, asset.image);
+    if (!usesSpecialImage) {
+      const customImage = project.assetDefinitions?.[layer]?.find((definition) => definition.id === assetId)?.image;
+      if (layer === "gimmick" && assetId === "ddung-octo" && !customImage) {
+        const hp = ddungGimmickDurability(cave, index) - (damage?.gimmickHits[index] || 0);
+        if (hp <= 2) showObjectImage(visual, asset.image);
+        if (hp > 0) showObjectImage(visual, `./art/ddung/frost-${hp}.png`);
+      } else if (layer === "terrain" && assetId === "ddung-frost" && !customImage) {
+        const hp = terrainDurabilityAt(cave, index, frost || DEFAULT_TERRAIN_RULES[assetId]) - (damage?.terrainHits[index] || 0);
+        showObjectImage(visual, `./art/ddung/frost-${Math.min(5, Math.max(1, hp))}.png`);
+      } else {
+        showObjectImage(visual, asset.image);
+      }
+    }
     cell.appendChild(visual);
   }
   const markers = ddungMarkersAt(cave, index);
@@ -2555,7 +2571,7 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
     const selected = canSwap && playtestState.selectedIndex === index;
     cell.className = `map-cell${canActivate || canSwap ? " playable" : ""}${selected ? " selected" : ""}`;
     cell.type = interactive ? "button" : undefined;
-    applyCellVisual(cell, cave, index);
+    applyCellVisual(cell, cave, index, damage);
     if (interactive && [playtestState.hint?.first, playtestState.hint?.second].includes(index)) cell.classList.add("hinted");
     const targets = remainingTargets.filter(({ objective }) =>
       matchesObjectiveAsset(objective, cave.layers[objective.layer][index]) &&
@@ -3519,6 +3535,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
           continue;
         }
         if (!broken) continue;
+        if (id === "ddung-octo") captureFrame?.("얼음 속 가방 수집", [index], "match");
         if (isDdungGimmickBarrier(state.cave, index)) {
           ddungGimmickAttack(state.cave, index, id).forEach((cell) => gimmickAttack.add(cell));
         }
