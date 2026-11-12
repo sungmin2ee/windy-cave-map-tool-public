@@ -186,6 +186,7 @@
 
         <div class="top-actions">
           <button type="button" class="button ghost" aria-haspopup="dialog" onclick="document.getElementById('mapToolGuide').showModal()">사용법</button>
+          <button class="button ghost" id="projectRulesButton">프로젝트 설정</button>
           <button class="button ghost" id="newProjectButton">새 프로젝트</button>
           <label class="button ghost file-picker" id="importButton">
             <span>JSON 가져오기</span>
@@ -641,6 +642,33 @@
         <button class="button primary" value="import">가져오기</button>
       </form>
     </dialog>
+    <dialog id="projectRulesDialog" class="simulation-dialog" aria-labelledby="projectRulesTitle">
+      <div class="dialog-header"><h2 id="projectRulesTitle">프로젝트 설정 · 특수 피스 규칙</h2></div>
+      <form id="projectRulesForm">
+        <label>2×2 매치
+          <select id="projectSquareRule" class="field">
+            <option value="default">레벨의 기존 설정 따르기</option>
+            <option value="true">허용</option>
+            <option value="false">허용 안 함</option>
+          </select>
+        </label>
+        <fieldset>
+          <legend>매치 모양별 특수 피스 생성</legend>
+          <p>각 레벨의 ‘매치로 특수 피스 생성’이 켜져 있을 때 적용됩니다.</p>
+          <div id="projectMatchRules" class="difficulty-choices"></div>
+        </fieldset>
+        <fieldset>
+          <legend>두 특수 피스 조합</legend>
+          <p>등록하지 않은 조합은 기본 효과를 사용합니다. 범위 효과는 교환한 두 번째 칸을 기준으로 발동합니다.</p>
+          <div id="projectComboRules"></div>
+          <button id="addProjectCombo" class="button ghost" type="button">조합 추가</button>
+        </fieldset>
+        <p id="projectRulesStatus" role="status"></p>
+        <button id="cancelProjectRules" class="button ghost" type="button">취소</button>
+        <button class="button primary" type="submit">프로젝트 규칙 저장</button>
+      </form>
+    </dialog>
+
     <dialog id="specialTypeDialog" class="simulation-dialog" aria-labelledby="specialTypeTitle">
       <div class="dialog-header"><h2 id="specialTypeTitle">특수 타입 관리</h2></div>
       <form id="specialTypeForm">
@@ -826,7 +854,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=129"></script>
+    <script src="./app.js?v=130"></script>
   </body>
 </html>
 

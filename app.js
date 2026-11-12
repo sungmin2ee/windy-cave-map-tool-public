@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.45";
+const CLIENT_VERSION = "2.7.46";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -319,7 +319,7 @@ function normalizeProject(data) {
   }
   const activeCaveId = caves.some((cave) => cave.id === source.activeCaveId) ? source.activeCaveId : caves[0].id;
   const assetDefinitions = normalizeAssetDefinitions(source.assetDefinitions);
-  return { ...source, version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets: collectPaletteAssets(caves, source.paletteAssets, assetDefinitions) };
+  return { ...source, specialPieceRules: normalizeSpecialPieceRules(source.specialPieceRules), version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets: collectPaletteAssets(caves, source.paletteAssets, assetDefinitions) };
 }
 
 function normalizeLevelSettings(source) {
@@ -1703,7 +1703,7 @@ function wouldCreateMatch(blocks, index, color, cave) {
   };
   if (1 + countDirection(-1, 0) + countDirection(1, 0) >= 3
     || 1 + countDirection(0, -1) + countDirection(0, 1) >= 3) return true;
-  if (!cave.specialMatches) return false;
+  if (!allowsSquareMatches(cave)) return false;
 
   for (const dx of [-1, 1]) {
     for (const dy of [-1, 1]) {
@@ -2632,7 +2632,7 @@ function findMatches(cave, runs, protectedCells) {
       start = y;
     }
   }
-  if (cave.specialMatches) {
+  if (allowsSquareMatches(cave)) {
     for (let y = 0; y < cave.height - 1; y += 1) {
       for (let x = 0; x < cave.width - 1; x += 1) {
         const topLeft = y * cave.width + x;
@@ -3529,7 +3529,7 @@ const DDUNG_SPECIAL_EFFECTS = Object.freeze({ 1: "row", 2: "column", 3: "area", 
 function specialEffect(cave, piece) {
   if (!piece) return null;
   const id = String(piece.type);
-  const declared = cave.initialPieceDefinitions?.find((entry) => entry?.id === id);
+  const declared = projectSpecialDefinition(cave, id);
   if (declared?.effect === "none") return null;
   if (declared?.effect === "script") return getEffectCommands(declared.effectScript) ? "script" : null;
   if (Object.hasOwn(SPECIAL_EFFECTS, declared?.effect)) return declared.effect;
@@ -3581,6 +3581,8 @@ function canCombineSpecials(cave, first, second) {
   if (!neighborsOf(cave, first).includes(second)) return false;
   const pair = [first, second];
   if (pair.some((index) => !cave.layers.block[index] || isSwapBlocked(cave, index))) return false;
+  const custom = configuredCombo(cave, first, second);
+  if (custom) return custom !== "disabled";
   const effects = pair.map((index) => specialEffect(cave, cave.playtestPieces[index]));
   return effects.every(Boolean) || (effects.includes("color") && pair.some((index) =>
     !cave.playtestPieces[index] && cave.layers.block[index] !== "ddung-dust-piece"));
@@ -3608,6 +3610,20 @@ function specialComboHits(state, first, second, random = () => 0.5) {
     }
   };
   let label;
+  const custom = configuredCombo(cave, first, second);
+  if (custom) {
+    if (custom === "both") skip.clear();
+    else if (custom === "board") {
+      cave.layers.block.forEach((_, index) => { if (!isExcluded(cave, index)) hits.add(index); });
+    } else if (custom === "wide-cross") addShape(second, "cross", 1);
+    else if (custom === "large-area") addShape(second, "area", 2);
+    else if (custom === "target" || custom === "fish") {
+      skip.delete(second);
+      commands.set(second, [{ op: custom }]);
+    } else addShape(second, custom, custom === "area" ? 1 : 0);
+    label = PROJECT_COMBO_EFFECTS[custom];
+    return { ...expandSpecialHits(state, hits, new Set(), random, skip, commands), label };
+  }
   if (colors === 2) {
     cave.layers.block.forEach((_, index) => { if (!isExcluded(cave, index)) hits.add(index); });
     label = "보드 전체 타격";
@@ -3665,7 +3681,7 @@ function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom
     const x = index % cave.width;
     const y = Math.floor(index / cave.width);
     const color = cave.layers.block[index];
-    const definition = effect === "script" && cave.initialPieceDefinitions.find((entry) => entry?.id === String(cave.playtestPieces[index].type));
+    const definition = effect === "script" && projectSpecialDefinition(cave, String(cave.playtestPieces[index].type));
     const commands = override ?? (effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }]);
     for (const { op, radius = 1, cells } of commands) {
       if (op === "fish") {
@@ -3705,18 +3721,19 @@ function createdSpecials(cave, runs, preferred, hits) {
   const result = new Map();
   if (!cave.specialMatches) return result;
   const reserved = new Set();
-  const create = (cells, type, candidates = cells) => {
-    if (cells.some((index) => reserved.has(index))) return;
+  const create = (cells, shape, candidates = cells) => {
+    const generation = project?.specialPieceRules?.generation;
+    const type = Object.hasOwn(generation || {}, shape) ? generation[shape] : SPECIAL_MATCH_SHAPES[shape][1];
+    if (!type || cells.some((index) => reserved.has(index))) return;
     const index = [...preferred.filter((index) => candidates.includes(index)), ...candidates]
       .find((index) => !cave.playtestPieces[index] && hits.has(index));
     if (index === undefined) return;
-    const definition = cave.initialPieceDefinitions?.find((entry) => entry.id === type) ||
-      EDITABLE_INITIAL_PIECES.find((entry) => entry.id === type);
-    result.set(index, { type, name: definition.name, symbol: definition.symbol });
+    const definition = projectSpecialDefinition(cave, type) || EDITABLE_INITIAL_PIECES.find((entry) => entry.id === type);
+    result.set(index, { type, name: definition?.name || type, symbol: definition?.symbol || "✦" });
     cells.forEach((cell) => reserved.add(cell));
   };
   for (const { cells } of runs) {
-    if (cells.length >= 5) create(cells, "rainbow", [cells[Math.floor(cells.length / 2)], ...cells]);
+    if (cells.length >= 5) create(cells, "five", [cells[Math.floor(cells.length / 2)], ...cells]);
   }
   const vertical = new Map();
   runs.filter(({ axis }) => axis === "vertical").forEach((run) =>
@@ -3724,10 +3741,14 @@ function createdSpecials(cave, runs, preferred, hits) {
   for (const { cells, axis } of runs) {
     if (axis !== "horizontal") continue;
     const center = cells.find((index) => vertical.has(index));
-    if (center !== undefined) create([...cells, ...vertical.get(center)], "bomb", [center]);
+    if (center === undefined) continue;
+    const upright = vertical.get(center);
+    const atEnd = (line) => center === line[0] || center === line.at(-1);
+    const ends = Number(atEnd(cells)) + Number(atEnd(upright));
+    create([...cells, ...upright], ["cross", "tee", "ell"][ends], [center]);
   }
   for (const { cells, axis } of runs) {
-    if (axis === "square") create(cells, "bee");
+    if (axis === "square") create(cells, "square");
     else if (cells.length === 4) create(cells, axis, [cells[1], ...cells]);
   }
   return result;
@@ -5316,7 +5337,7 @@ function adaptImportedJson(data) {
     });
     return adaptExternalLevel(level, index, format, unknownTokens, declaredLayers, tileReporter);
   });
-  const next = normalizeProject({ version: String(data?.version || data?.gameVersion || "IMPORTED"), caves, activeCaveId: caves[0].id, assetDefinitions: data?.assetDefinitions });
+  const next = normalizeProject({ version: String(data?.version || data?.gameVersion || "IMPORTED"), caves, activeCaveId: caves[0].id, assetDefinitions: data?.assetDefinitions, specialPieceRules: data?.specialPieceRules });
   return { project: next, format, unknownTokens: [...unknownTokens], unknownTiles };
 }
 
@@ -5455,6 +5476,7 @@ function bindInputs() {
     renderPalette();
     persist();
   });
+  $("projectRulesButton").addEventListener("click", openProjectSpecialRules);
   $("levelSettingsForm").addEventListener("submit", saveLevelSettings);
   const stopPainting = () => { isPainting = false; strokeSnapshotTaken = false; };
   window.addEventListener("pointerup", stopPainting);
@@ -5746,6 +5768,135 @@ function specialTypeOptions(cave) {
     if (!definitions.has(id)) definitions.set(id, { id, name: piece.name || "기존 타입 " + id, symbol: piece.symbol });
   });
   return definitions;
+}
+
+const SPECIAL_MATCH_SHAPES = {
+  horizontal: ["가로 4개", "horizontal"], vertical: ["세로 4개", "vertical"],
+  five: ["직선 5개 이상", "rainbow"], square: ["2×2", "bee"],
+  tee: ["T자", "bomb"], ell: ["L자", "bomb"], cross: ["십자", "bomb"],
+};
+
+const PROJECT_COMBO_EFFECTS = {
+  both: "두 피스 각각 발동", row: "가로 한 줄", column: "세로 한 줄",
+  cross: "가로·세로 십자", "wide-cross": "가로 3줄·세로 3줄", area: "주변 3×3",
+  "large-area": "주변 5×5", target: "목표 타일 1칸 제거", fish: "벌 · 목표 한 칸 타격",
+  board: "보드 전체 타격", disabled: "조합 사용 안 함",
+};
+
+function normalizeSpecialPieceRules(source) {
+  const generation = {};
+  for (const shape of Object.keys(SPECIAL_MATCH_SHAPES)) {
+    if (!Object.hasOwn(source?.generation || {}, shape)) continue;
+    const type = source.generation[shape];
+    if (type === null || assetId(type)) generation[shape] = type === null ? null : assetId(type);
+  }
+  const combos = new Map();
+  for (const rule of Array.isArray(source?.combos) ? source.combos : []) {
+    const first = assetId(rule?.first);
+    const second = assetId(rule?.second);
+    if (!first || !second || !Object.hasOwn(PROJECT_COMBO_EFFECTS, rule.effect)) continue;
+    combos.set(JSON.stringify([first, second].sort()), { first, second, effect: rule.effect });
+  }
+  return {
+    allowSquare: typeof source?.allowSquare === "boolean" ? source.allowSquare : null,
+    generation, combos: [...combos.values()],
+  };
+}
+
+function allowsSquareMatches(cave) {
+  return project?.specialPieceRules?.allowSquare ?? cave.specialMatches;
+}
+
+function projectSpecialDefinition(cave, id) {
+  const local = cave.initialPieceDefinitions?.find((entry) => entry.id === id);
+  if (local) return local;
+  for (const level of project?.caves || []) {
+    const definition = level.initialPieceDefinitions?.find((entry) => entry.id === id);
+    if (definition) return definition;
+  }
+  return null;
+}
+
+function configuredCombo(cave, first, second) {
+  const a = cave.playtestPieces[first]?.type;
+  const b = cave.playtestPieces[second]?.type;
+  if (!a || !b) return null;
+  return project?.specialPieceRules?.combos.find((rule) =>
+    (rule.first === String(a) && rule.second === String(b)) ||
+    (rule.first === String(b) && rule.second === String(a)))?.effect ?? null;
+}
+
+function openProjectSpecialRules() {
+  const dialog = $("projectRulesDialog");
+  const form = $("projectRulesForm");
+  const rules = normalizeSpecialPieceRules(project.specialPieceRules);
+  const types = new Map([...specialTypeOptions(activeCave())].map(([id, definition]) => [id, definition.name || id]));
+  for (const cave of project.caves) {
+    for (const definition of cave.initialPieceDefinitions || []) {
+      const id = String(definition.id);
+      if (!types.has(id)) types.set(id, definition.name || id);
+    }
+  }
+  const typeOptions = [...types];
+  const makeSelect = (label, options, value) => {
+    const select = document.createElement("select");
+    select.className = "field";
+    select.setAttribute("aria-label", label);
+    for (const [id, name] of options) select.add(new Option(name, id));
+    if (![...select.options].some((option) => option.value === value)) select.add(new Option(value, value));
+    select.value = value;
+    return select;
+  };
+  $("projectSquareRule").value = rules.allowSquare === null ? "default" : String(rules.allowSquare);
+  const generation = Object.entries(SPECIAL_MATCH_SHAPES).map(([shape, [name, fallback]]) => {
+    const label = document.createElement("label");
+    const selected = Object.hasOwn(rules.generation, shape) ? rules.generation[shape] : fallback;
+    const select = makeSelect(name, [["", "생성 안 함"], ...typeOptions], selected ?? "");
+    label.append(name + " ", select);
+    return { shape, label, select };
+  });
+  $("projectMatchRules").replaceChildren(...generation.map(({ label }) => label));
+
+  const combos = $("projectComboRules");
+  combos.replaceChildren();
+  const addCombo = ({ first = typeOptions[0][0], second = typeOptions[1][0], effect = "both" } = {}) => {
+    const row = document.createElement("div");
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "button ghost";
+    remove.textContent = "삭제";
+    remove.onclick = () => row.remove();
+    row.append(makeSelect("첫 피스", typeOptions, first), makeSelect("두 번째 피스", typeOptions, second),
+      makeSelect("조합 효과", Object.entries(PROJECT_COMBO_EFFECTS), effect), remove);
+    combos.append(row);
+  };
+  rules.combos.forEach(addCombo);
+  $("addProjectCombo").onclick = () => addCombo();
+  $("cancelProjectRules").onclick = () => dialog.close();
+  $("projectRulesStatus").textContent = "";
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    const square = $("projectSquareRule").value;
+    const next = normalizeSpecialPieceRules({
+      allowSquare: square === "default" ? null : square === "true",
+      generation: Object.fromEntries(generation.map(({ shape, select }) => [shape, select.value || null])),
+      combos: Array.from(combos.children, (row) => {
+        const [first, second, effect] = Array.from(row.querySelectorAll("select"), (select) => select.value);
+        return { first, second, effect };
+      }),
+    });
+    if (next.combos.length !== combos.children.length) {
+      $("projectRulesStatus").textContent = "같은 두 피스의 조합은 한 번만 설정할 수 있습니다.";
+      return;
+    }
+    snapshot();
+    project.specialPieceRules = next;
+    for (const cave of project.caves) cave.testClearMoves = 0;
+    dialog.close();
+    renderAll();
+    persist();
+  };
+  dialog.showModal();
 }
 
 function openSpecialTypeManager() {
