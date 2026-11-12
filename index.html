@@ -165,6 +165,9 @@
       #projectRulesForm .dialog-footer { flex: 0 0 auto; }
       #projectRulesStatus { margin: 0; margin-right: auto; }
       #projectRulesStatus:empty { display: none; }
+      #specialTypeForm { padding: 14px 18px; }
+      #specialTypeForm label { display: grid; gap: 5px; margin-bottom: 10px; }
+      #specialTypeForm .field { box-sizing: border-box; }
       @media (max-width: 540px) {
         .project-combo-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .project-rules-body, #projectRulesDialog .dialog-footer { padding-inline: 12px; }
@@ -708,13 +711,14 @@
         <p>현재 Cave의 특수 타입을 만들거나 수정합니다. 효과는 이 Cave에서 해당 타입을 사용하는 모든 블록에 적용됩니다.</p>
         <label>특수 타입<select class="field" id="specialTypeSelect"></select></label>
         <label>이름<input class="field" id="specialTypeName" maxlength="40" required></label>
+        <label>표시 기호<input class="field" id="specialTypeSymbol" maxlength="8" placeholder="✦"></label>
         <label>발동 효과<select class="field" id="specialTypeEffect"></select></label>
         <p>목표 타일 1칸 제거는 발동한 피스에서 가장 가까운 미완료 Terrain 목표 타일을 즉시 제거합니다.</p>
         <div id="specialTypeScriptField" hidden>
           <label>발동 스크립트<textarea class="field" id="specialTypeScript" rows="6" maxlength="4000" spellcheck="false" aria-describedby="specialTypeScriptHelp"></textarea></label>
           <p id="specialTypeScriptHelp">예: <code>[{"op":"row"},{"op":"offsets","cells":[[-1,-1],[1,1]]}]</code>는 가로 한 줄과 대각선 두 칸을 터뜨립니다. 좌표는 피스 기준 [가로, 세로]이며 오른쪽과 아래가 양수입니다. 지원 명령: row, column, cross, area (radius 1~5), color, target, offsets.</p>
         </div>
-        <button class="button primary" type="submit">타입 저장</button>
+        <button class="button primary" id="specialTypeSave" type="submit">타입 저장</button>
         <p id="specialTypeStatus" role="status"></p>
       </form>
       <form method="dialog" class="dialog-footer"><button class="button ghost">닫기</button></form>
@@ -887,7 +891,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=133"></script>
+    <script src="./app.js?v=134"></script>
   </body>
 </html>
 

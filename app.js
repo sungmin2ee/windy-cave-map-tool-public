@@ -5535,7 +5535,7 @@ function bindInputs() {
   $("assetReplaceCancel").addEventListener("click", () => { assetReplacement = null; renderGrid(); });
   $("viewAssetUsage").addEventListener("click", viewSelectedAssetUsage);
   $("deleteSelectedAsset").addEventListener("click", deleteSelectedAsset);
-  $("manageSpecialTypes").addEventListener("click", openSpecialTypeManager);
+  $("manageSpecialTypes").addEventListener("click", () => openSpecialTypeManager());
   $("showAssetDefinition").addEventListener("click", () => {
     $("assetDefinitionForm").reset();
     $("assetDefinitionForm").hidden = false;
@@ -5906,16 +5906,44 @@ function openProjectSpecialRules() {
     select.value = value;
     return select;
   };
+  const makePieceSelect = (label, value, allowCreate = false) => {
+    const select = makeSelect(label, allowCreate ? [["", "생성 안 함"], ...typeOptions] : typeOptions, value);
+    select.dataset.projectPieceSelect = "";
+    if (!allowCreate) return select;
+    const createOption = new Option("＋ 새 특수 피스 만들기", "__new_piece__");
+    select.add(createOption);
+    let previous = value;
+    select.onfocus = () => { previous = select.value; };
+    select.onchange = () => {
+      if (select.selectedOptions[0] !== createOption) {
+        previous = select.value;
+        return;
+      }
+      select.value = previous;
+      openSpecialTypeManager((piece) => {
+        typeOptions.push([piece.id, piece.name]);
+        for (const picker of form.querySelectorAll("[data-project-piece-select]")) {
+          picker.add(new Option(piece.name, piece.id));
+        }
+        select.value = piece.id;
+        previous = piece.id;
+      });
+    };
+    return select;
+  };
   const generation = Object.entries(SPECIAL_MATCH_SHAPES).map(([shape, [name, fallback]]) => {
     const label = document.createElement("label");
     const selected = Object.hasOwn(rules.generation, shape) ? rules.generation[shape] : fallback;
-    const select = makeSelect(name, [["", "생성 안 함"], ...typeOptions], selected ?? "");
+    const select = makePieceSelect(name, selected ?? "", true);
     label.append(name + " ", select);
     return { shape, label, select };
   });
   $("projectMatchRules").replaceChildren(...generation.map(({ label }) => label));
   $("disableDefaultMatchPieces").onclick = () => {
-    for (const { select } of generation) select.value = "";
+    for (const { select } of generation) {
+      select.value = "";
+      select.dispatchEvent(new Event("change"));
+    }
   };
 
   const customShapes = $("projectCustomMatchRules");
@@ -5940,7 +5968,7 @@ function openProjectSpecialRules() {
       }
     }
     const label = document.createElement("label");
-    label.append("생성할 피스", makeSelect("생성할 피스", [["", "생성 안 함"], ...typeOptions], type ?? ""));
+    label.append("생성할 피스", makePieceSelect("생성할 피스", type ?? "", true));
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "button ghost";
@@ -5964,7 +5992,7 @@ function openProjectSpecialRules() {
     row.className = "project-combo-row";
     const labeledSelect = (name, options, value) => {
       const label = document.createElement("label");
-      label.append(name, makeSelect(name, options, value));
+      label.append(name, options === typeOptions ? makePieceSelect(name, value) : makeSelect(name, options, value));
       return label;
     };
     row.append(labeledSelect("첫 피스", typeOptions, first), labeledSelect("두 번째 피스", typeOptions, second),
@@ -6007,12 +6035,13 @@ function openProjectSpecialRules() {
   dialog.showModal();
 }
 
-function openSpecialTypeManager() {
+function openSpecialTypeManager(onCreate) {
   const cave = activeCave();
   const dialog = $("specialTypeDialog");
   const form = $("specialTypeForm");
   const select = $("specialTypeSelect");
   const name = $("specialTypeName");
+  const symbol = $("specialTypeSymbol");
   const effect = $("specialTypeEffect");
   const status = $("specialTypeStatus");
   const scriptField = $("specialTypeScriptField");
@@ -6028,6 +6057,7 @@ function openSpecialTypeManager() {
   const showType = () => {
     const definition = definitions.get(select.value);
     name.value = definition?.name || "";
+    symbol.value = definition?.symbol || "";
     effect.value = definition?.effect === "script" ? "script" : specialEffect(cave, definition ? { type: definition.id } : null) || "none";
     script.value = definition?.effectScript || "";
     showScript();
@@ -6044,6 +6074,9 @@ function openSpecialTypeManager() {
     showType();
   };
   refresh("");
+  select.disabled = Boolean(onCreate);
+  $("specialTypeTitle").textContent = onCreate ? "새 특수 피스 만들기" : "특수 타입 관리";
+  $("specialTypeSave").textContent = onCreate ? "만들고 선택" : "타입 저장";
   select.onchange = showType;
   form.onsubmit = (event) => {
     event.preventDefault();
@@ -6051,7 +6084,7 @@ function openSpecialTypeManager() {
     if (!label || activeCave() !== cave) return;
     const current = definitions.get(select.value);
     const id = current?.id || "custom-" + crypto.randomUUID();
-    const updated = { ...current, id, name: label, symbol: current?.symbol || "✦", effect: effect.value };
+    const updated = { ...current, id, name: label, symbol: symbol.value.trim() || "✦", effect: effect.value };
     if (updated.effect === "script") {
       try { parseEffectScript(script.value); }
       catch (error) {
@@ -6067,6 +6100,11 @@ function openSpecialTypeManager() {
     cave.testClearMoves = 0;
     renderAll();
     persist();
+    if (onCreate) {
+      onCreate(updated);
+      dialog.close();
+      return;
+    }
     refresh(id);
     status.textContent = "특수 타입을 저장했습니다.";
   };
