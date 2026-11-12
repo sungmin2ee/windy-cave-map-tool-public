@@ -1905,11 +1905,8 @@ function randomizeBlocks() {
 
 
 function difficultyTerrainIds(cave) {
-  return (project.paletteAssets.terrain || []).filter((id) => {
-    const rule = cave.terrainRules[id];
-    return rule && rule.reaction !== "none" &&
-      (!id.startsWith("ddung-") || ["ddung-water", "ddung-ice", "ddung-web"].includes(id));
-  });
+  return [...new Set([...ASSETS.terrain.map(({ id }) => id), ...(project.paletteAssets.terrain || [])])]
+    .filter((id) => cave.terrainRules[id]?.reaction && cave.terrainRules[id].reaction !== "none");
 }
 
 function difficultyPatternSlots(cave, slots, pattern, attempt) {
@@ -1933,8 +1930,7 @@ function difficultyPatternSlots(cave, slots, pattern, attempt) {
 }
 
 function difficultyGimmickIds() {
-  return (project.paletteAssets.gimmick || []).filter((id) =>
-    id === "ddung-box" || (DDUNG_PANELS[id] && "AQZY1234r".includes(DDUNG_PANELS[id][0])));
+  return [...new Set([...ASSETS.gimmick.map(({ id }) => id), "ddung-iron-box", ...(project.paletteAssets.gimmick || [])])];
 }
 
 function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickIds = [], selectedTerrain = []) {
@@ -1961,14 +1957,14 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   });
   const terrainIds = difficultyTerrainIds(cave).filter((id) =>
     (!selectedTerrain.length || selectedTerrain.includes(id)) &&
-    (terrainCounts.has(id) || (terrainSlots.length && !cave.terrainRules[id].blocksFlow)));
+    (terrainCounts.has(id) || terrainSlots.length));
   if (!terrainIds.length || (selectedTerrain.length && terrainIds.length !== selectedTerrain.length)) return null;
   const targets = selectedTerrain.length ? terrainIds : [terrainIds[Math.floor(random() * terrainIds.length)]];
   const variation = 0.65 + random() * 0.7;
   const newTargets = targets.filter((id) => !terrainCounts.has(id));
   if (terrainSlots.length < newTargets.length) return null;
   const budget = Math.min(terrainSlots.length, Math.max(newTargets.length, Math.round(terrainSlots.length *
-    (pattern === "random" ? (0.05 + target * 0.002) * variation : 0.55 + target * 0.003))));
+    (pattern === "random" ? (0.05 + target * 0.002) * variation : 0.2 + target * 0.003))));
   for (let placed = 0; placed < budget && newTargets.length; placed++) {
     const [index] = terrainSlots.splice(Math.floor(random() * terrainSlots.length), 1);
     const id = newTargets[placed % newTargets.length];
@@ -1977,8 +1973,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   }
   const goals = targets.map((id, index) => {
     const available = terrainCounts.get(id);
-    const count = newTargets.includes(id) ? available :
-      Math.max(1, Math.min(available, Math.round(available * (0.2 + target * 0.008) * variation)));
+    const count = Math.max(1, Math.min(available, Math.round(available * (0.25 + target * 0.007) * variation)));
     return normalizeObjective({ id: "generated-terrain-goal-" + index, layer: "terrain", targetId: id, count });
   });
   const terrainCount = goals.reduce((count, goal) => count + goal.count, 0);
@@ -1986,7 +1981,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   const gimmicks = cave.layers.gimmick;
 
   const free = cave.layers.block.flatMap((_, index) =>
-    !isBarrier(cave, index) && (!keepPlacement || !cave.layers.block[index]) &&
+    !isBarrier(cave, index) &&
     (!terrain[index] || terrain[index] === "floor") && !gimmicks[index] && !cave.layers.item[index] ? [index] : []
   );
   const eligibleAssets = {
@@ -2005,7 +2000,27 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     for (let placed = 0; placed < count; placed += 1) {
       const [index] = slots.splice(Math.floor(random() * slots.length), 1);
       free.splice(free.indexOf(index), 1);
-      cave.layers[layer][index] = assets[(offset + (layer === "gimmick" ? placed : 0)) % assets.length];
+      const id = assets[(offset + (layer === "gimmick" ? placed : 0)) % assets.length];
+      if (layer === "gimmick" && ddungLargeGimmick(id)) {
+        const fit = (cell) => cell % cave.width < cave.width - 1 &&
+          [cell, cell + 1, cell + cave.width, cell + cave.width + 1].every((part) =>
+            !isBarrier(cave, part) && !gimmicks[part] && !cave.layers.item[part] && (!terrain[part] || terrain[part] === "floor"));
+        const anchor = [index, ...slots].find(fit);
+        if (anchor === undefined) {
+          if (placed < assets.length) return null;
+          continue;
+        }
+        paintLayerCell(cave, layer, anchor, id);
+        for (const part of ddungGimmickGroup(cave, anchor)) {
+          if (slots.includes(part)) slots.splice(slots.indexOf(part), 1);
+          if (free.includes(part)) free.splice(free.indexOf(part), 1);
+        }
+      } else if (layer === "gimmick") paintLayerCell(cave, layer, index, id);
+      else cave.layers[layer][index] = id;
+      if (!slots.length) {
+        if (layer === "gimmick" && placed + 1 < assets.length) return null;
+        break;
+      }
     }
   }
 
@@ -2016,7 +2031,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     if (!available.length) return null;
     blocks[index] = chooseBlockColor(cave, available, random);
   }
-  if (findMatches(cave).size || !hasPossibleSwap(cave)) return null;
+  if ((!keepPlacement && findMatches(cave).size) || !hasPossibleSwap(cave)) return null;
 
   cave.objectives = goals;
   cave.targetType = null;
@@ -2024,7 +2039,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   const moveSpread = [-8, -4, 0, 4, 9, 15][attempt % 6];
   cave.moveLimit = Math.max(2, Math.min(35, Math.round(16 - target / 8 + Math.sqrt(terrainCount) * 3 + moveSpread)));
   cave.parMoves = Math.max(1, Math.floor(cave.moveLimit * 0.75));
-  const validation = validateCave(cave);
+  const validation = validateCave(cave, collectPaletteAssets([cave], project.paletteAssets, project.assetDefinitions));
   return validation.errors.length || validation.unsupported.length ? null : cave;
 }
 
@@ -2041,7 +2056,8 @@ function renderDifficultyCandidates(source, candidates) {
     const card = document.createElement("details");
     card.open = index === 0;
     const summary = document.createElement("summary");
-    summary.textContent = "후보 " + (index + 1) + " · 추정 난이도 " + score + " · 클리어 " + batch.clearRate + "% (" + batch.wins + "/" + batch.runs + ")";
+    summary.textContent = "후보 " + (index + 1) + (batch.wins ? " · 추정 난이도 " + score : " · 자동 검증 미클리어") +
+      " · 클리어 " + batch.clearRate + "% (" + batch.wins + "/" + batch.runs + ")";
     const info = document.createElement("p");
     info.textContent = "제한 " + cave.moveLimit + " Moves · 성공 평균 " + batch.average +
       " Moves · 막힘 " + batch.stuck + "/" + batch.runs;
@@ -2072,18 +2088,31 @@ function renderDifficultyCandidates(source, candidates) {
       $("difficultyDialog").close();
       renderAll();
       persist();
-      toast("추정 난이도 " + score + " 후보를 적용했습니다.");
+      toast(batch.wins ? "추정 난이도 " + score + " 후보를 적용했습니다." : "자동 검증 미클리어 후보를 적용했습니다.");
     };
     card.append(summary, info, goals, viewport, apply);
     options.append(card);
   }
 }
 
+function renderDifficultyChoices(container, layer, ids, enabled) {
+  $(container).replaceChildren(...ids.map((id) => {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = id;
+    input.disabled = !enabled(id);
+    label.append(input, getAsset(layer, id).name + (input.disabled ? " · 직접 배치" : ""));
+    return label;
+  }));
+}
+
 function openDifficultyGenerator() {
-  $("difficultyTerrain").replaceChildren(...difficultyTerrainIds(activeCave())
-    .map((id) => new Option(getAsset("terrain", id).name, id)));
-  $("difficultyGimmick").replaceChildren(...difficultyGimmickIds()
-    .map((id) => new Option(getAsset("gimmick", id).name, id)));
+  const terrainIds = difficultyTerrainIds(activeCave());
+  const allTerrain = [...new Set([...ASSETS.terrain.map(({ id }) => id), ...(project.paletteAssets.terrain || [])])];
+  renderDifficultyChoices("difficultyTerrain", "terrain", allTerrain, (id) => terrainIds.includes(id));
+  renderDifficultyChoices("difficultyGimmick", "gimmick", difficultyGimmickIds(),
+    (id) => ![SPAWNER_ID, "teleport-a", "teleport-b", "exit"].includes(id));
   $("difficultyOptions").replaceChildren();
   $("difficultyStatus").textContent = "";
   $("difficultyDialog").showModal();
@@ -2096,8 +2125,8 @@ async function generateDifficultyCandidates(event) {
   const target = $("difficultyTarget").valueAsNumber;
   const keepPlacement = $("difficultyKeepPlacement").checked;
   const pattern = $("difficultyPattern").value;
-  const gimmickIds = Array.from($("difficultyGimmick").selectedOptions, (option) => option.value);
-  const selectedTerrain = Array.from($("difficultyTerrain").selectedOptions, (option) => option.value);
+  const gimmickIds = Array.from($("difficultyGimmick").querySelectorAll("input:checked"), (input) => input.value);
+  const selectedTerrain = Array.from($("difficultyTerrain").querySelectorAll("input:checked"), (input) => input.value);
   const status = $("difficultyStatus");
   const submit = $("difficultyGenerate");
   const fields = $("difficultyFields");
@@ -2143,14 +2172,15 @@ async function generateDifficultyCandidates(event) {
         results.push(runAutoGame(cave, run));
       }
       const batch = summarizeBatch(results);
-      if (batch.wins) candidates.push({ cave, batch, score: difficultyCandidateScore(cave, batch) });
+      candidates.push({ cave, batch, score: difficultyCandidateScore(cave, batch) });
     }
-    candidates.sort((a, b) => Math.abs(a.score - target) - Math.abs(b.score - target) || b.batch.wins - a.batch.wins);
+    candidates.sort((a, b) => Number(!a.batch.wins) - Number(!b.batch.wins) ||
+      Math.abs(a.score - target) - Math.abs(b.score - target) || b.batch.wins - a.batch.wins);
     const best = candidates.slice(0, 3);
     renderDifficultyCandidates(source, best);
     status.textContent = best.length
       ? "목표 " + target + " · 가까운 후보 " + best.length + "개 · 후보당 자동 플레이 " + runs + "회"
-      : "자동 플레이에서 클리어한 후보가 없습니다. 배치 유지 옵션이나 보드 구성을 확인해 주세요.";
+      : "선택한 패턴에 배치할 공간이 부족하거나 시작 상태에서 교환할 수 없습니다. 배치 유지 옵션과 선택한 오브젝트를 확인해 주세요.";
   } catch (error) {
     console.error(error);
     status.textContent = "후보를 만드는 중 오류가 발생했습니다.";
@@ -2194,13 +2224,13 @@ function analyzeDifficulty(cave) {
   return { ...levels, score, slack, budgetRatio, totalBlocks, usedColors: usedColors.size, gimmickCount, itemCount, referenceMoves, objectiveWork };
 }
 
-function validateCave(cave) {
+function validateCave(cave, palette = project.paletteAssets) {
   const errors = [];
   const warnings = [];
   const unsupported = [];
   const analysis = analyzeDifficulty(cave);
-  const teleportA = cave.layers.gimmick.filter((value) => value === "teleport-a").length;
-  const teleportB = cave.layers.gimmick.filter((value) => value === "teleport-b").length;
+  const teleportA = cave.layers.gimmick.filter((value, index) => value === "teleport-a" || ddungMarkersAt(cave, index).includes("teleport-a")).length;
+  const teleportB = cave.layers.gimmick.filter((value, index) => value === "teleport-b" || ddungMarkersAt(cave, index).includes("teleport-b")).length;
   const initialMatches = findMatches(cave).size;
   if (!analysis.totalBlocks) errors.push("퍼즐 블록이 하나도 없습니다.");
   if (!cave.objectives.length) errors.push("목표를 하나 이상 설정해야 합니다.");
@@ -2213,7 +2243,7 @@ function validateCave(cave) {
     const target = resolvedObjectiveCount(cave, objective);
     if (objectiveKeys.has(key)) errors.push(`${label} 목표가 중복되어 있습니다.`);
     objectiveKeys.add(key);
-    if (!project.paletteAssets[objective.layer]?.includes(objective.targetId)) errors.push(`${label} 대상이 현재 팔레트에 없습니다.`);
+    if (!palette[objective.layer]?.includes(objective.targetId)) errors.push(`${label} 대상이 현재 팔레트에 없습니다.`);
     const limitation = ddungGoalLimitation(cave, objective);
     if (limitation) unsupported.push(`${label} · ${limitation}`);
     if (target < 1 && !limitation) errors.push(`${label} 목표 수량은 1 이상이어야 합니다.`);

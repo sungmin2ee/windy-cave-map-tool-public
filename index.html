@@ -144,6 +144,9 @@
       #difficultyFields { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
       #difficultyTarget { max-width: 7rem; }
       #difficultyOptions { display: grid; gap: 12px; }
+      .difficulty-choices { max-height: 9rem; overflow: auto; padding: 6px; border: 1px solid #444952; border-radius: 6px; }
+      .difficulty-choices label { display: flex; gap: 8px; align-items: center; padding: 4px; }
+      .difficulty-choices label:has(input:disabled) { opacity: .6; }
       #difficultyOptions details { padding: 12px; border: 1px solid #444952; border-radius: 8px; }
       #difficultyOptions summary { cursor: pointer; font-weight: 700; }
       .difficulty-preview-scroll { overflow: auto; max-height: 38vh; margin-block: 12px; }
@@ -563,9 +566,9 @@
               <option value="bands">가로 띠와 세로 기둥</option>
             </select>
           </label>
-          <label>목표 Terrain (최대 4종) <select class="field" id="difficultyTerrain" multiple size="4"></select></label>
-          <label>추가할 기믹 <select class="field" id="difficultyGimmick" multiple size="4"></select></label>
-          <p>PC에서 Ctrl 또는 ⌘를 누른 채 여러 항목을 선택하세요. Terrain을 선택하지 않으면 한 종류를 자동으로 고릅니다.</p>
+          <div><div>목표 Terrain (최대 4종)</div><div class="difficulty-choices" id="difficultyTerrain"></div></div>
+          <div><div>추가할 기믹</div><div class="difficulty-choices" id="difficultyGimmick"></div></div>
+          <p>클릭이나 터치로 여러 항목을 고를 수 있습니다. Terrain을 선택하지 않으면 한 종류를 자동으로 고릅니다.</p>
           <label><input id="difficultyKeepPlacement" type="checkbox" checked> 기존 오브젝트 배치 유지</label>
         </fieldset>
         <p>Terrain 제거를 클리어 목표로 설정하고, 클리어율과 이동 횟수로 난이도를 추정합니다.</p>
@@ -764,7 +767,7 @@
             <li>왼쪽 레벨 설정의 <strong>랜덤 배치</strong>에 시드와 밀도를 입력하고 <strong>랜덤 채우기 · 시드로 블록 배치</strong>를 누릅니다. 오른쪽 <strong>사용 색상</strong>에서 사용할 블록을 지정하세요.</li>
             <li>같은 영역의 <strong>보드 모양 후보</strong>에서 모양을 골라 적용할 수 있습니다. <strong>구역 아이템 랜덤 배치</strong>는 행·열 범위, 아이템 종류, 개수를 받아 범위 안의 배치 가능한 빈 칸에 배치합니다. 먼저 오른쪽 <strong>Item</strong> 탭에 종류를 등록하세요.</li>
             <li>왼쪽 <strong>랜덤 배치 → 난이도로 보드 생성</strong>에서 목표 난이도 <code>1~100</code>을 입력하고 <strong>후보 생성</strong>을 누릅니다. <strong>사용 색상</strong>에 생성 가중치가 0보다 큰 블록이 두 종류 이상 필요합니다. <strong>Terrain</strong> 탭에는 매치로 제거할 수 있는 지형을 등록하고 반응 규칙을 설정하세요.</li>
-            <li>생성된 보드의 클리어 목표는 <strong>Terrain 파괴</strong>입니다. 후보당 6회 자동 플레이를 돌려 한 번 이상 클리어한 보드 중 목표 난이도에 가까운 후보를 최대 3개 보여줍니다. 보드, 목표 수량, 제한 Moves, 추정 난이도와 클리어율을 확인하고 <strong>이 후보 적용</strong>을 누르세요.</li>
+            <li>생성된 보드의 클리어 목표는 <strong>Terrain 파괴</strong>입니다. 후보당 6회 자동 플레이를 돌려 클리어가 확인된 보드를 우선해 최대 3개를 보여줍니다. 미클리어 후보는 별도로 표시합니다. 보드, 목표 수량, 제한 Moves, 추정 난이도와 클리어율을 확인하고 <strong>이 후보 적용</strong>을 누르세요.</li>
             <li><strong>기존 오브젝트 배치 유지</strong>는 기본으로 켜져 있습니다. 기존 배치를 바탕으로 생성하려면 체크하고, 새로 배치하려면 체크를 해제하세요. 두 경우 모두 보드 크기와 비활성 칸을 유지합니다.</li>
             <li>자동 생성 시 스포너는 중력 반대쪽 가장자리에 배치됩니다. 중력이 아래면 위쪽, 위면 아래쪽, 왼쪽이면 오른쪽, 오른쪽이면 왼쪽입니다. 비활성 칸, 막힌 지형, 다른 기믹이 있는 칸은 건너뜁니다. <strong>기존 오브젝트 배치 유지</strong>를 켜도 생성 후보의 스포너 위치는 이 규칙에 맞춰 조정됩니다.</li>
           </ul>
@@ -801,7 +804,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=119"></script>
+    <script src="./app.js?v=120"></script>
   </body>
 </html>
 
