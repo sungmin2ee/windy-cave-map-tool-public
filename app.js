@@ -1289,14 +1289,16 @@ function applyCellVisual(cell, cave, index) {
     if (cell.tagName === "BUTTON") cell.disabled = true;
     return;
   }
+  const smallMayor = isDdungSmallMayor(cave, index);
   for (const layer of ["terrain", "block", "gimmick", "item"]) {
+    if (layer === "block" && smallMayor) continue;
     const assetId = cave.layers[layer][index];
     if (!assetId) continue;
     const asset = getAsset(layer, assetId, cave);
     if (!asset) continue;
     const visual = document.createElement("span");
     visual.className = `cell-${layer} ${asset.className || ""}`;
-    if (layer === "gimmick" && cave.layers.block[index]) {
+    if (layer === "gimmick" && cave.layers.block[index] && !smallMayor) {
       if (assetId === SPAWNER_ID) visual.classList.add("cell-spawner-badge");
       else if (asset.image?.endsWith(".webp") && asset.image.startsWith("./art/ddung/")) {
         visual.classList.add("cell-ddung-gimmick-badge");
@@ -2369,7 +2371,13 @@ function isSwapBlocked(cave, index) {
   return isBarrier(cave, index) || Boolean(cave.terrainRules?.[cave.layers.terrain[index]]?.blocksSwap);
 }
 
-const DDUNG_GIMMICK_HITS = Object.freeze({ "ddung-mouse-panel": 4, "ddung-dungs": 4, "ddung-bulldozer": 4 });
+const DDUNG_GIMMICK_HITS = Object.freeze({
+  "ddung-mouse-panel": 4, "ddung-dungs": 4, "ddung-bulldozer": 4, "ddung-mayor-small": 2,
+});
+
+function isDdungSmallMayor(cave, index) {
+  return cave.layers.gimmick[index] === "ddung-mayor-small" && isDdungSource(cave.externalSource);
+}
 
 function isDdungGimmickBarrier(cave, index) {
   return isDdungSource(cave.externalSource) && Object.hasOwn(DDUNG_GIMMICK_HITS, cave.layers.gimmick[index]);
@@ -2682,7 +2690,8 @@ function* gimmickHitResults(state, matches, removedBlocks) {
     const durability = boxDurability || ddungDurability || rule?.durability || (originId ? 1 : 0);
     if (isDdungSource(cave.externalSource) && !durability) continue;
     const nearbyHits = durability ? removedBlocks : matches;
-    const reaction = boxDurability || ddungDurability ? "either" : rule?.reaction ?? "either";
+    const reaction = isDdungSmallMayor(cave, index) ? "adjacent" :
+      boxDurability || ddungDurability ? "either" : rule?.reaction ?? "either";
     if ((reaction !== "adjacent" && matches.has(index)) ||
         (reaction !== "direct" && neighborsOf(cave, index).some((neighbor) => nearbyHits.has(neighbor)))) {
       const amount = id === "ddung-mouse-panel" && ddungDurability && matches.has(index)
