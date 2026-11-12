@@ -152,6 +152,14 @@
       .project-rules-body select.field { box-sizing: border-box; width: 100%; min-width: 0; }
       #projectSquareRule { max-width: 18rem; }
       #projectMatchRules { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 12px; }
+      #disableDefaultMatchPieces { margin-top: 12px; }
+      #projectCustomMatchRules { display: grid; gap: 10px; }
+      #projectCustomMatchRules:not(:empty) { margin-bottom: 12px; }
+      .project-custom-match { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+      .project-custom-match label { flex: 1 1 10rem; }
+      .project-match-pattern { display: grid; grid-template-columns: repeat(5, 28px); gap: 4px; }
+      .project-match-pattern button { width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 5px; background: #242835; cursor: pointer; }
+      .project-match-pattern button[aria-pressed="true"] { background: #a18aff; border-color: #d7cdff; }
       #projectComboRules { display: grid; gap: 10px; }
       #projectComboRules:not(:empty) { margin-bottom: 12px; }
       .project-combo-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
@@ -679,6 +687,13 @@
             <legend>매치 모양별 특수 피스 생성</legend>
             <p>각 레벨의 ‘매치로 특수 피스 생성’이 켜져 있을 때 적용됩니다.</p>
             <div id="projectMatchRules"></div>
+            <button id="disableDefaultMatchPieces" class="button ghost" type="button">기본 피스 생성 모두 끄기</button>
+          </fieldset>
+          <fieldset>
+            <legend>직접 지정한 매치 모양</legend>
+            <p>같은 색으로 맞춰야 할 칸을 3개 이상 선택하세요. 그린 방향으로 매치되며, 겹치는 기본 피스 생성 규칙보다 먼저 적용됩니다.</p>
+            <div id="projectCustomMatchRules"></div>
+            <button id="addProjectMatchShape" class="button ghost" type="button">매치 모양 추가</button>
           </fieldset>
           <fieldset>
             <legend>두 특수 피스 조합</legend>
@@ -880,7 +895,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=131"></script>
+    <script src="./app.js?v=132"></script>
   </body>
 </html>
 

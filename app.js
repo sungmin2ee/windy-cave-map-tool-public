@@ -3,7 +3,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.46";
+const CLIENT_VERSION = "2.7.47";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -1703,6 +1703,8 @@ function wouldCreateMatch(blocks, index, color, cave) {
   };
   if (1 + countDirection(-1, 0) + countDirection(1, 0) >= 3
     || 1 + countDirection(0, -1) + countDirection(0, 1) >= 3) return true;
+  if (project?.specialPieceRules?.customShapes?.some(({ cells }) =>
+    cells.some(([dx, dy]) => customMatchCells(blocks, cave, cells, x - dx, y - dy, color, index)))) return true;
   if (!allowsSquareMatches(cave)) return false;
 
   for (const dx of [-1, 1]) {
@@ -2645,7 +2647,31 @@ function findMatches(cave, runs, protectedCells) {
       }
     }
   }
+  for (const shape of project?.specialPieceRules?.customShapes || []) {
+    for (const [index, color] of blocks.entries()) {
+      if (!color) continue;
+      const [dx, dy] = shape.cells[0];
+      const cells = customMatchCells(blocks, cave, shape.cells, index % cave.width - dx,
+        Math.floor(index / cave.width) - dy, color);
+      if (!cells) continue;
+      for (const cell of cells) matches.add(cell);
+      runs?.push({ axis: "custom", cells, type: shape.type });
+    }
+  }
   return matches;
+}
+
+function customMatchCells(blocks, cave, offsets, x, y, color, placedIndex = -1) {
+  const cells = [];
+  for (const [dx, dy] of offsets) {
+    const col = x + dx;
+    const row = y + dy;
+    if (col < 0 || col >= cave.width || row < 0 || row >= cave.height) return null;
+    const index = row * cave.width + col;
+    if (index !== placedIndex && blocks[index] !== color) return null;
+    cells.push(index);
+  }
+  return cells;
 }
 
 function neighborsOf(cave, index) {
@@ -3721,10 +3747,15 @@ function createdSpecials(cave, runs, preferred, hits) {
   const result = new Map();
   if (!cave.specialMatches) return result;
   const reserved = new Set();
-  const create = (cells, shape, candidates = cells) => {
+  const create = (cells, shape, candidates = cells, customType = null) => {
     const generation = project?.specialPieceRules?.generation;
-    const type = Object.hasOwn(generation || {}, shape) ? generation[shape] : SPECIAL_MATCH_SHAPES[shape][1];
-    if (!type || cells.some((index) => reserved.has(index))) return;
+    const type = shape === "custom" ? customType
+      : Object.hasOwn(generation || {}, shape) ? generation[shape] : SPECIAL_MATCH_SHAPES[shape][1];
+    if (cells.some((index) => reserved.has(index))) return;
+    if (!type) {
+      if (shape === "custom") cells.forEach((cell) => reserved.add(cell));
+      return;
+    }
     const index = [...preferred.filter((index) => candidates.includes(index)), ...candidates]
       .find((index) => !cave.playtestPieces[index] && hits.has(index));
     if (index === undefined) return;
@@ -3732,8 +3763,11 @@ function createdSpecials(cave, runs, preferred, hits) {
     result.set(index, { type, name: definition?.name || type, symbol: definition?.symbol || "✦" });
     cells.forEach((cell) => reserved.add(cell));
   };
-  for (const { cells } of runs) {
-    if (cells.length >= 5) create(cells, "five", [cells[Math.floor(cells.length / 2)], ...cells]);
+  for (const { axis, cells, type } of runs) {
+    if (axis === "custom") create(cells, axis, cells, type);
+  }
+  for (const { axis, cells } of runs) {
+    if (axis !== "custom" && cells.length >= 5) create(cells, "five", [cells[Math.floor(cells.length / 2)], ...cells]);
   }
   const vertical = new Map();
   runs.filter(({ axis }) => axis === "vertical").forEach((run) =>
@@ -3748,6 +3782,7 @@ function createdSpecials(cave, runs, preferred, hits) {
     create([...cells, ...upright], ["cross", "tee", "ell"][ends], [center]);
   }
   for (const { cells, axis } of runs) {
+    if (axis === "custom") continue;
     if (axis === "square") create(cells, "square");
     else if (cells.length === 4) create(cells, axis, [cells[1], ...cells]);
   }
@@ -5800,7 +5835,31 @@ function normalizeSpecialPieceRules(source) {
   return {
     allowSquare: typeof source?.allowSquare === "boolean" ? source.allowSquare : null,
     generation, combos: [...combos.values()],
+    customShapes: normalizeCustomMatchShapes(source?.customShapes),
   };
+}
+
+const CUSTOM_MATCH_SIZE = 5;
+
+function normalizeCustomMatchShapes(shapes) {
+  const result = new Map();
+  for (const shape of Array.isArray(shapes) ? shapes : []) {
+    if (!Array.isArray(shape?.cells)) continue;
+    const indices = new Set();
+    for (const cell of shape.cells) {
+      if (!Array.isArray(cell) || cell.length !== 2 ||
+          !cell.every((n) => Number.isInteger(n) && n >= 0 && n < CUSTOM_MATCH_SIZE)) continue;
+      indices.add(cell[1] * CUSTOM_MATCH_SIZE + cell[0]);
+    }
+    if (indices.size < 3) continue;
+    const points = [...indices].sort((a, b) => a - b)
+      .map((index) => [index % CUSTOM_MATCH_SIZE, Math.floor(index / CUSTOM_MATCH_SIZE)]);
+    const left = Math.min(...points.map(([x]) => x));
+    const top = points[0][1];
+    const cells = points.map(([x, y]) => [x - left, y - top]);
+    result.set(JSON.stringify(cells), { cells, type: assetId(shape.type) });
+  }
+  return [...result.values()];
 }
 
 function allowsSquareMatches(cave) {
@@ -5856,6 +5915,43 @@ function openProjectSpecialRules() {
     return { shape, label, select };
   });
   $("projectMatchRules").replaceChildren(...generation.map(({ label }) => label));
+  $("disableDefaultMatchPieces").onclick = () => {
+    for (const { select } of generation) select.value = "";
+  };
+
+  const customShapes = $("projectCustomMatchRules");
+  customShapes.replaceChildren();
+  const addShape = ({ cells = [], type = null } = {}) => {
+    const row = document.createElement("div");
+    row.className = "project-custom-match";
+    const grid = document.createElement("div");
+    grid.className = "project-match-pattern";
+    grid.setAttribute("role", "group");
+    grid.setAttribute("aria-label", "매치할 칸");
+    for (let y = 0; y < CUSTOM_MATCH_SIZE; y++) {
+      for (let x = 0; x < CUSTOM_MATCH_SIZE; x++) {
+        const tile = document.createElement("button");
+        tile.type = "button";
+        tile.dataset.x = x;
+        tile.dataset.y = y;
+        tile.setAttribute("aria-label", (y + 1) + "행 " + (x + 1) + "열");
+        tile.setAttribute("aria-pressed", String(cells.some(([dx, dy]) => dx === x && dy === y)));
+        tile.onclick = () => tile.setAttribute("aria-pressed", String(tile.getAttribute("aria-pressed") !== "true"));
+        grid.append(tile);
+      }
+    }
+    const label = document.createElement("label");
+    label.append("생성할 피스", makeSelect("생성할 피스", [["", "생성 안 함"], ...typeOptions], type ?? ""));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "button ghost";
+    remove.textContent = "삭제";
+    remove.onclick = () => row.remove();
+    row.append(grid, label, remove);
+    customShapes.append(row);
+  };
+  rules.customShapes.forEach(addShape);
+  $("addProjectMatchShape").onclick = () => addShape();
 
   const combos = $("projectComboRules");
   combos.replaceChildren();
@@ -5886,11 +5982,19 @@ function openProjectSpecialRules() {
     const next = normalizeSpecialPieceRules({
       allowSquare: square === "default" ? null : square === "true",
       generation: Object.fromEntries(generation.map(({ shape, select }) => [shape, select.value || null])),
+      customShapes: Array.from(customShapes.children, (row) => ({
+        cells: Array.from(row.querySelectorAll('[aria-pressed="true"]'), (tile) => [Number(tile.dataset.x), Number(tile.dataset.y)]),
+        type: row.querySelector("select").value || null,
+      })),
       combos: Array.from(combos.children, (row) => {
         const [first, second, effect] = Array.from(row.querySelectorAll("select"), (select) => select.value);
         return { first, second, effect };
       }),
     });
+    if (next.customShapes.length !== customShapes.children.length) {
+      $("projectRulesStatus").textContent = "각 모양은 서로 달라야 하며 칸을 3개 이상 선택해야 합니다.";
+      return;
+    }
     if (next.combos.length !== combos.children.length) {
       $("projectRulesStatus").textContent = "같은 두 피스의 조합은 한 번만 설정할 수 있습니다.";
       return;
