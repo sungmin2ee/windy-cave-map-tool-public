@@ -140,6 +140,28 @@
     .playtest-frame-match { outline: 2px solid #fbbf24; outline-offset: -2px; background-color: #4d3312; z-index: 1; }
   </style>
     <style>
+      #projectRulesDialog { width: min(740px, calc(100vw - 24px)); max-height: 90dvh; overflow: hidden; }
+      #projectRulesDialog[open] { display: flex; flex-direction: column; }
+      #projectRulesDialog .dialog-header { flex: 0 0 auto; }
+      #projectRulesForm { min-height: 0; display: flex; flex-direction: column; }
+      .project-rules-body { min-height: 0; overflow-y: auto; padding: 16px 18px; display: grid; gap: 18px; }
+      .project-rules-body fieldset { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+      .project-rules-body legend { padding: 0 6px; font-weight: 700; }
+      .project-rules-body p { margin: 0 0 12px; color: var(--muted); font-size: .88rem; line-height: 1.5; }
+      .project-rules-body label { display: grid; gap: 5px; min-width: 0; font-size: .88rem; }
+      .project-rules-body select.field { box-sizing: border-box; width: 100%; min-width: 0; }
+      #projectSquareRule { max-width: 18rem; }
+      #projectMatchRules { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 12px; }
+      #projectComboRules { display: grid; gap: 10px; }
+      #projectComboRules:not(:empty) { margin-bottom: 12px; }
+      .project-combo-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+      #projectRulesForm .dialog-footer { flex: 0 0 auto; }
+      #projectRulesStatus { margin: 0; margin-right: auto; }
+      #projectRulesStatus:empty { display: none; }
+      @media (max-width: 540px) {
+        .project-combo-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .project-rules-body, #projectRulesDialog .dialog-footer { padding-inline: 12px; }
+      }
       #difficultyDialog { max-height: 86vh; overflow-y: auto; }
       #difficultyFields { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
       #difficultyTarget { max-width: 7rem; }
@@ -645,27 +667,31 @@
     <dialog id="projectRulesDialog" class="simulation-dialog" aria-labelledby="projectRulesTitle">
       <div class="dialog-header"><h2 id="projectRulesTitle">프로젝트 설정 · 특수 피스 규칙</h2></div>
       <form id="projectRulesForm">
-        <label>2×2 매치
-          <select id="projectSquareRule" class="field">
-            <option value="default">레벨의 기존 설정 따르기</option>
-            <option value="true">허용</option>
-            <option value="false">허용 안 함</option>
-          </select>
-        </label>
-        <fieldset>
-          <legend>매치 모양별 특수 피스 생성</legend>
-          <p>각 레벨의 ‘매치로 특수 피스 생성’이 켜져 있을 때 적용됩니다.</p>
-          <div id="projectMatchRules" class="difficulty-choices"></div>
-        </fieldset>
-        <fieldset>
-          <legend>두 특수 피스 조합</legend>
-          <p>등록하지 않은 조합은 기본 효과를 사용합니다. 범위 효과는 교환한 두 번째 칸을 기준으로 발동합니다.</p>
-          <div id="projectComboRules"></div>
-          <button id="addProjectCombo" class="button ghost" type="button">조합 추가</button>
-        </fieldset>
-        <p id="projectRulesStatus" role="status"></p>
-        <button id="cancelProjectRules" class="button ghost" type="button">취소</button>
-        <button class="button primary" type="submit">프로젝트 규칙 저장</button>
+        <div class="project-rules-body">
+          <label>2×2 매치
+            <select id="projectSquareRule" class="field">
+              <option value="default">레벨의 기존 설정 따르기</option>
+              <option value="true">허용</option>
+              <option value="false">허용 안 함</option>
+            </select>
+          </label>
+          <fieldset>
+            <legend>매치 모양별 특수 피스 생성</legend>
+            <p>각 레벨의 ‘매치로 특수 피스 생성’이 켜져 있을 때 적용됩니다.</p>
+            <div id="projectMatchRules"></div>
+          </fieldset>
+          <fieldset>
+            <legend>두 특수 피스 조합</legend>
+            <p>등록하지 않은 조합은 기본 효과를 사용합니다. 범위 효과는 교환한 두 번째 칸을 기준으로 발동합니다.</p>
+            <div id="projectComboRules"></div>
+            <button id="addProjectCombo" class="button ghost" type="button">조합 추가</button>
+          </fieldset>
+        </div>
+        <div class="dialog-footer">
+          <p id="projectRulesStatus" role="status"></p>
+          <button id="cancelProjectRules" class="button ghost" type="button">취소</button>
+          <button class="button primary" type="submit">프로젝트 규칙 저장</button>
+        </div>
       </form>
     </dialog>
 
@@ -854,7 +880,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=130"></script>
+    <script src="./app.js?v=131"></script>
   </body>
 </html>
 

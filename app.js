@@ -5866,8 +5866,14 @@ function openProjectSpecialRules() {
     remove.className = "button ghost";
     remove.textContent = "삭제";
     remove.onclick = () => row.remove();
-    row.append(makeSelect("첫 피스", typeOptions, first), makeSelect("두 번째 피스", typeOptions, second),
-      makeSelect("조합 효과", Object.entries(PROJECT_COMBO_EFFECTS), effect), remove);
+    row.className = "project-combo-row";
+    const labeledSelect = (name, options, value) => {
+      const label = document.createElement("label");
+      label.append(name, makeSelect(name, options, value));
+      return label;
+    };
+    row.append(labeledSelect("첫 피스", typeOptions, first), labeledSelect("두 번째 피스", typeOptions, second),
+      labeledSelect("조합 효과", Object.entries(PROJECT_COMBO_EFFECTS), effect), remove);
     combos.append(row);
   };
   rules.combos.forEach(addCombo);
