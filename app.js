@@ -1745,46 +1745,52 @@ function boardShapeCandidates(cave, symmetry, percent) {
   return { target, candidates: [...candidates.values()] };
 }
 
+function renderBoardShapeCandidates(cave, prefix, onSelect) {
+  const options = $(prefix + "Options");
+  const percent = clampNumber($(prefix + "Percent").value, 20, 0, 70);
+  const { candidates, target } = boardShapeCandidates(cave, $(prefix + "Symmetry").value, percent);
+  options.replaceChildren();
+  $(prefix + "Status").textContent = cave.width + " × " + cave.height + " · 목표 " + target + "칸";
+  if (candidates[0].length < target) {
+    $(prefix + "Status").textContent += " · 대칭과 기존 오브젝트를 고려해 가능한 만큼 막았습니다.";
+  }
+  for (const [index, cells] of candidates.entries()) {
+    const blocked = new Set(cells);
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "button ghost";
+    card.textContent = "후보 " + (index + 1) + " · 막힌 칸 " + cells.length + "개";
+    const grid = document.createElement("span");
+    grid.className = "board-shape-grid";
+    grid.style.gridTemplateColumns = "repeat(" + cave.width + ", 10px)";
+    grid.setAttribute("aria-hidden", "true");
+    for (let cell = 0; cell < cave.width * cave.height; cell++) {
+      const tile = document.createElement("span");
+      if (blocked.has(cell)) tile.className = "board-shape-blocked";
+      grid.append(tile);
+    }
+    card.append(grid);
+    card.setAttribute("aria-pressed", "false");
+    card.addEventListener("click", () => {
+      for (const button of options.children) button.setAttribute("aria-pressed", String(button === card));
+      onSelect(cells);
+    });
+    options.append(card);
+  }
+}
+
 function openBoardShapes() {
   const cave = activeCave();
   const dialog = $("boardShapeDialog");
-  const options = $("boardShapeOptions");
-  const refresh = () => {
-    const percent = clampNumber($("boardShapePercent").value, 20, 0, 70);
-    const { candidates, target } = boardShapeCandidates(cave, $("boardShapeSymmetry").value, percent);
-    options.replaceChildren();
-    $("boardShapeStatus").textContent = cave.width + " × " + cave.height + " · 목표 " + target + "칸";
-    if (candidates[0].length < target) {
-      $("boardShapeStatus").textContent += " · 대칭과 기존 오브젝트를 고려해 가능한 만큼 막았습니다.";
-    }
-    for (const [index, cells] of candidates.entries()) {
-      const blocked = new Set(cells);
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "button ghost";
-      card.textContent = "후보 " + (index + 1) + " 적용 · 막힌 칸 " + cells.length + "개";
-      const grid = document.createElement("span");
-      grid.className = "board-shape-grid";
-      grid.style.gridTemplateColumns = "repeat(" + cave.width + ", 10px)";
-      grid.setAttribute("aria-hidden", "true");
-      for (let cell = 0; cell < cave.width * cave.height; cell++) {
-        const tile = document.createElement("span");
-        if (blocked.has(cell)) tile.className = "board-shape-blocked";
-        grid.append(tile);
-      }
-      card.append(grid);
-      card.addEventListener("click", () => {
-        snapshot();
-        cave.excludedCells = cells;
-        cave.testClearMoves = 0;
-        dialog.close();
-        renderAll();
-        persist();
-        toast("보드 모양을 적용했습니다. 막힌 칸 " + cells.length + "개");
-      });
-      options.append(card);
-    }
-  };
+  const refresh = () => renderBoardShapeCandidates(cave, "boardShape", (cells) => {
+    snapshot();
+    cave.excludedCells = cells;
+    cave.testClearMoves = 0;
+    dialog.close();
+    renderAll();
+    persist();
+    toast("보드 모양을 적용했습니다. 막힌 칸 " + cells.length + "개");
+  });
   $("boardShapeRefresh").onclick = refresh;
   $("boardShapeSymmetry").onchange = refresh;
   $("boardShapePercent").onchange = refresh;
@@ -2128,65 +2134,23 @@ function renderDifficultyChoices(container, layer, ids, enabled) {
   }));
 }
 
-const DIFFICULTY_BOARD_SHAPES = [
-  ["current", "현재 보드"],
-  ["rectangle", "직사각형"],
-  ["corners", "모서리를 자른 보드"],
-  ["diamond", "마름모"],
-  ["hourglass", "모래시계"],
-  ["lanes", "두 통로와 중앙 다리"],
-];
-
-function difficultyBoardMask(cave, shape, keepPlacement) {
-  if (shape === "current") return [...(cave.excludedCells || [])];
-  const { width, height } = cave;
-  const blocked = [];
-  for (let index = 0; index < width * height; index++) {
-    const x = index % width;
-    const y = Math.floor(index / width);
-    const dx = Math.abs(x - (width - 1) / 2) / (width / 2);
-    const dy = Math.abs(y - (height - 1) / 2) / (height / 2);
-    const excluded = (shape === "corners" && dx + dy > 1.35) ||
-      (shape === "diamond" && dx + dy > 1.15) ||
-      (shape === "hourglass" && dx > 0.42 + dy * 0.7) ||
-      (shape === "lanes" && dx < 0.29 && dy > 0.29);
-    if (!excluded) continue;
-    if (keepPlacement && (Object.values(cave.layers).some((layer) => layer[index]) || initialPieceAt(cave, index))) continue;
-    blocked.push(index);
-  }
-  return blocked;
-}
+let difficultyShapeCells = null;
 
 function renderDifficultyBoardShapes() {
   const cave = activeCave();
-  const options = $("difficultyBoardShapes");
-  const selected = options.querySelector("input:checked")?.value;
   const keepPlacement = !$("difficultyAutomatic").checked && $("difficultyKeepPlacement").checked;
-  options.replaceChildren(...DIFFICULTY_BOARD_SHAPES.map(([id, name]) => {
-    const blocked = new Set(difficultyBoardMask(cave, id, keepPlacement));
-    const card = document.createElement("label");
-    const choice = document.createElement("input");
-    choice.type = "radio";
-    choice.name = "difficultyBoardShape";
-    choice.value = id;
-    choice.required = true;
-    choice.checked = selected === id;
-    const grid = document.createElement("span");
-    grid.className = "board-shape-grid";
-    grid.style.gridTemplateColumns = "repeat(" + cave.width + ", 6px)";
-    grid.setAttribute("aria-hidden", "true");
-    for (let cell = 0; cell < cave.width * cave.height; cell++) {
-      const tile = document.createElement("span");
-      if (blocked.has(cell)) tile.className = "board-shape-blocked";
-      grid.append(tile);
-    }
-    card.append(choice, name, grid);
-    return card;
-  }));
+  const shapeSource = keepPlacement ? cave : {
+    ...cave, externalSource: null, initialPieceTypes: {}, layers: emptyLayers(cave.width * cave.height),
+  };
+  difficultyShapeCells = null;
+  $("difficultyShapeSelection").textContent = "생성할 보드 모양을 선택하세요.";
+  renderBoardShapeCandidates(shapeSource, "difficultyShape", (cells) => {
+    difficultyShapeCells = cells;
+    $("difficultyShapeSelection").textContent = "선택한 모양 · 막힌 칸 " + cells.length + "개";
+  });
 }
 
 function openDifficultyGenerator() {
-  $("difficultyBoardShapes").replaceChildren();
   renderDifficultyBoardShapes();
   const terrainIds = difficultyTerrainIds(activeCave());
   const allTerrain = [...new Set([...ASSETS.terrain.map(({ id }) => id), ...(project.paletteAssets.terrain || [])])];
@@ -2224,14 +2188,18 @@ async function generateDifficultyCandidates(event) {
   const target = $("difficultyTarget").valueAsNumber;
   const automatic = $("difficultyAutomatic").checked;
   const keepPlacement = !automatic && $("difficultyKeepPlacement").checked;
-  const shape = $("difficultyBoardShapes").querySelector("input:checked")?.value;
+  const shape = difficultyShapeCells;
   const pattern = $("difficultyPattern").value;
   const gimmickIds = Array.from($("difficultyGimmick").querySelectorAll("input:checked"), (input) => input.value);
   const selectedTerrain = Array.from($("difficultyTerrain").querySelectorAll("input:checked"), (input) => input.value);
   const status = $("difficultyStatus");
   const submit = $("difficultyGenerate");
   const fields = $("difficultyFields");
-  if (submit.disabled || !shape || !Number.isInteger(target) || target < 1 || target > 100) return;
+  if (submit.disabled || !Number.isInteger(target) || target < 1 || target > 100) return;
+  if (!shape) {
+    status.textContent = "보드 모양 후보를 먼저 선택하세요.";
+    return;
+  }
   $("difficultyOptions").replaceChildren();
   if (!automatic && selectedTerrain.length > MAX_OBJECTIVES) {
     status.textContent = "Terrain은 최대 " + MAX_OBJECTIVES + "종까지 선택할 수 있습니다.";
@@ -2239,7 +2207,7 @@ async function generateDifficultyCandidates(event) {
   }
   let colors = (source.usableBlocks.length ? source.usableBlocks : project.paletteAssets.block || [])
     .filter((id) => DDUNG_COLOR_IDS.includes(id) && blockWeight(source, id) > 0);
-  let generationSource = { ...source, excludedCells: difficultyBoardMask(source, shape, keepPlacement) };
+  let generationSource = { ...source, excludedCells: [...shape] };
   if (automatic && colors.length < 4) {
     colors = [...DDUNG_COLOR_IDS];
     generationSource.blockWeights = { ...source.blockWeights };
@@ -5492,6 +5460,9 @@ function bindInputs() {
     renderDifficultyBoardShapes();
   });
   $("difficultyKeepPlacement").addEventListener("change", renderDifficultyBoardShapes);
+  $("difficultyShapeRefresh").addEventListener("click", renderDifficultyBoardShapes);
+  $("difficultyShapeSymmetry").addEventListener("change", renderDifficultyBoardShapes);
+  $("difficultyShapePercent").addEventListener("change", renderDifficultyBoardShapes);
   $("regionItemButton").addEventListener("click", openRegionItems);
   $("regionItemCancel").addEventListener("click", () => $("regionItemDialog").close());
   $("undoButton").addEventListener("click", undo);

@@ -147,10 +147,10 @@
       .difficulty-choices { max-height: 9rem; overflow: auto; padding: 6px; border: 1px solid #444952; border-radius: 6px; }
       .difficulty-choices label { display: flex; gap: 8px; align-items: center; padding: 4px; }
       .difficulty-choices label:has(input:disabled) { opacity: .6; }
-      #difficultyBoardShapes { display: flex; flex-wrap: wrap; gap: 8px; }
-      #difficultyBoardShapes label { cursor: pointer; padding: 8px; border: 1px solid #52617a; border-radius: 6px; }
-      #difficultyBoardShapes label:has(input:checked) { border-color: #a992ff; background: #31254c; }
-      #difficultyBoardShapes .board-shape-grid > span { height: 6px; }
+      #difficultyShapeOptions { display: flex; flex-wrap: wrap; gap: 8px; }
+      #difficultyShapeOptions button[aria-pressed="true"] { border-color: #a992ff; background: #31254c; }
+      #difficultyShapeOptions { display: flex; flex-wrap: wrap; gap: 8px; }
+      #difficultyShapeOptions button[aria-pressed="true"] { border-color: #a992ff; background: #31254c; }
       #difficultyOptions details { padding: 12px; border: 1px solid #444952; border-radius: 8px; }
       #difficultyOptions summary { cursor: pointer; font-weight: 700; }
       .difficulty-preview-scroll { overflow: auto; max-height: 38vh; margin-block: 12px; }
@@ -558,7 +558,12 @@
         <fieldset id="difficultyFields">
           <fieldset>
             <legend>1. 보드 모양 선택</legend>
-            <div id="difficultyBoardShapes"></div>
+            <label>대칭 <select id="difficultyShapeSymmetry" class="field"><option value="none">없음</option><option value="horizontal">좌우 대칭</option><option value="vertical">상하 대칭</option></select></label>
+            <label>막힌 칸 (%) <input id="difficultyShapePercent" class="field" type="number" min="0" max="70" value="20"></label>
+            <button id="difficultyShapeRefresh" class="button ghost" type="button">후보 다시 생성</button>
+            <p id="difficultyShapeStatus" role="status"></p>
+            <div id="difficultyShapeOptions"></div>
+            <p id="difficultyShapeSelection" role="status"></p>
           </fieldset>
           <label>2. 목표 난이도 (1~100)
             <input id="difficultyTarget" class="field" type="number" min="1" max="100" step="1" value="50" required>
@@ -816,7 +821,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=127"></script>
+    <script src="./app.js?v=128"></script>
   </body>
 </html>
 
