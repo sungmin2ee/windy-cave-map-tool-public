@@ -927,6 +927,12 @@ function renderCaveList() {
 function renderRules() {
   const cave = activeCave();
   $("caveName").value = cave.name;
+  const events = ddungTurnEvents(cave);
+  $("ddungTurnEvents").hidden = !events.mouse && !events.spider;
+  $("ddungTurnEvents").textContent = [
+    events.mouse ? "쥐 · 사용한 이동이 4의 배수일 때 한 행의 블록 교환" : "",
+    events.spider ? "거미 · 2번째 이동부터 4번마다 블록 1개 제거" : "",
+  ].filter(Boolean).join(" / ");
   $("mapWidth").value = cave.width;
   $("mapHeight").value = cave.height;
   renderObjectives();
@@ -3467,8 +3473,9 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     const clearableCells = [...matches].filter((index) => !isBarrier(state.cave, index) &&
       !isDdungTreasure(state.cave.layers.block[index]));
     const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
+    const splashBlocks = expanded.directOnly ? new Set() : removedBlocks;
     const terrainResult = damageTerrainFromMatches(
-      state, matches, expanded.targetedTerrain, removedBlocks, expanded.bombPanelIndex, heatherAttacks, expanded.specialHits);
+      state, matches, expanded.targetedTerrain, splashBlocks, expanded.bombPanelIndex, heatherAttacks, expanded.specialHits);
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
     const jellyCells = state.ddungJellyCells;
@@ -3485,7 +3492,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     for (const group of clearedJellyGroups) advanceObjectives(state, "terrain", "ddung-jelly");
     const convertedBoxes = [];
     const gimmickAttack = new Set();
-    for (const { index, id, originId, durability, amount, replacement, broken, group, tile, reusable } of gimmickHitResults(state, matches, removedBlocks, expanded.specialHits)) {
+    for (const { index, id, originId, durability, amount, replacement, broken, group, tile, reusable } of gimmickHitResults(state, matches, splashBlocks, expanded.specialHits)) {
       if (durability) {
         state.gimmickHits[index] += amount;
         if ((tile === "Y" && reusable) || id === "ddung-bee-up") state.turnPanelsHit.add(index);
@@ -4205,6 +4212,42 @@ function consumeDdungJam(state, protectedCells, captureFrame) {
   return consumed.length;
 }
 
+function ddungTurnEvents(cave) {
+  const raw = isDdungSource(cave.externalSource) ? cave.externalSource.rawMap : null;
+  const enabled = (flag) => flag === true || (typeof flag === "string" && flag.trim().toLowerCase() === "true");
+  return { mouse: enabled(raw?.mouse), spider: enabled(raw?.spider) };
+}
+
+function runDdungTurnEvent(state, captureFrame) {
+  const { cave, movesLeft, ddungEvents, ddungEventRandom } = state;
+  const movesUsed = cave.moveLimit - movesLeft;
+  if (movesUsed <= 0) return;
+  const pick = (cells) => cells.splice(Math.floor(ddungEventRandom() * cells.length), 1)[0];
+  const available = (index) => cave.layers.block[index] && !isBarrier(cave, index);
+  if (ddungEvents.mouse && movesUsed % 4 === 0) {
+    const start = Math.floor(ddungEventRandom() * cave.height) * cave.width;
+    const row = Array.from({ length: cave.width }, (_, col) => start + col).filter(available);
+    const motions = [];
+    while (row.length > 1) {
+      const first = pick(row);
+      const second = pick(row);
+      swapPlaytestBlocks(cave, first, second);
+      motions.push({ from: first, to: second }, { from: second, to: first });
+    }
+    captureFrame?.("쥐 등장 · 한 행의 블록 교환", motions.map(({ to }) => to), "swap", 450, motions);
+    if (motions.length) resolveMatches(state, captureFrame);
+  } else if (ddungEvents.spider && movesUsed % 4 === 2) {
+    const cells = cave.layers.block.flatMap((id, index) => available(index) &&
+      !cave.playtestPieces[index] && !isDdungTreasure(id) && id !== "ddung-dust-piece" ? [index] : []);
+    if (cells.length < 2) return;
+    const target = pick(cells);
+    const hits = new Set([target]);
+    resolveMatches(state, captureFrame, [target], [], {
+      hits, targetedTerrain: new Set(), directOnly: true, label: "거미 등장 · 블록 1개 제거",
+    });
+  }
+}
+
 function playSimulationTurn(state, action, captureFrame) {
   if (!action) {
     state.status = "stuck";
@@ -4275,7 +4318,9 @@ function playSimulationTurn(state, action, captureFrame) {
   else if (!state.movesLeft) state.status = "lost";
   else {
     spreadDdungChocolate(state, captureFrame);
-    ensurePlayableBoard(state, captureFrame);
+    runDdungTurnEvent(state, captureFrame);
+    if (allObjectivesComplete(state)) state.status = "won";
+    else ensurePlayableBoard(state, captureFrame);
   }
 }
 
@@ -4308,6 +4353,8 @@ function createPlayState(cave, seedSuffix, manual = false) {
     beeRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|bee`),
     treasureRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|treasure`),
     gimmickRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|gimmick`),
+    ddungEvents: ddungTurnEvents(copy),
+    ddungEventRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|ddung-events`),
     treasureMisses: 0,
     treasureGoals: copy.objectives.flatMap((objective, index) =>
       usesDdungGeneration(copy) && objective.layer === "item" && isDdungTreasure(objective.targetId)
