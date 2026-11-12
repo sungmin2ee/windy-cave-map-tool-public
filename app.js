@@ -1234,6 +1234,43 @@ function renderGrid() {
 function isExcluded(cave, index) {
   return cave.excludedCells?.includes(index) ?? false;
 }
+const DDUNG_SPECIAL_ART_ROWS = Object.freeze({
+  1: 0, horizontal: 0,
+  2: 1, vertical: 1,
+  3: 4, bomb: 4,
+  5: 5, rainbow: 5,
+  6: 2,
+  8: 3, bee: 3,
+});
+const DDUNG_SPECIAL_ART_COLORS = ["red", "blue", "green", "purple", "orange", "yellow"];
+
+function showDdungSpecialImage(element, cave, piece, color, fallbackImage, badge) {
+  if (!isDdungSource(cave.externalSource) || !Object.hasOwn(DDUNG_SPECIAL_ART_ROWS, piece.type)) return false;
+  const row = DDUNG_SPECIAL_ART_ROWS[piece.type];
+  const column = row === 5 ? 0 : DDUNG_SPECIAL_ART_COLORS.indexOf(color);
+  if (column < 0) return false;
+
+  const frame = document.createElement("span");
+  frame.className = "special-art-frame";
+  const image = document.createElement("img");
+  image.alt = "";
+  image.draggable = false;
+  image.style.left = `${-100 * column}%`;
+  image.style.top = `${-100 * row}%`;
+  image.onload = () => {
+    element.classList.add("has-object-image");
+    badge.hidden = true;
+  };
+  image.onerror = () => {
+    frame.remove();
+    showObjectImage(element, fallbackImage);
+  };
+  frame.append(image);
+  element.append(frame);
+  image.src = "./art/ddung/special-pieces.webp";
+  return true;
+}
+
 function applyCellVisual(cell, cave, index) {
   if (isExcluded(cave, index)) {
     cell.classList.add("excluded-cell");
@@ -1250,6 +1287,7 @@ function applyCellVisual(cell, cave, index) {
     if (layer === "gimmick" && assetId === SPAWNER_ID && cave.layers.block[index]) {
       visual.classList.add("cell-spawner-badge");
     }
+    let usesSpecialImage = false;
     if (layer === "block") {
       visual.style.background = blockColor(assetId);
       if (assetId === "ddung-dust-piece") visual.textContent = asset.visual;
@@ -1261,10 +1299,11 @@ function applyCellVisual(cell, cave, index) {
         badge.title = `특수 피스 · ${piece.name || piece.type}`;
         cell.classList.add("has-initial-piece");
         cell.appendChild(badge);
+        usesSpecialImage = showDdungSpecialImage(visual, cave, piece, assetId, asset.image, badge);
       }
     }
     if (layer === "gimmick" || layer === "item" || (layer === "terrain" && !asset.className)) visual.textContent = asset.visual;
-    showObjectImage(visual, asset.image);
+    if (!usesSpecialImage) showObjectImage(visual, asset.image);
     cell.appendChild(visual);
   }
 }
