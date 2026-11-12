@@ -3193,6 +3193,11 @@ function createPlayState(cave, seedSuffix, manual = false) {
     goalLimitations: copy.objectives.map((objective) => ddungGoalLimitation(copy, objective)),
     flowTurn: 0,
   };
+  if ((isDdungSource(copy.externalSource) || copy.layers.gimmick.includes(SPAWNER_ID)) &&
+      copy.layers.block.some((block, index) => !block && !isBarrier(copy, index))) {
+    applyGravity(copy, state);
+    refillBlocks(state);
+  }
   ensurePlayableBoard(state);
   return state;
 }
