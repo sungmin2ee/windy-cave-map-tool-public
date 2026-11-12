@@ -118,6 +118,7 @@
             <span>JSON 가져오기</span>
             <input id="importFile" type="file" aria-label="JSON 가져오기" />
           </label>
+          <button class="button ghost" type="button" id="openJsonPaste" aria-haspopup="dialog">JSON 붙여넣기</button>
           <button class="button ghost" id="exportButton">전체 레벨 JSON으로 내보내기</button>
         <button class="button ghost" id="exportGridTiles" type="button">현재 레벨 JSON으로 내보내기</button>
           <button class="button primary" id="saveButton">저장</button>
@@ -502,6 +503,22 @@
       </div>
       <form method="dialog" class="dialog-footer"><button class="button ghost">취소</button></form>
     </dialog>
+    <dialog id="jsonPasteDialog" class="simulation-dialog" aria-labelledby="jsonPasteTitle">
+      <div class="dialog-header"><h2 id="jsonPasteTitle">JSON 붙여넣기</h2></div>
+      <form id="jsonPasteForm">
+        <div style="padding: 12px 18px;">
+          <p>JSON 파일의 내용을 복사해서 아래에 붙여넣으세요.</p>
+          <label class="field-label" for="jsonPasteInput">JSON 내용</label>
+          <textarea class="field" id="jsonPasteInput" rows="7" required spellcheck="false" style="box-sizing: border-box; width: 100%; font-size: 16px;"></textarea>
+          <p id="jsonPasteError" role="alert" hidden></p>
+        </div>
+        <div class="dialog-footer" style="flex-wrap: wrap;">
+          <button class="button" type="button" id="cancelJsonPaste">취소</button>
+          <button class="button primary" type="submit">미리보기</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="importPreview" class="simulation-dialog" aria-labelledby="importPreviewTitle">
       <div class="dialog-header"><h2 id="importPreviewTitle">JSON 가져오기 미리보기</h2></div>
       <div style="max-height: 50vh; overflow: auto; overflow-wrap: anywhere;">
@@ -715,7 +732,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=105"></script>
+    <script src="./app.js?v=106"></script>
   </body>
 </html>
 

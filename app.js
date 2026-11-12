@@ -4705,17 +4705,19 @@ function previewImport(imported, filename) {
   dialog.showModal();
 }
 
+function parseImportedText(value) {
+  let data;
+  try { data = JSON.parse(value.replace(/^\uFEFF/, "")); }
+  catch { throw new Error("올바른 JSON이 아닙니다. 파일 내용을 처음부터 끝까지 복사했는지 확인하세요."); }
+  return adaptImportedJson(data);
+}
+
 function importProject(file) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
-    try {
-      let data;
-      try { data = JSON.parse(reader.result); }
-      catch { throw new Error("JSON 파일을 읽을 수 없습니다. 파일 앱에서 퍼즐 JSON을 선택하세요."); }
-      const imported = adaptImportedJson(data);
-      previewImport(imported, file.name);
-    } catch (error) { toast(error.message || "지원되는 퍼즐 JSON이 아닙니다."); }
+    try { previewImport(parseImportedText(reader.result), file.name); }
+    catch (error) { toast(error.message || "지원되는 퍼즐 JSON이 아닙니다."); }
   };
   reader.onerror = () => toast("파일을 열 수 없습니다. 파일 앱에 저장된 JSON을 다시 선택하세요.");
   reader.readAsText(file);
@@ -4822,6 +4824,27 @@ function bindInputs() {
   $("saveButton").addEventListener("click", () => persist(true));
   $("exportButton").addEventListener("click", exportProject);
   $("exportGridTiles").addEventListener("click", exportGridTilesProfile);
+  const jsonPasteDialog = $("jsonPasteDialog");
+  const jsonPasteForm = $("jsonPasteForm");
+  const jsonPasteError = $("jsonPasteError");
+  $("openJsonPaste").addEventListener("click", () => {
+    jsonPasteError.hidden = true;
+    jsonPasteDialog.showModal();
+  });
+  $("cancelJsonPaste").addEventListener("click", () => jsonPasteDialog.close());
+  $("jsonPasteInput").addEventListener("input", () => { jsonPasteError.hidden = true; });
+  jsonPasteForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    try {
+      const imported = parseImportedText($("jsonPasteInput").value);
+      jsonPasteDialog.close();
+      previewImport(imported, "붙여넣은 JSON");
+    } catch (error) {
+      if (!jsonPasteDialog.open) jsonPasteDialog.showModal();
+      jsonPasteError.textContent = error.message || "지원되는 퍼즐 JSON이 아닙니다.";
+      jsonPasteError.hidden = false;
+    }
+  });
   $("importFile").addEventListener("change", (event) => {
     const input = event.currentTarget;
     const file = input.files[0];
