@@ -211,13 +211,25 @@ function assetId(value) {
   return id;
 }
 
+const DDUNG_ART = new Set(["red", "blue", "green", "yellow", "purple", "orange",
+  "ddung-box", "ddung-ice", "ddung-web", "ddung-mouse-panel", "ddung-water",
+  "ddung-heather-small", "ddung-heather-large", "ddung-stone", "ddung-stone-thick",
+  "ddung-jelly", "ddung-chocolate", "ddung-dungs", "ddung-iron-box"]);
+
+function normalizeObjectImage(value) {
+  return typeof value === "string" && value.length <= 100000 &&
+    /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : null;
+}
+
 function normalizeAssetDefinitions(source) {
   return Object.fromEntries(Object.keys(ASSETS).map((layer) => {
     const definitions = Array.isArray(source?.[layer]) ? source[layer] : [];
     const unique = new Map();
     for (const definition of definitions) {
       const id = assetId(definition?.id);
-      if (id) unique.set(id, { id, name: String(definition.name || id) });
+      if (!id) continue;
+      const image = normalizeObjectImage(definition.image);
+      unique.set(id, { id, name: String(definition.name || id), ...(image ? { image } : {}) });
     }
     return [layer, [...unique.values()]];
   }));
@@ -500,12 +512,28 @@ function getDefaultTerrainRule(id) {
     : { blocksFlow: false, reaction: "none", durability: 1 };
 }
 
-function getAsset(layer, id) {
+function getAsset(layer, id, cave = activeCave()) {
   if (!assetId(id)) return null;
-  const known = ASSETS[layer].find((asset) => asset.id === id);
+  const known = ASSETS[layer].find((asset) => asset.id === id) ??
+    (layer === "gimmick" && id === "ddung-iron-box" ? { name: "DDUNG Iron Box", visual: "▣" } : null);
   const definition = project.assetDefinitions?.[layer]?.find((asset) => asset.id === id);
-  if (layer === "gimmick" && id === "ddung-iron-box" && !definition) return { id, name: "DDUNG Iron Box", visual: "▣" };
-  return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer], ...known, id, name: definition?.name || known?.name || id };
+  const original = DDUNG_ART.has(id) && (id.startsWith("ddung-") ||
+    (layer === "block" && isDdungSource(cave?.externalSource)));
+  const image = definition?.image || (original ? `./art/ddung/${id}.png` : null);
+  return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer],
+    ...known, id, name: definition?.name || known?.name || id, image };
+}
+
+function showObjectImage(element, source) {
+  if (!source) return;
+  const image = document.createElement("img");
+  image.alt = "";
+  image.draggable = false;
+  image.className = "object-image";
+  image.onload = () => element.classList.add("has-object-image");
+  image.onerror = () => image.remove();
+  image.src = source;
+  element.append(image);
 }
 
 function blockColor(id) {
@@ -784,6 +812,7 @@ function renderPalette() {
     button.className = `asset-card${activeTool !== "eraser" && selectedAssets[activeLayer] === asset.id ? " active" : ""}`;
     const style = activeLayer === "block" ? `background:${blockColor(asset.id)}` : "";
     button.innerHTML = `<span class="asset-visual ${asset.className || ""}" style="${style}">${escapeHtml(asset.visual)}</span><span>${escapeHtml(asset.name)}</span>`;
+    showObjectImage(button.querySelector(".asset-visual"), asset.image);
     button.addEventListener("click", () => {
       const isSameSelection = activeTool !== "eraser" && selectedAssets[activeLayer] === asset.id;
       selectedAssets[activeLayer] = isSameSelection ? null : asset.id;
@@ -834,6 +863,8 @@ function renderPalette() {
 
 function renderSelectedObjectRules(asset) {
   $("selectedObjectRules").hidden = !asset;
+  $("resetObjectImage").hidden = !asset || !project.assetDefinitions?.[activeLayer]?.some(
+    (definition) => definition.id === asset.id && definition.image);
   const cave = activeCave();
   const showRule = asset && activeLayer === "gimmick" && asset.id !== SPAWNER_ID &&
     !isDdungSource(cave.externalSource);
@@ -848,6 +879,50 @@ function renderSelectedObjectRules(asset) {
     .filter(({ id }) => id !== asset.id && id !== SPAWNER_ID)
     .map(({ name, id }) => new Option(name, id)));
   next.value = rule?.nextId ?? "";
+}
+
+function saveObjectImage(layer, id, image) {
+  const definitions = project.assetDefinitions?.[layer] ?? [];
+  const current = definitions.find((asset) => asset.id === id);
+  const next = definitions.filter((asset) => asset.id !== id);
+  if (image || current) next.push({ id, name: current?.name ?? getAsset(layer, id).name, ...(image ? { image } : {}) });
+  const updated = { ...project, assetDefinitions: { ...project.assetDefinitions, [layer]: next } };
+  if (!persist(false, updated)) return;
+  snapshot();
+  project = updated;
+  renderAll();
+  toast(image ? "오브젝트 이미지를 저장했습니다." : "기본 이미지로 복원했습니다.");
+}
+
+async function chooseObjectImage(event) {
+  const file = event.currentTarget.files[0];
+  event.currentTarget.value = "";
+  const layer = activeLayer;
+  const id = selectedAssets[layer];
+  const currentProject = project;
+  if (!file || !id) return;
+  if (!/\.(?:png|jpe?g|webp)$/i.test(file.name) && !/^image\/(?:png|jpeg|webp)$/.test(file.type)) {
+    toast("PNG, JPG, WebP 이미지 파일을 선택하세요.");
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const scale = Math.min(1, 112 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+    const data = normalizeObjectImage(canvas.toDataURL("image/webp", 0.9));
+    if (!data) throw new Error("Image encoding failed");
+    if (project === currentProject && project.paletteAssets[layer]?.includes(id)) saveObjectImage(layer, id, data);
+  } catch {
+    toast("이미지를 열 수 없습니다. 다른 이미지 파일을 선택하세요.");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function saveSelectedGimmickRule(event) {
@@ -1164,7 +1239,7 @@ function applyCellVisual(cell, cave, index) {
   for (const layer of ["terrain", "block", "gimmick", "item"]) {
     const assetId = cave.layers[layer][index];
     if (!assetId) continue;
-    const asset = getAsset(layer, assetId);
+    const asset = getAsset(layer, assetId, cave);
     if (!asset) continue;
     const visual = document.createElement("span");
     visual.className = `cell-${layer} ${asset.className || ""}`;
@@ -1182,6 +1257,7 @@ function applyCellVisual(cell, cave, index) {
       }
     }
     if (layer === "gimmick" || layer === "item" || (layer === "terrain" && !asset.className)) visual.textContent = asset.visual;
+    showObjectImage(visual, asset.image);
     cell.appendChild(visual);
   }
 }
@@ -4824,27 +4900,6 @@ function bindInputs() {
   $("saveButton").addEventListener("click", () => persist(true));
   $("exportButton").addEventListener("click", exportProject);
   $("exportGridTiles").addEventListener("click", exportGridTilesProfile);
-  const jsonPasteDialog = $("jsonPasteDialog");
-  const jsonPasteForm = $("jsonPasteForm");
-  const jsonPasteError = $("jsonPasteError");
-  $("openJsonPaste").addEventListener("click", () => {
-    jsonPasteError.hidden = true;
-    jsonPasteDialog.showModal();
-  });
-  $("cancelJsonPaste").addEventListener("click", () => jsonPasteDialog.close());
-  $("jsonPasteInput").addEventListener("input", () => { jsonPasteError.hidden = true; });
-  jsonPasteForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    try {
-      const imported = parseImportedText($("jsonPasteInput").value);
-      jsonPasteDialog.close();
-      previewImport(imported, "붙여넣은 JSON");
-    } catch (error) {
-      if (!jsonPasteDialog.open) jsonPasteDialog.showModal();
-      jsonPasteError.textContent = error.message || "지원되는 퍼즐 JSON이 아닙니다.";
-      jsonPasteError.hidden = false;
-    }
-  });
   $("importFile").addEventListener("change", (event) => {
     const input = event.currentTarget;
     const file = input.files[0];
@@ -4886,6 +4941,11 @@ function bindInputs() {
     persist();
   });
   $("gimmickRulesForm").addEventListener("submit", saveSelectedGimmickRule);
+  $("objectImageFile").addEventListener("change", chooseObjectImage);
+  $("resetObjectImage").addEventListener("click", () => {
+    const id = selectedAssets[activeLayer];
+    if (id) saveObjectImage(activeLayer, id, null);
+  });
   $("addSelectedGoal").addEventListener("click", () => {
     const id = selectedAssets[activeLayer];
     if (id) {
