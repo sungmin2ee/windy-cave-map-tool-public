@@ -1539,8 +1539,18 @@ function wouldCreateMatch(blocks, index, color, cave) {
     }
     return count;
   };
-  return 1 + countDirection(-1, 0) + countDirection(1, 0) >= 3
-    || 1 + countDirection(0, -1) + countDirection(0, 1) >= 3;
+  if (1 + countDirection(-1, 0) + countDirection(1, 0) >= 3
+    || 1 + countDirection(0, -1) + countDirection(0, 1) >= 3) return true;
+  if (!cave.specialMatches) return false;
+
+  for (const dx of [-1, 1]) {
+    for (const dy of [-1, 1]) {
+      if (x + dx < 0 || x + dx >= cave.width || y + dy < 0 || y + dy >= cave.height) continue;
+      if (blocks[index + dx] === color && blocks[index + dy * cave.width] === color
+        && blocks[index + dx + dy * cave.width] === color) return true;
+    }
+  }
+  return false;
 }
 
 function boardShapeCandidates(cave, symmetry, percent) {
