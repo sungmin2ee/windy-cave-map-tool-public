@@ -599,7 +599,8 @@ function getAsset(layer, id, cave = activeCave()) {
     (layer === "gimmick" && id === "ddung-iron-box" ? { name: "DDUNG Iron Box", visual: "▣" } : null);
   const definition = project.assetDefinitions?.[layer]?.find((asset) => asset.id === baseId);
   const original = DDUNG_ART.has(id) && (id.startsWith("ddung-") ||
-    (layer === "block" && isDdungSource(cave?.externalSource)));
+    (layer === "block" && (isDdungSource(cave?.externalSource) || cave?.generatedBlockArt === "ddung" ||
+      cave?.objectives?.some(({ id }) => /^generated-terrain-goal(?:-\d+)?$/.test(id)))));
   const panel = layer === "gimmick" ? DDUNG_PANELS[baseId] : null;
   const gimmickArt = panel?.[3] || (layer === "gimmick" && Object.hasOwn(DDUNG_GIMMICK_ART, baseId) &&
     (id === "switch" || id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[baseId] : null);
@@ -2034,6 +2035,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   if ((!keepPlacement && findMatches(cave).size) || !hasPossibleSwap(cave)) return null;
 
   cave.objectives = goals;
+  cave.generatedBlockArt = "ddung";
   cave.targetType = null;
   cave.targetCount = terrainCount;
   const moveSpread = [-8, -4, 0, 4, 9, 15][attempt % 6];
