@@ -713,7 +713,7 @@
         <label>이름<input class="field" id="specialTypeName" maxlength="40" required></label>
         <label>표시 기호<input class="field" id="specialTypeSymbol" maxlength="8" placeholder="✦"></label>
         <label>발동 효과<select class="field" id="specialTypeEffect"></select></label>
-        <p>목표 타일 1칸 제거는 발동한 피스에서 가장 가까운 미완료 Terrain 목표 타일을 즉시 제거합니다.</p>
+        <p>목표 타일 1회 타격은 발동한 피스에서 가장 가까운 미완료 Terrain 목표 타일의 내구도를 1 줄입니다. 내구도가 0이 되면 타일이 사라지고 목표에 반영됩니다.</p>
         <div id="specialTypeScriptField" hidden>
           <label>발동 스크립트<textarea class="field" id="specialTypeScript" rows="6" maxlength="4000" spellcheck="false" aria-describedby="specialTypeScriptHelp"></textarea></label>
           <p id="specialTypeScriptHelp">예: <code>[{"op":"row"},{"op":"offsets","cells":[[-1,-1],[1,1]]}]</code>는 가로 한 줄과 대각선 두 칸을 터뜨립니다. 좌표는 피스 기준 [가로, 세로]이며 오른쪽과 아래가 양수입니다. 지원 명령: row, column, cross, area (radius 1~5), color, target, offsets.</p>
@@ -863,7 +863,7 @@
           <summary style="cursor: pointer; font-weight: 700;">플레이와 검증</summary>
           <ul>
             <li><strong>Playtest</strong>를 열면 직접 플레이합니다. 인접 블록 두 개를 클릭해 교환하거나 특수 피스를 클릭해 발동하세요. <strong>자동 플레이 시작</strong>을 누르면 현재 보드에서 자동으로 진행하고, <strong>직접 플레이로 전환</strong>을 누르면 이어서 직접 조작할 수 있습니다. 발동에는 이동 1회를 사용합니다. 클리어 기록은 <strong>이 기록을 난이도에 사용</strong>으로 반영할 수 있습니다.</li>
-            <li><strong>매치로 특수 피스 생성</strong>을 켜면 가로·세로 4매치에서 해당 방향의 줄 폭탄, 5매치에서 같은 색 제거 피스, T/L자 매치에서 주변 3×3 폭탄, 2×2 매치에서 목표 타일을 제거하는 벌이 생깁니다. 일자 3매치는 블록만 제거합니다. 기존 레벨에서 꺼져 있다면 Playtest 버튼 옆에서 켤 수 있습니다.</li>
+            <li><strong>매치로 특수 피스 생성</strong>을 켜면 가로·세로 4매치에서 해당 방향의 줄 폭탄, 5매치에서 같은 색 제거 피스, T/L자 매치에서 주변 3×3 폭탄, 2×2 매치에서 목표 타일을 한 번 타격하는 벌이 생깁니다. 일자 3매치는 블록만 제거합니다. 기존 레벨에서 꺼져 있다면 Playtest 버튼 옆에서 켤 수 있습니다.</li>
             <li>오른쪽 오브젝트 패널의 <strong>특수 타입 관리</strong>에서 현재 Cave의 특수 타입 이름과 발동 효과를 설정합니다. 효과는 해당 Cave에서 같은 타입을 사용하는 모든 피스에 적용됩니다. <strong>칸 속성</strong>에서 블록 색과 등록된 특수 타입을 선택해 배치합니다.</li>
             <li>직접 작성한 스크립트를 선택하면 여러 효과를 조합할 수 있습니다. 예를 들어 <code>[{"op":"row"},{"op":"offsets","cells":[[-1,-1],[1,1]]}]</code>는 피스의 가로 한 줄과 대각선 두 칸을 터뜨립니다. Playtest와 자동 플레이에서 같은 효과가 적용됩니다. 스크립트는 지원 명령을 담은 JSON 배열입니다.</li>
             <li><strong>검증</strong>은 현재 Cave를, <strong>범위 검증</strong>은 지정한 번호 범위를 자동으로 검사합니다. 자동 플레이의 클리어율과 Moves는 레벨 밸런스를 비교하는 참고 지표입니다.</li>
@@ -891,7 +891,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=138"></script>
+    <script src="./app.js?v=139"></script>
   </body>
 </html>
 

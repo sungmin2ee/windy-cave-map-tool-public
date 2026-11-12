@@ -3309,7 +3309,7 @@ function terrainDurabilityAt(cave, index, rule, jellyCells) {
   return rule.durability;
 }
 
-function* terrainHitResults(state, matches, forcedTerrain, removedBlocks, bombPanelIndex) {
+function* terrainHitResults(state, matches, forcedTerrain, removedBlocks, bombPanelIndex, specialHits = new Set()) {
   const cave = state.cave;
   const damagedGroups = new Set();
   const jellyCells = state.ddungJellyCells;
@@ -3323,27 +3323,28 @@ function* terrainHitResults(state, matches, forcedTerrain, removedBlocks, bombPa
     if (damagedGroups.has(anchor)) continue;
     const forced = group.some((cell) => forcedTerrain.has(cell));
     if (!forced && (!rule || rule.reaction === "none")) continue;
-    let damage = group.filter((cell) => rule?.reaction !== "adjacent-only" && matches.has(cell)).length;
-    if (rule?.reaction === "adjacent-only" || rule?.reaction === "splash") {
-      for (const cell of group) damage += neighborsOf(cave, cell).filter((neighbor) => removedBlocks.has(neighbor)).length;
-    } else if (!damage && rule?.reaction === "adjacent") {
-      damage = Number(neighborsOf(cave, index).some((neighbor) => matches.has(neighbor)));
-    }
+    const direct = group.filter((cell) => rule?.reaction !== "adjacent-only" && matches.has(cell));
+    const adjacent = rule?.reaction === "adjacent-only" || rule?.reaction === "splash"
+      ? group.flatMap((cell) => neighborsOf(cave, cell).filter((neighbor) => removedBlocks.has(neighbor)))
+      : rule?.reaction === "adjacent" && !direct.length
+        ? neighborsOf(cave, index).filter((neighbor) => matches.has(neighbor)) : [];
+    const damage = direct.length + (rule?.reaction === "adjacent" ? Number(adjacent.length > 0) : adjacent.length);
     if (!damage && !forced) continue;
     damagedGroups.add(anchor);
     const remaining = Math.max(1, (rule ? terrainDurabilityAt(cave, anchor, rule, jellyCells) : 1) - (state.terrainHits[anchor] || 0));
     const bomb = terrainId === "ddung-bomb-panel";
-    const amount = bomb && index !== bombPanelIndex
-      ? Math.min(damage || Number(forced), remaining - 1)
-      : forced ? remaining : Math.min(damage, remaining);
+    // A blast can reach one obstacle through several cells; it only damages it once per wave.
+    const specialDamage = forced || direct.some((cell) => specialHits.has(cell)) ||
+      adjacent.some((cell) => specialHits.has(cell));
+    const amount = Math.min(specialDamage ? 1 : damage, bomb && index !== bombPanelIndex ? remaining - 1 : remaining);
     if (amount > 0) yield { index: anchor, terrainId, group, amount, broken: amount === remaining };
   }
 }
 
-function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), removedBlocks = new Set(), bombPanelIndex, heatherAttacks) {
+function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), removedBlocks = new Set(), bombPanelIndex, heatherAttacks, specialHits) {
   let damaged = 0;
   const brokenDetails = [];
-  for (const hit of terrainHitResults(state, matches, forcedTerrain, removedBlocks, bombPanelIndex)) {
+  for (const hit of terrainHitResults(state, matches, forcedTerrain, removedBlocks, bombPanelIndex, specialHits)) {
     if (heatherAttacks && hit.terrainId === "ddung-heather-large" && hit.group.length === 4) {
       if (hit.broken) heatherAttacks.delete(hit.index);
       else heatherAttacks.set(hit.index, (heatherAttacks.get(hit.index) || 0) + hit.amount);
@@ -3361,7 +3362,7 @@ function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), rem
   return { damaged, broken: brokenDetails.length, brokenDetails };
 }
 
-function* gimmickHitResults(state, matches, removedBlocks) {
+function* gimmickHitResults(state, matches, removedBlocks, specialHits = new Set()) {
   const { cave } = state;
   for (const [index, storedId] of cave.layers.gimmick.entries()) {
     const id = ddungGimmickBase(storedId);
@@ -3381,7 +3382,7 @@ function* gimmickHitResults(state, matches, removedBlocks) {
       boxDurability || ddungDurability ? "either" : rule?.reaction ?? "either";
     if ((reaction !== "adjacent" && group.some((cell) => matches.has(cell))) ||
         (reaction !== "direct" && group.some((cell) => neighborsOf(cave, cell).some((neighbor) => nearbyHits.has(neighbor))))) {
-      const amount = id === "ddung-mouse-panel" && ddungDurability && matches.has(index)
+      const amount = id === "ddung-mouse-panel" && ddungDurability && matches.has(index) && !specialHits.has(index)
         ? Math.max(1, durability - state.gimmickHits[index]) : 1;
       const exhausted = durability > 0 && state.gimmickHits[index] + amount >= durability;
       const replacement = exhausted ? (boxDurability && id === "ddung-iron-box" ? "ddung-box" : ddungDurability ? null : rule?.nextId) : null;
@@ -3451,7 +3452,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
       !isDdungTreasure(state.cave.layers.block[index]));
     const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
     const terrainResult = damageTerrainFromMatches(
-      state, matches, expanded.targetedTerrain, removedBlocks, expanded.bombPanelIndex, heatherAttacks);
+      state, matches, expanded.targetedTerrain, removedBlocks, expanded.bombPanelIndex, heatherAttacks, expanded.specialHits);
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
     const jellyCells = state.ddungJellyCells;
@@ -3468,7 +3469,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     for (const group of clearedJellyGroups) advanceObjectives(state, "terrain", "ddung-jelly");
     const convertedBoxes = [];
     const gimmickAttack = new Set();
-    for (const { index, id, originId, durability, amount, replacement, broken, group, tile, reusable } of gimmickHitResults(state, matches, removedBlocks)) {
+    for (const { index, id, originId, durability, amount, replacement, broken, group, tile, reusable } of gimmickHitResults(state, matches, removedBlocks, expanded.specialHits)) {
       if (durability) {
         state.gimmickHits[index] += amount;
         if ((tile === "Y" && reusable) || id === "ddung-bee-up") state.turnPanelsHit.add(index);
@@ -3648,14 +3649,14 @@ function remainingObjectiveCount(state, objective, index) {
   return Math.max(0, progress.target - progress.current);
 }
 
-function scoreAutoMove(state, { hits, targetedTerrain, bombPanelIndex }, goals, created = new Map()) {
+function scoreAutoMove(state, { hits, targetedTerrain, bombPanelIndex, specialHits }, goals, created = new Map()) {
   const { cave } = state;
   const clearableCells = [...hits].filter((index) => !isBarrier(cave, index) && !isDdungTreasure(cave.layers.block[index]));
   const removedBlocks = new Set(clearableCells.filter((index) => cave.layers.block[index] && !created.has(index)));
   const terrain = goals.some(({ objective }) => objective.layer === "terrain")
-    ? [...terrainHitResults(state, hits, targetedTerrain, removedBlocks, bombPanelIndex)] : [];
+    ? [...terrainHitResults(state, hits, targetedTerrain, removedBlocks, bombPanelIndex, specialHits)] : [];
   const gimmicks = goals.some(({ objective }) => objective.layer === "gimmick")
-    ? [...gimmickHitResults(state, hits, removedBlocks)] : [];
+    ? [...gimmickHitResults(state, hits, removedBlocks, specialHits)] : [];
   let progress = 0;
   let damage = 0;
   for (const { objective, remaining } of goals) {
@@ -3726,7 +3727,7 @@ function listPossibleSwaps(state, firstOnly = false, goals = []) {
 
 const SPECIAL_EFFECTS = {
   row: "가로 한 줄", column: "세로 한 줄", area: "주변 3×3", cross: "가로·세로 십자", color: "같은 색 전체",
-  target: "목표 타일 1칸 제거",
+  target: "목표 타일 1회 타격",
   fish: "벌 · 목표 한 칸 타격",
 };
 
@@ -3880,7 +3881,7 @@ function specialComboHits(state, first, second, random = () => 0.5) {
       commands.set(second, [{ op: custom }]);
     } else addShape(second, custom, custom === "area" ? 1 : 0);
     label = PROJECT_COMBO_EFFECTS[custom];
-    return { ...expandSpecialHits(state, hits, new Set(), random, skip, commands), label };
+    return { ...expandSpecialHits(state, hits, new Set(), random, skip, commands, true), label };
   }
   if (colors === 2) {
     cave.layers.block.forEach((_, index) => { if (!isExcluded(cave, index)) hits.add(index); });
@@ -3924,18 +3925,21 @@ function specialComboHits(state, first, second, random = () => 0.5) {
     skip.clear();
     label = "두 특수 효과 동시 발동";
   }
-  return { ...expandSpecialHits(state, hits, new Set(), random, skip, commands), label };
+  return { ...expandSpecialHits(state, hits, new Set(), random, skip, commands, true), label };
 }
 
-function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom = () => 0.5, skip = new Set(), overrides = new Map()) {
+function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom = () => 0.5, skip = new Set(), overrides = new Map(), initialBlast = false) {
   const { cave } = state;
   const hits = new Set(matches);
   const targetedTerrain = new Set();
+  const specialHits = initialBlast ? new Set(hits) : new Set();
+  const addSpecialHit = (index) => { hits.add(index); specialHits.add(index); };
   for (const index of hits) {
     if (skip.has(index) || isBarrier(cave, index)) continue;
     const override = overrides.get(index);
     const effect = specialEffect(cave, cave.playtestPieces[index]);
     if (!effect && !override) continue;
+    specialHits.add(index);
     const x = index % cave.width;
     const y = Math.floor(index / cave.width);
     const color = cave.layers.block[index];
@@ -3944,7 +3948,7 @@ function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom
     for (const { op, radius = 1, cells } of commands) {
       if (op === "fish") {
         const target = findBeeTarget(state, hits, protectedCells, beeRandom);
-        if (target >= 0) hits.add(target);
+        if (target >= 0) addSpecialHit(target);
         continue;
       }
       if (op === "target") {
@@ -3958,7 +3962,7 @@ function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom
           const targetY = y + dy;
           if (targetX < 0 || targetX >= cave.width || targetY < 0 || targetY >= cave.height) continue;
           const other = targetY * cave.width + targetX;
-          if (!isExcluded(cave, other) && !protectedCells.has(other)) hits.add(other);
+          if (!isExcluded(cave, other) && !protectedCells.has(other)) addSpecialHit(other);
         }
         continue;
       }
@@ -3968,11 +3972,11 @@ function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom
         const affected = (op === "row" && dy === 0) || (op === "column" && dx === 0) ||
           (op === "cross" && (dx === 0 || dy === 0)) || (op === "area" && dx <= radius && dy <= radius) ||
           (op === "color" && color && cave.layers.block[other] === color);
-        if (affected && !isExcluded(cave, other) && !protectedCells.has(other)) hits.add(other);
+        if (affected && !isExcluded(cave, other) && !protectedCells.has(other)) addSpecialHit(other);
       }
     }
   }
-  return { hits, targetedTerrain };
+  return { hits, targetedTerrain, specialHits };
 }
 
 function createdSpecials(cave, runs, preferred, hits) {
@@ -4153,6 +4157,7 @@ function bombPanelHits(state, index, random) {
     }
   }
   const expanded = expandSpecialHits(state, hits, new Set(), random);
+  hits.forEach((cell) => expanded.specialHits.add(cell));
   expanded.targetedTerrain.add(index);
   return { ...expanded, bombPanelIndex: index, label: "폭탄 패널 폭발" };
 }
@@ -6159,7 +6164,7 @@ const SPECIAL_MATCH_SHAPES = {
 const PROJECT_COMBO_EFFECTS = {
   both: "두 피스 각각 발동", row: "가로 한 줄", column: "세로 한 줄",
   cross: "가로·세로 십자", "wide-cross": "가로 3줄·세로 3줄", area: "주변 3×3",
-  "large-area": "주변 5×5", target: "목표 타일 1칸 제거", fish: "벌 · 목표 한 칸 타격",
+  "large-area": "주변 5×5", target: "목표 타일 1회 타격", fish: "벌 · 목표 한 칸 타격",
   board: "보드 전체 타격", disabled: "조합 사용 안 함",
 };
 
