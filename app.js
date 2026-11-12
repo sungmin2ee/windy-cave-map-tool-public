@@ -5906,7 +5906,6 @@ function openProjectSpecialRules() {
     select.value = value;
     return select;
   };
-  $("projectSquareRule").value = rules.allowSquare === null ? "default" : String(rules.allowSquare);
   const generation = Object.entries(SPECIAL_MATCH_SHAPES).map(([shape, [name, fallback]]) => {
     const label = document.createElement("label");
     const selected = Object.hasOwn(rules.generation, shape) ? rules.generation[shape] : fallback;
@@ -5978,9 +5977,8 @@ function openProjectSpecialRules() {
   $("projectRulesStatus").textContent = "";
   form.onsubmit = (event) => {
     event.preventDefault();
-    const square = $("projectSquareRule").value;
     const next = normalizeSpecialPieceRules({
-      allowSquare: square === "default" ? null : square === "true",
+      allowSquare: rules.allowSquare,
       generation: Object.fromEntries(generation.map(({ shape, select }) => [shape, select.value || null])),
       customShapes: Array.from(customShapes.children, (row) => ({
         cells: Array.from(row.querySelectorAll('[aria-pressed="true"]'), (tile) => [Number(tile.dataset.x), Number(tile.dataset.y)]),

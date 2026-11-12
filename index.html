@@ -150,7 +150,6 @@
       .project-rules-body p { margin: 0 0 12px; color: var(--muted); font-size: .88rem; line-height: 1.5; }
       .project-rules-body label { display: grid; gap: 5px; min-width: 0; font-size: .88rem; }
       .project-rules-body select.field { box-sizing: border-box; width: 100%; min-width: 0; }
-      #projectSquareRule { max-width: 18rem; }
       #projectMatchRules { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 12px; }
       #disableDefaultMatchPieces { margin-top: 12px; }
       #projectCustomMatchRules { display: grid; gap: 10px; }
@@ -676,13 +675,6 @@
       <div class="dialog-header"><h2 id="projectRulesTitle">프로젝트 설정 · 특수 피스 규칙</h2></div>
       <form id="projectRulesForm">
         <div class="project-rules-body">
-          <label>2×2 매치
-            <select id="projectSquareRule" class="field">
-              <option value="default">레벨의 기존 설정 따르기</option>
-              <option value="true">허용</option>
-              <option value="false">허용 안 함</option>
-            </select>
-          </label>
           <fieldset>
             <legend>매치 모양별 특수 피스 생성</legend>
             <p>각 레벨의 ‘매치로 특수 피스 생성’이 켜져 있을 때 적용됩니다.</p>
@@ -895,7 +887,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=132"></script>
+    <script src="./app.js?v=133"></script>
   </body>
 </html>
 
