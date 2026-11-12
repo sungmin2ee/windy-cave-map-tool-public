@@ -599,8 +599,7 @@ function getAsset(layer, id, cave = activeCave()) {
     (layer === "gimmick" && id === "ddung-iron-box" ? { name: "DDUNG Iron Box", visual: "▣" } : null);
   const definition = project.assetDefinitions?.[layer]?.find((asset) => asset.id === baseId);
   const original = DDUNG_ART.has(id) && (id.startsWith("ddung-") ||
-    (layer === "block" && (isDdungSource(cave?.externalSource) || cave?.generatedBlockArt === "ddung" ||
-      cave?.objectives?.some(({ id }) => /^generated-terrain-goal(?:-\d+)?$/.test(id)))));
+    (layer === "block" && (isDdungSource(cave?.externalSource) || cave?.generatedBlockArt === "ddung")));
   const panel = layer === "gimmick" ? DDUNG_PANELS[baseId] : null;
   const gimmickArt = panel?.[3] || (layer === "gimmick" && Object.hasOwn(DDUNG_GIMMICK_ART, baseId) &&
     (id === "switch" || id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[baseId] : null);
@@ -1932,8 +1931,22 @@ function randomizeBlocks() {
 }
 
 
+function usesDdungGeneration(cave) {
+  if (cave.externalSource) return isDdungSource(cave.externalSource);
+  const imported = project.caves.filter((level) => level.externalSource);
+  return imported.length > 0 && imported.every((level) => isDdungSource(level.externalSource)) &&
+    cave.usableBlocks.every((id) => DDUNG_COLOR_IDS.includes(id));
+}
+
+function difficultyTerrainAssets(cave) {
+  const palette = project.paletteAssets.terrain || [];
+  return usesDdungGeneration(cave)
+    ? [...new Set([...ASSETS.terrain.map(({ id }) => id), ...palette])]
+    : palette;
+}
+
 function difficultyTerrainIds(cave) {
-  return [...new Set([...ASSETS.terrain.map(({ id }) => id), ...(project.paletteAssets.terrain || [])])]
+  return difficultyTerrainAssets(cave)
     .filter((id) => cave.terrainRules[id]?.reaction && cave.terrainRules[id].reaction !== "none");
 }
 
@@ -1957,19 +1970,32 @@ function difficultyPatternSlots(cave, slots, pattern, attempt) {
   });
 }
 
-function difficultyGimmickIds() {
-  return [...new Set([...ASSETS.gimmick.map(({ id }) => id), "ddung-iron-box", ...(project.paletteAssets.gimmick || [])])];
+function difficultyGimmickIds(cave) {
+  const palette = project.paletteAssets.gimmick || [];
+  return usesDdungGeneration(cave)
+    ? [...new Set([...ASSETS.gimmick.map(({ id }) => id), "ddung-iron-box", ...palette])]
+    : palette;
 }
 
-function difficultyItemIds(cave, automatic) {
-  const palette = project.paletteAssets.item || [];
-  const ddung = isDdungSource(cave.externalSource) ||
-    (!cave.externalSource && project.caves.some((level) => isDdungSource(level.externalSource)));
-  if (ddung) return Object.values(DDUNG_ITEM_TILES);
-  return automatic ? ["coin"] : palette.filter((id) => !id.startsWith("ddung-"));
+function canGenerateGimmick(id) {
+  return ![SPAWNER_ID, "teleport-a", "teleport-b", "exit"].includes(id);
 }
 
-function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickIds = [], selectedTerrain = [], automatic = false) {
+function difficultyItemIds(cave) {
+  return usesDdungGeneration(cave) ? Object.values(DDUNG_ITEM_TILES) : project.paletteAssets.item || [];
+}
+
+function difficultyBlockIds(cave, automatic) {
+  const ddung = usesDdungGeneration(cave);
+  let colors = cave.usableBlocks.length ? cave.usableBlocks : project.paletteAssets.block || [];
+  if (ddung) {
+    colors = colors.filter((id) => DDUNG_COLOR_IDS.includes(id));
+    if (automatic && !colors.length && !cave.usableBlocks.length) colors = DDUNG_COLOR_IDS;
+  }
+  return colors.filter((id) => blockWeight(cave, id) > 0);
+}
+
+function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickIds = [], selectedTerrain = []) {
   const cave = deepCopy(source);
   const seed = source.randomSeed + "|difficulty-" + target + "-" + (attempt + 1);
   const random = seededRandom(seed);
@@ -1981,7 +2007,6 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     );
   }
   cave.randomSeed = seed;
-  colors = colors.filter((id) => DDUNG_COLOR_IDS.includes(id));
   if (colors.length < 2) return null;
   cave.usableBlocks = colors;
   cave.testClearMoves = 0;
@@ -2024,7 +2049,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   );
   const eligibleAssets = {
     gimmick: gimmickIds,
-    item: difficultyItemIds(cave, automatic),
+    item: difficultyItemIds(cave),
   };
   for (const [layer, assets] of Object.entries(eligibleAssets)) {
     if (!assets.length) continue;
@@ -2072,7 +2097,8 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   if ((!keepPlacement && findMatches(cave).size) || !hasPossibleSwap(cave)) return null;
 
   cave.objectives = goals;
-  cave.generatedBlockArt = "ddung";
+  if (usesDdungGeneration(source)) cave.generatedBlockArt = "ddung";
+  else delete cave.generatedBlockArt;
   cave.targetType = null;
   cave.targetCount = terrainCount;
   const moveSpread = [-8, -4, 0, 4, 9, 15][attempt % 6];
@@ -2194,10 +2220,11 @@ function openDifficultyGenerator() {
   $("difficultyHeight").value = cave.height;
   renderDifficultyBoardShapes();
   const terrainIds = difficultyTerrainIds(cave);
-  const allTerrain = [...new Set([...ASSETS.terrain.map(({ id }) => id), ...(project.paletteAssets.terrain || [])])];
-  renderDifficultyChoices("difficultyTerrain", "terrain", allTerrain, (id) => terrainIds.includes(id));
-  renderDifficultyChoices("difficultyGimmick", "gimmick", difficultyGimmickIds(),
-    (id) => ![SPAWNER_ID, "teleport-a", "teleport-b", "exit"].includes(id));
+  renderDifficultyChoices("difficultyTerrain", "terrain", difficultyTerrainAssets(cave), (id) => terrainIds.includes(id));
+  const gimmicks = difficultyGimmickIds(cave);
+  renderDifficultyChoices("difficultyGimmick", "gimmick", gimmicks, canGenerateGimmick);
+  const gimmickCount = $("difficultyGimmickCount");
+  gimmickCount.value = Math.min(gimmickCount.valueAsNumber || 0, gimmicks.filter(canGenerateGimmick).length);
   $("difficultyOptions").replaceChildren();
   $("difficultyStatus").textContent = "";
   $("difficultyDialog").showModal();
@@ -2232,16 +2259,14 @@ async function generateDifficultyCandidates(event) {
   }
   $("difficultyOptions").replaceChildren();
   const terrainPool = selectedTerrain.length ? selectedTerrain : difficultyTerrainIds(source);
-  const gimmickPool = gimmickIds.length ? gimmickIds : difficultyGimmickIds()
-    .filter((id) => ![SPAWNER_ID, "teleport-a", "teleport-b", "exit"].includes(id));
+  const gimmickPool = gimmickIds.length ? gimmickIds : difficultyGimmickIds(source).filter(canGenerateGimmick);
   if (!Number.isInteger(terrainCount) || terrainCount < 1 || terrainCount > MAX_OBJECTIVES ||
       !Number.isInteger(gimmickCount) || gimmickCount < 0 || gimmickCount > 6) return;
   if (terrainCount > terrainPool.length || gimmickCount > gimmickPool.length) {
     status.textContent = "사용할 종류 수만큼 체크하거나 종류 수를 줄여 주세요.";
     return;
   }
-  let colors = (source.usableBlocks.length ? source.usableBlocks : project.paletteAssets.block || [])
-    .filter((id) => DDUNG_COLOR_IDS.includes(id) && blockWeight(source, id) > 0);
+  const colors = difficultyBlockIds(source, automatic);
   const generationSeed = source.randomSeed + "|recommend|" + crypto.randomUUID();
   const generationSource = deepCopy(source);
   if (size.width !== source.width || size.height !== source.height) {
@@ -2249,13 +2274,8 @@ async function generateDifficultyCandidates(event) {
   }
   generationSource.randomSeed = generationSeed;
   generationSource.excludedCells = [...shape];
-  if (automatic && colors.length < 4) {
-    colors = [...DDUNG_COLOR_IDS];
-    generationSource.blockWeights = { ...source.blockWeights };
-    for (const color of colors) if (blockWeight(source, color) <= 0) generationSource.blockWeights[color] = 1;
-  }
   if (colors.length < 2) {
-    status.textContent = "사용 색상에서 생성 가중치가 0보다 큰 DDUNG 기본 색상을 2종 이상 선택하세요.";
+    status.textContent = "사용 색상에서 생성 가중치가 0보다 큰 블록 색상을 2종 이상 선택하세요.";
     return;
   }
   if (!difficultyTerrainIds(source).length) {
@@ -2284,7 +2304,7 @@ async function generateDifficultyCandidates(event) {
         terrain: difficultyObjectOptions(random, terrainPool, terrainCount),
       };
       const cave = buildDifficultyCandidate(generationSource, colors, target, attempt, keepPlacement,
-        options.pattern, options.gimmicks, options.terrain, automatic);
+        options.pattern, options.gimmicks, options.terrain);
       if (!cave) continue;
       const signature = JSON.stringify([cave.layers, cave.objectives, cave.moveLimit]);
       if (signatures.has(signature)) continue;
@@ -5251,6 +5271,8 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers,
     flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "left-first"),
     terrainRules: valueAt(source, ["terrainRules", "terrainBehavior", "terrainBehaviors"], undefined),
     gimmickRules: source.gimmickRules,
+    blockWeights: source.blockWeights,
+    levelSettings: source.levelSettings,
     usableBlocks, objectives, targetType, targetCount, moveLimit, parMoves, testClearMoves,
     failureBonus: Boolean(valueAt(source, ["failureBonus", "useFailureBonus"], false)),
     note: valueAt(source, ["note", "description", "memo"], ""),
