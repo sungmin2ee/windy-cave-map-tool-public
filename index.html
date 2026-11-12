@@ -11,7 +11,17 @@
     .object-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
     .asset-visual { position: relative; }
     .asset-visual.has-object-image, .map-cell > .has-object-image { background: transparent !important; box-shadow: none; color: transparent; }
-    #mapGrid .cell-block.has-object-image, #simulationGrid .cell-block.has-object-image { inset: 5%; }
+    .object-image-rotate-left { transform: rotate(-90deg); }
+    #mapGrid .cell-block.has-object-image, #simulationGrid .cell-block.has-object-image { inset: 12%; }
+    .map-cell .cell-spawner-badge, .map-cell.has-initial-piece .cell-spawner-badge {
+      inset: auto auto 2px 2px;
+      width: 28%;
+      height: 28%;
+      font-size: clamp(9px, 1.5vmin, 15px);
+      line-height: 1;
+      border-radius: 4px;
+      background: #171125d9;
+    }
     .file-picker { position: relative; display: inline-grid; place-items: center; text-align: center; }
     .file-picker input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
     .file-picker:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -724,7 +734,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=107"></script>
+    <script src="./app.js?v=108"></script>
   </body>
 </html>
 

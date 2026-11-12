@@ -530,6 +530,10 @@ function showObjectImage(element, source) {
   image.alt = "";
   image.draggable = false;
   image.className = "object-image";
+  // These Unity prefabs rotate their sprite child by +90° in world space.
+  if (/^\.\/art\/ddung\/(?:red|blue|purple|yellow)\.png$/.test(source)) {
+    image.classList.add("object-image-rotate-left");
+  }
   image.onload = () => element.classList.add("has-object-image");
   image.onerror = () => image.remove();
   image.src = source;
@@ -1243,6 +1247,9 @@ function applyCellVisual(cell, cave, index) {
     if (!asset) continue;
     const visual = document.createElement("span");
     visual.className = `cell-${layer} ${asset.className || ""}`;
+    if (layer === "gimmick" && assetId === SPAWNER_ID && cave.layers.block[index]) {
+      visual.classList.add("cell-spawner-badge");
+    }
     if (layer === "block") {
       visual.style.background = blockColor(assetId);
       if (assetId === "ddung-dust-piece") visual.textContent = asset.visual;
