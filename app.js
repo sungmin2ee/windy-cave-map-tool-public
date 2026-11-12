@@ -8,6 +8,21 @@ const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
 const SPAWNER_ID = "spawner";
+const DDUNG_PANELS = {
+  "ddung-attack-row": ["Q", "가로 공격 패널", "↔", "panel-attack"],
+  "ddung-attack-column": ["A", "세로 공격 패널", "↕", "panel-attack"],
+  "ddung-attack-cross": ["Z", "십자 공격 패널", "✚", "panel-attack"],
+  "ddung-attack-turn": ["Y", "회전 공격 패널", "⟳", "panel-turn"],
+  "ddung-fire-up": ["1", "위쪽 불꽃 패널", "↑", "panel-fire"],
+  "ddung-fire-right": ["2", "오른쪽 불꽃 패널", "→", "panel-fire"],
+  "ddung-fire-down": ["3", "아래쪽 불꽃 패널", "↓", "panel-fire"],
+  "ddung-fire-left": ["4", "왼쪽 불꽃 패널", "←", "panel-fire"],
+  "ddung-fire-single": ["r", "한 칸 불꽃 패널", "↑", "panel-fire-single"],
+  "ddung-feng-horizontal": ["?", "가로 Feng", "↔", "ddung-feng"],
+  "ddung-feng-vertical": ["a", "세로 Feng", "↕", "ddung-feng"],
+  "ddung-feng-large-row": ["(", "큰 가로 Feng", "↔", "ddung-feng"],
+  "ddung-feng-large-column": ["b", "큰 세로 Feng", "↕", "ddung-feng"],
+};
 
 const ASSETS = {
   terrain: [
@@ -52,6 +67,7 @@ const ASSETS = {
     { id: "ddung-mayor-large", name: "DDUNG Mayor Large", visual: "♛" },
     { id: "ddung-bee-up", name: "DDUNG Bee Up", visual: "⇧" },
     { id: "ddung-octo", name: "DDUNG Octo", visual: "◈" },
+    ...Object.entries(DDUNG_PANELS).map(([id, [, name, visual]]) => ({ id, name, visual })),
   ],
   item: [
     { id: "coin", name: "Coin", visual: "●" },
@@ -273,7 +289,7 @@ function collectPaletteAssets(caves, saved = {}, definitions = {}) {
   used.gimmick.add(SPAWNER_ID);
   for (const cave of caves) {
     for (const layer of Object.keys(ASSETS)) {
-      for (const id of cave.layers[layer]) used[layer].add(id);
+      for (const id of cave.layers[layer]) used[layer].add(layer === "gimmick" && id ? ddungGimmickBase(id) : id);
     }
     for (const id of cave.usableBlocks) used.block.add(id);
     for (const objective of cave.objectives) used[objective.layer].add(objective.targetId);
@@ -375,6 +391,15 @@ function normalizeCave(data, index = 0) {
     : layers.block.filter(Boolean);
   const objectives = normalizeObjectives(source);
   const externalSource = source.externalSource;
+  if (isDdungSource(externalSource)) {
+    for (const [cell, id] of layers.gimmick.entries()) {
+      const tile = ddungCellSource({ width, externalSource }, cell)?.tile;
+      if (id === "switch" && tile && "YZ1234r".includes(tile) ||
+          id === "arrow-up" && tile === "A" || id === "arrow-down" && tile === "Q") {
+        layers.gimmick[cell] = ddungPanelId(tile);
+      }
+    }
+  }
   if (isDdungSource(externalSource) && !externalSource.jellyGroupsParsed) {
     for (const [cell] of ddungJellyCells({ externalSource, width, height })) {
       if (!excludedCells.includes(cell)) layers.terrain[cell] = "ddung-jelly";
@@ -523,17 +548,19 @@ const DDUNG_GIMMICK_ART = Object.freeze({
 
 function getAsset(layer, id, cave = activeCave()) {
   if (!assetId(id)) return null;
-  const known = ASSETS[layer].find((asset) => asset.id === id) ??
+  const baseId = layer === "gimmick" ? ddungGimmickBase(id) : id;
+  const known = ASSETS[layer].find((asset) => asset.id === baseId) ??
     (layer === "gimmick" && id === "ddung-iron-box" ? { name: "DDUNG Iron Box", visual: "▣" } : null);
-  const definition = project.assetDefinitions?.[layer]?.find((asset) => asset.id === id);
+  const definition = project.assetDefinitions?.[layer]?.find((asset) => asset.id === baseId);
   const original = DDUNG_ART.has(id) && (id.startsWith("ddung-") ||
     (layer === "block" && isDdungSource(cave?.externalSource)));
-  const gimmickArt = layer === "gimmick" && Object.hasOwn(DDUNG_GIMMICK_ART, id) &&
-    (id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[id] : null;
+  const panel = layer === "gimmick" ? DDUNG_PANELS[baseId] : null;
+  const gimmickArt = panel?.[3] || (layer === "gimmick" && Object.hasOwn(DDUNG_GIMMICK_ART, baseId) &&
+    (id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[baseId] : null);
   const image = definition?.image || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
     original ? `./art/ddung/${id}.png` : null);
   return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer],
-    ...known, id, name: definition?.name || known?.name || id, image };
+    ...known, id, name: definition?.name || known?.name || id, image, panelMark: panel && "AQZY1234r".includes(panel[0]) ? panel[2] : null };
 }
 
 function showObjectImage(element, source) {
@@ -595,7 +622,8 @@ function ddungGoalLimitation(cave, objective) {
 }
 
 function matchesObjectiveAsset(objective, id) {
-  return id === objective.targetId ||
+  return id === objective.targetId || (objective.layer === "gimmick" && (ddungGimmickBase(id) === objective.targetId ||
+      objective.targetId === "ddung-feng" && id?.startsWith("ddung-feng-"))) ||
     (objective.layer === "terrain" && objective.targetId === "ddung-oak" && id === "ddung-frost") ||
     (objective.layer === "terrain" && objective.targetId === "ddung-stone" && id === "ddung-stone-thick") || (objective.layer === "gimmick" &&
     objective.targetId === "ddung-box" && ddungObjectiveType(objective) === 7 && id === "ddung-iron-box");
@@ -609,8 +637,7 @@ function countObjectiveAssets(cave, objective) {
   }
   return cave.layers[objective.layer].filter((id, index) => matchesObjectiveAsset(objective, id) &&
     (id !== "ddung-heather-large" || heatherGroup(cave, index)[0] === index) &&
-    (!isDdungSource(cave.externalSource) || !["ddung-mayor-large", "ddung-feng"].includes(id) ||
-      ddungGimmickGroup(cave, index)[0] === index)).length;
+    (objective.layer !== "gimmick" || ddungGimmickGroup(cave, index)[0] === index)).length;
 }
 
 function resolvedObjectiveCount(cave, objective) {
@@ -820,6 +847,15 @@ function renderPalette() {
   });
   assetGrid.appendChild(eraseButton);
   const layer = activeLayer;
+  const ddungPicker = $("addDdungGimmick");
+  ddungPicker.hidden = layer !== "gimmick";
+  if (layer === "gimmick") {
+    ddungPicker.replaceChildren(new Option("DDUNG 원작 기믹 추가", ""));
+    for (const { id } of ASSETS.gimmick) {
+      if (id.startsWith("ddung-") && id !== "ddung-feng") ddungPicker.add(new Option(getAsset("gimmick", id).name, id));
+    }
+    ddungPicker.add(new Option("DDUNG Iron Box", "ddung-iron-box"));
+  }
   const paletteIds = project.paletteAssets[layer] || [];
   if (!paletteIds.includes(selectedAssets[layer])) selectedAssets[layer] = null;
 
@@ -830,7 +866,9 @@ function renderPalette() {
     button.className = `asset-card${activeTool !== "eraser" && selectedAssets[activeLayer] === asset.id ? " active" : ""}`;
     const style = activeLayer === "block" ? `background:${blockColor(asset.id)}` : "";
     button.innerHTML = `<span class="asset-visual ${asset.className || ""}" style="${style}">${escapeHtml(asset.visual)}</span><span>${escapeHtml(asset.name)}</span>`;
-    showObjectImage(button.querySelector(".asset-visual"), asset.image);
+    const icon = button.querySelector(".asset-visual");
+    if (asset.panelMark) icon.dataset.panelMark = asset.panelMark;
+    showObjectImage(icon, asset.image);
     button.addEventListener("click", () => {
       const isSameSelection = activeTool !== "eraser" && selectedAssets[activeLayer] === asset.id;
       selectedAssets[activeLayer] = isSameSelection ? null : asset.id;
@@ -885,7 +923,7 @@ function renderSelectedObjectRules(asset) {
     (definition) => definition.id === asset.id && definition.image);
   const cave = activeCave();
   const showRule = asset && activeLayer === "gimmick" && asset.id !== SPAWNER_ID &&
-    !isDdungSource(cave.externalSource);
+    !asset.id.startsWith("ddung-") && !isDdungSource(cave.externalSource);
   $("gimmickRulesForm").hidden = !showRule;
   if (!showRule) return;
   const rule = cave.gimmickRules?.[asset.id];
@@ -969,7 +1007,7 @@ function saveSelectedGimmickRule(event) {
 function findAssetUsage(caves, layer, id) {
   return caves.flatMap((cave) => {
     const reasons = [];
-    const placed = cave.layers[layer].filter((value) => value === id).length;
+    const placed = cave.layers[layer].filter((value) => (layer === "gimmick" ? ddungGimmickBase(value) : value) === id).length;
     if (placed) reasons.push(`${placed}칸 배치`);
     if (cave.objectives.some((goal) => goal.layer === layer && matchesObjectiveAsset(goal, id))) reasons.push("클리어 목표");
     if (layer === "block" && cave.usableBlocks.includes(id)) reasons.push("사용 색상");
@@ -1084,7 +1122,8 @@ function openAssetReplacement() {
   const id = selectedAssets[layer];
   const cave = activeCave();
   if (!id || !project.paletteAssets[layer].includes(id)) return toast("교체할 오브젝트를 선택하세요.");
-  const alternatives = paletteOptions(layer).filter((asset) => asset.id !== id);
+  if (layer === "gimmick" && ddungLargeGimmick(id)) return toast("2×2 기믹은 보드에서 지우거나 다시 배치하세요.");
+  const alternatives = paletteOptions(layer).filter((asset) => asset.id !== id && (layer !== "gimmick" || !ddungLargeGimmick(asset.id)));
   if (!alternatives.length) return toast("같은 레이어에 교체할 오브젝트를 먼저 추가하세요.");
   const select = $("assetReplaceTarget");
   select.replaceChildren(...alternatives.map(({ name, id }) => new Option(name, id)));
@@ -1149,7 +1188,8 @@ function applyAssetReplacement(event) {
 
 function locatedAssetCells(cave) {
   if (assetLocator?.caveId !== cave.id) return [];
-  return cave.layers[assetLocator.layer].flatMap((id, index) => id === assetLocator.id ? [index] : []);
+  return cave.layers[assetLocator.layer].flatMap((id, index) =>
+    (assetLocator.layer === "gimmick" ? ddungGimmickBase(id) : id) === assetLocator.id ? [index] : []);
 }
 
 function stepLocatedAsset(delta) {
@@ -1291,7 +1331,7 @@ function applyCellVisual(cell, cave, index) {
     if (cell.tagName === "BUTTON") cell.disabled = true;
     return;
   }
-  const solidGimmick = isDdungGimmickBarrier(cave, index);
+  const solidGimmick = isDdungGimmickBarrier(cave, index) || ddungBoxDurability(cave, index);
   for (const layer of ["terrain", "block", "gimmick", "item"]) {
     if (layer === "block" && solidGimmick) continue;
     const assetId = cave.layers[layer][index];
@@ -1300,6 +1340,10 @@ function applyCellVisual(cell, cave, index) {
     if (!asset) continue;
     const visual = document.createElement("span");
     visual.className = `cell-${layer} ${asset.className || ""}`;
+    if (asset.panelMark) visual.dataset.panelMark = asset.panelMark;
+    if (layer === "gimmick" && ddungGimmickGroup(cave, index).length === 4) {
+      visual.dataset.gimmickPart = ddungGimmickGroup(cave, index).indexOf(index);
+    }
     if (layer === "gimmick" && cave.layers.block[index] && !solidGimmick) {
       if (assetId === SPAWNER_ID) visual.classList.add("cell-spawner-badge");
       else if (asset.image?.endsWith(".webp") && asset.image.startsWith("./art/ddung/")) {
@@ -1361,7 +1405,7 @@ function editCell(index, fillMode) {
   }
   if (!strokeSnapshotTaken) { snapshot(); strokeSnapshotTaken = true; }
   const value = activeTool === "eraser" ? null : selectedAssets[activeLayer];
-  if (fillMode) floodFill(cave, activeLayer, index, value);
+  if (fillMode && !(activeLayer === "gimmick" && ddungLargeGimmick(value))) floodFill(cave, activeLayer, index, value);
   else paintLayerCell(cave, activeLayer, index, value);
   renderGrid();
   if (cave.objectives.some((objective) => objective.layer === activeLayer && objective.countMode === "auto-map")) renderObjectives();
@@ -1375,8 +1419,32 @@ function clearInitialPiece(cave, index) {
   cave.initialPieceTypes[index] = null;
 }
 
+function ddungLargeGimmick(id) {
+  return ["ddung-mayor-large", "ddung-feng-large-row", "ddung-feng-large-column"].includes(id);
+}
+
 function paintLayerCell(cave, layer, index, value) {
-  if (layer === "block") clearInitialPiece(cave, index);
+  if (layer === "block") {
+    if (value && (isDdungGimmickBarrier(cave, index) || ddungBoxDurability(cave, index))) return;
+    clearInitialPiece(cave, index);
+  }
+  if (layer === "gimmick") {
+    const placedCells = ddungLargeGimmick(value) ? [index, index + 1, index + cave.width, index + cave.width + 1] : [index];
+    if (placedCells.length > 1 && (index % cave.width === cave.width - 1 || placedCells.some((cell) =>
+      isBarrier(cave, cell) || cave.layers.gimmick[cell]))) {
+      toast("큰 기믹을 배치하려면 비어 있는 기믹 칸 2×2가 필요합니다.");
+      return;
+    }
+    for (const cell of ddungGimmickGroup(cave, index)) cave.layers.gimmick[cell] = null;
+    for (const [part, cell] of placedCells.entries()) {
+      cave.layers.gimmick[cell] = placedCells.length > 1 ? `${value}:part${part}` : value;
+      if (isDdungGimmickBarrier(cave, cell) || ddungBoxDurability(cave, cell)) {
+        cave.layers.block[cell] = null;
+        clearInitialPiece(cave, cell);
+      }
+    }
+    return;
+  }
   cave.layers[layer][index] = value;
 }
 
@@ -2372,7 +2440,6 @@ function gravityLines(cave) {
 }
 
 function ddungBoxDurability(cave, index) {
-  if (!isDdungSource(cave.externalSource)) return 0;
   const id = cave.layers.gimmick[index];
   return id === "ddung-iron-box" || id === "ddung-box" ? 3 : 0;
 }
@@ -2388,11 +2455,33 @@ const DDUNG_GIMMICK_HITS = Object.freeze({
 });
 
 function isDdungSmallMayor(cave, index) {
-  return cave.layers.gimmick[index] === "ddung-mayor-small" && isDdungSource(cave.externalSource);
+  return cave.layers.gimmick[index] === "ddung-mayor-small";
+}
+
+function ddungPanelId(tile) {
+  return Object.keys(DDUNG_PANELS).find((id) => DDUNG_PANELS[id][0] === tile);
+}
+
+function ddungGimmickBase(id) {
+  return id?.replace(/:part[0-3]$/, "") ?? id;
+}
+
+function ddungGimmickTile(cave, index) {
+  const id = ddungGimmickBase(cave.layers.gimmick[index]);
+  const tile = ddungCellSource(cave, index)?.tile;
+  return DDUNG_PANELS[id]?.[0] ?? (id === "ddung-feng" && !"?()[]abcde".includes(tile ?? "!") ? "?" : tile);
 }
 
 function ddungGimmickGroup(cave, index) {
   const id = cave.layers.gimmick[index];
+  const part = /^(ddung-(?:mayor-large|feng-large-row|feng-large-column)):part([0-3])$/.exec(id ?? "");
+  if (part) {
+    const offset = Number(part[2]);
+    const anchor = index - offset % 2 - (offset >= 2 ? cave.width : 0);
+    const cells = [anchor, anchor + 1, anchor + cave.width, anchor + cave.width + 1];
+    return anchor >= 0 && anchor % cave.width < cave.width - 1 && cells.every((cell, position) =>
+      cave.layers.gimmick[cell] === `${part[1]}:part${position}`) ? cells : [index];
+  }
   const tile = ddungCellSource(cave, index)?.tile;
   const pattern = id === "ddung-mayor-large" ? "ghij" :
     id === "ddung-feng" && tile && "()[]bcde".includes(tile) ? ("()[]".includes(tile) ? "()[]" : "bcde") : "";
@@ -2405,10 +2494,12 @@ function ddungGimmickGroup(cave, index) {
 }
 
 function ddungGimmickDurability(cave, index) {
-  if (!isDdungSource(cave.externalSource)) return 0;
-  const id = cave.layers.gimmick[index];
-  const tile = ddungCellSource(cave, index)?.tile;
-  if (id === "switch") {
+  const id = ddungGimmickBase(cave.layers.gimmick[index]);
+  const tile = ddungGimmickTile(cave, index);
+  if (DDUNG_PANELS[id] && "AQZY1234r".includes(tile)) return tile === "r" ? 2 : 5;
+  if (id === "ddung-feng-horizontal" || id === "ddung-feng-vertical") return 4;
+  if (id === "ddung-feng-large-row" || id === "ddung-feng-large-column") return 7;
+  if (id === "switch" && isDdungSource(cave.externalSource)) {
     if (tile === "r") return 2;
     if (tile && "YZ1234".includes(tile)) return 5;
   }
@@ -2780,7 +2871,8 @@ function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), rem
 
 function* gimmickHitResults(state, matches, removedBlocks) {
   const { cave } = state;
-  for (const [index, id] of cave.layers.gimmick.entries()) {
+  for (const [index, storedId] of cave.layers.gimmick.entries()) {
+    const id = ddungGimmickBase(storedId);
     if (!id || isExcluded(cave, index) || state.activatedGimmicks.has(index)) continue;
     const boxDurability = ddungBoxDurability(cave, index);
     const originId = state.gimmickOrigins.get(index);
@@ -2788,8 +2880,8 @@ function* gimmickHitResults(state, matches, removedBlocks) {
     const ddungDurability = ddungGimmickDurability(cave, index);
     const group = ddungDurability ? ddungGimmickGroup(cave, index) : [index];
     if (group[0] !== index) continue;
-    const tile = ddungDurability ? ddungCellSource(cave, index)?.tile : null;
-    const reusable = tile && (id === "switch" || id === "arrow-up" || id === "arrow-down") && "AQZY1234r".includes(tile);
+    const tile = ddungDurability ? ddungGimmickTile(cave, index) : null;
+    const reusable = Boolean(DDUNG_PANELS[id] && "AQZY1234r".includes(tile));
     const durability = boxDurability || ddungDurability || rule?.durability || (originId ? 1 : 0);
     if (isDdungSource(cave.externalSource) && !durability) continue;
     const nearbyHits = durability ? removedBlocks : matches;
@@ -2800,7 +2892,7 @@ function* gimmickHitResults(state, matches, removedBlocks) {
       const amount = id === "ddung-mouse-panel" && ddungDurability && matches.has(index)
         ? Math.max(1, durability - state.gimmickHits[index]) : 1;
       const exhausted = durability > 0 && state.gimmickHits[index] + amount >= durability;
-      const replacement = exhausted ? (boxDurability && id === "ddung-iron-box" ? "ddung-box" : rule?.nextId) : null;
+      const replacement = exhausted ? (boxDurability && id === "ddung-iron-box" ? "ddung-box" : ddungDurability ? null : rule?.nextId) : null;
       yield { index, id, originId, durability, amount, replacement, group, tile, reusable,
         broken: !durability || (exhausted && !replacement) };
     }
@@ -2899,12 +2991,12 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
         if (isDdungGimmickBarrier(state.cave, index)) {
           ddungGimmickAttack(state.cave, index, id).forEach((cell) => gimmickAttack.add(cell));
         }
-        if (id === "ddung-feng" && tile) ddungPanelAttack(state.cave, index, tile, true).forEach((cell) => gimmickAttack.add(cell));
+        if (["ddung-feng", "ddung-feng-horizontal", "ddung-feng-vertical", "ddung-feng-large-row", "ddung-feng-large-column"].includes(id) && tile) ddungPanelAttack(state.cave, index, tile, true).forEach((cell) => gimmickAttack.add(cell));
         for (const cell of group) {
           state.cave.layers.gimmick[cell] = null;
           state.gimmickHits[cell] = 0;
         }
-        if (id === "ddung-spider-cave" && tile === "%") {
+        if (id === "ddung-spider-cave") {
           const { cave } = state;
           let added = 0;
           const x = index % cave.width;
@@ -3471,11 +3563,11 @@ function playSimulationTurn(state, action, captureFrame) {
   const resolved = resolveMatches(state, captureFrame, combo ? [first, second] : activation ? [first] : [], activation || combo ? [] : [second, first], combo);
   state.message = (combo ? combo.label + " · " : "") + resolved.removed + "개 제거 · " + resolved.cascade + "연쇄 · Terrain " + resolved.terrainBroken + "개 파괴";
   for (const [index, id] of cave.layers.gimmick.entries()) {
-    if (id !== "switch" || ddungCellSource(cave, index)?.tile !== "Y" || state.turnPanelsHit.has(index)) continue;
+    if (id !== "ddung-attack-turn" || state.turnPanelsHit.has(index)) continue;
     if (state.verticalPanels.has(index)) state.verticalPanels.delete(index);
     else state.verticalPanels.add(index);
   }
-  if (isDdungSource(cave.externalSource)) {
+  if (cave.layers.gimmick.includes("ddung-bee-up")) {
     const bees = cave.layers.gimmick.flatMap((id, index) => id === "ddung-bee-up" ? [index] : []);
     for (const index of bees) {
       if (state.turnPanelsHit.has(index)) continue;
@@ -4688,7 +4780,8 @@ function applyDdungTile(layers, index, character, unknownTokens) {
     f: "ddung-mayor-small", g: "ddung-mayor-large", h: "ddung-mayor-large", i: "ddung-mayor-large", j: "ddung-mayor-large",
     "⑵": "ddung-octo", "⑶": "ddung-octo", "⑷": "ddung-octo", "⑸": "ddung-octo", "⑹": "ddung-octo",
   };
-  if (gimmickMap[character]) { layers.gimmick[index] = gimmickMap[character]; return; }
+  const panel = "AQZY1234ra".includes(character) ? ddungPanelId(character) : null;
+  if (panel || gimmickMap[character]) { layers.gimmick[index] = panel || gimmickMap[character]; return; }
   if (character === "P") { layers.gimmick[index] = "ddung-iron-box"; return; }
   if (character === "X") { layers.terrain[index] = "wall"; return; }
   unknownTokens?.add(`ddung-tile:${character}`);
@@ -5068,6 +5161,18 @@ function importProject(file) {
 }
 
 function bindInputs() {
+  $("addDdungGimmick").addEventListener("change", ({ target }) => {
+    const id = target.value;
+    if (!id || activeLayer !== "gimmick") return;
+    snapshot();
+    const ids = project.paletteAssets.gimmick ??= [];
+    if (!ids.includes(id)) ids.push(id);
+    selectedAssets.gimmick = id;
+    activeTool = "brush";
+    syncToolButtons();
+    renderPalette();
+    persist();
+  });
   $("levelSettingsForm").addEventListener("submit", saveLevelSettings);
   const stopPainting = () => { isPainting = false; strokeSnapshotTaken = false; };
   window.addEventListener("pointerup", stopPainting);
