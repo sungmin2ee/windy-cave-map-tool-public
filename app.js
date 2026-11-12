@@ -1971,10 +1971,9 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     terrain[index] = id;
     terrainCounts.set(id, (terrainCounts.get(id) ?? 0) + 1);
   }
-  const recovery = automatic && attempt >= 12;
   const goals = targets.map((id, index) => {
     const available = terrainCounts.get(id);
-    const count = Math.max(1, Math.min(available, Math.round(available * (recovery ? 0.12 : 0.25 + target * 0.007) * variation)));
+    const count = Math.max(1, Math.min(available, Math.round(available * (0.25 + target * 0.007) * variation)));
     return normalizeObjective({ id: "generated-terrain-goal-" + index, layer: "terrain", targetId: id, count });
   });
   const terrainCount = goals.reduce((count, goal) => count + goal.count, 0);
@@ -2039,7 +2038,6 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   cave.targetCount = terrainCount;
   const moveSpread = [-8, -4, 0, 4, 9, 15][attempt % 6];
   cave.moveLimit = Math.max(2, Math.min(35, Math.round(16 - target / 8 + Math.sqrt(terrainCount) * 3 + moveSpread)));
-  if (recovery) cave.moveLimit = Math.max(cave.moveLimit, 35 + (attempt - 12) * 2);
   cave.parMoves = Math.max(1, Math.floor(cave.moveLimit * 0.75));
   const validation = validateCave(cave, collectPaletteAssets([cave], project.paletteAssets, project.assetDefinitions));
   return validation.errors.length || validation.unsupported.length ? null : cave;
@@ -2126,14 +2124,14 @@ function automaticDifficultyOptions(cave, target, attempt) {
     ["ddung-water", "ddung-stone", "ddung-web"].includes(id));
   if (!terrain.length) terrain.push(...difficultyTerrainIds(cave));
   const selected = [];
-  const count = attempt < 12 && target >= 55 ? 2 : 1;
+  const count = target >= 55 ? 2 : 1;
   while (selected.length < count && terrain.length) {
     selected.push(terrain.splice(Math.floor(random() * terrain.length), 1)[0]);
   }
   const patterns = ["random", "border", "checker", "rows", "columns", "corners", "lanes", "bands"];
   const gimmicks = ["ddung-attack-row", "ddung-attack-column", "ddung-attack-cross", "ddung-fire-up"];
   return {
-    pattern: attempt >= 12 ? "random" : patterns[Math.floor(random() * patterns.length)],
+    pattern: patterns[Math.floor(random() * patterns.length)],
     terrain: selected,
     gimmicks: [gimmicks[Math.floor(random() * gimmicks.length)]],
   };
@@ -2176,7 +2174,7 @@ async function generateDifficultyCandidates(event) {
   }
   const candidates = [];
   const signatures = new Set();
-  const attempts = automatic ? 24 : 12;
+  const attempts = 12;
   const runs = 6;
   let canceled = false;
   const cancel = () => { canceled = true; };
@@ -2188,7 +2186,6 @@ async function generateDifficultyCandidates(event) {
       status.textContent = "목표 " + target + " · 후보 생성 및 검증 " + (attempt + 1) + "/" + attempts;
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (canceled || !dialog.open || activeCave() !== source) return;
-      if (automatic && attempt === 12 && candidates.length) break;
       const options = automatic ? automaticDifficultyOptions(generationSource, target, attempt) :
         { pattern, gimmicks: gimmickIds, terrain: selectedTerrain };
       const cave = buildDifficultyCandidate(generationSource, colors, target, attempt, keepPlacement,
@@ -2204,17 +2201,14 @@ async function generateDifficultyCandidates(event) {
         results.push(runAutoGame(cave, run));
       }
       const batch = summarizeBatch(results);
-      if (!automatic || batch.wins) candidates.push({ cave, batch, score: difficultyCandidateScore(cave, batch) });
-      if (automatic && attempt >= 12 && candidates.length >= 3) break;
+      candidates.push({ cave, batch, score: difficultyCandidateScore(cave, batch) });
     }
-    candidates.sort((a, b) => Number(!a.batch.wins) - Number(!b.batch.wins) ||
-      Math.abs(a.score - target) - Math.abs(b.score - target) || b.batch.wins - a.batch.wins);
+    candidates.sort((a, b) => Math.abs(a.score - target) - Math.abs(b.score - target) || b.batch.wins - a.batch.wins);
     const best = candidates.slice(0, 3);
     renderDifficultyCandidates(source, best);
     status.textContent = best.length
       ? "목표 " + target + " · 가까운 후보 " + best.length + "개 · 후보당 자동 플레이 " + runs + "회"
-      : automatic ? "24번의 배치 시도에서 자동 플레이로 클리어한 후보를 찾지 못했습니다." :
-        "선택한 패턴에 배치할 공간이 부족하거나 시작 상태에서 교환할 수 없습니다. 배치 유지 옵션과 선택한 오브젝트를 확인해 주세요.";
+      : "선택한 패턴에 배치할 공간이 부족하거나 시작 상태에서 교환할 수 없습니다. 배치 유지 옵션과 선택한 오브젝트를 확인해 주세요.";
   } catch (error) {
     console.error(error);
     status.textContent = "후보를 만드는 중 오류가 발생했습니다.";
