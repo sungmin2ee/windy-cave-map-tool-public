@@ -556,7 +556,7 @@ function getAsset(layer, id, cave = activeCave()) {
     (layer === "block" && isDdungSource(cave?.externalSource)));
   const panel = layer === "gimmick" ? DDUNG_PANELS[baseId] : null;
   const gimmickArt = panel?.[3] || (layer === "gimmick" && Object.hasOwn(DDUNG_GIMMICK_ART, baseId) &&
-    (id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[baseId] : null);
+    (id === "switch" || id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[baseId] : null);
   const image = definition?.image || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
     original ? `./art/ddung/${id}.png` : null);
   return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer],
@@ -1856,7 +1856,26 @@ function difficultyTerrainIds(cave) {
   });
 }
 
-function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement) {
+function difficultyPatternSlots(cave, slots, pattern, attempt) {
+  const { width, height } = cave;
+  const active = (x, y) => x >= 0 && x < width && y >= 0 && y < height && !isExcluded(cave, y * width + x);
+  return slots.filter((index) => {
+    const x = index % width;
+    const y = Math.floor(index / width);
+    if (pattern === "border") return !active(x - 1, y) || !active(x + 1, y) || !active(x, y - 1) || !active(x, y + 1);
+    if (pattern === "checker") return (x + y) % 2 === attempt % 2;
+    if (pattern === "rows") return y % 2 === attempt % 2;
+    if (pattern === "columns") return x % 2 === attempt % 2;
+    return true;
+  });
+}
+
+function difficultyGimmickIds() {
+  return (project.paletteAssets.gimmick || []).filter((id) =>
+    id === "ddung-box" || (DDUNG_PANELS[id] && "AQZY1234r".includes(DDUNG_PANELS[id][0])));
+}
+
+function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickId = "") {
   const cave = deepCopy(source);
   const seed = source.randomSeed + "|difficulty-" + target + "-" + (attempt + 1);
   const random = seededRandom(seed);
@@ -1871,7 +1890,8 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   cave.testClearMoves = 0;
 
   const terrain = cave.layers.terrain;
-  const terrainSlots = terrain.flatMap((id, index) => !id && !isBarrier(cave, index) ? [index] : []);
+  const terrainSlots = difficultyPatternSlots(cave,
+    terrain.flatMap((id, index) => (!id || id === "floor") && !isBarrier(cave, index) ? [index] : []), pattern, attempt);
   const terrainCounts = new Map();
   terrain.forEach((id, index) => {
     if (id && !isExcluded(cave, index)) terrainCounts.set(id, (terrainCounts.get(id) || 0) + 1);
@@ -1884,7 +1904,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   const existing = terrainCounts.get(targetId) || 0;
   let terrainCount = Math.max(1, Math.min(existing, Math.round(existing * (0.2 + target * 0.008) * variation)));
   if (!existing) {
-    terrainCount = Math.min(terrainSlots.length, Math.max(1, Math.round(terrainSlots.length * (0.05 + target * 0.002) * variation)));
+    terrainCount = Math.min(terrainSlots.length, Math.max(1, Math.round(terrainSlots.length * (pattern === "random" ? (0.05 + target * 0.002) * variation : 0.55 + target * 0.003))));
     for (let placed = 0; placed < terrainCount; placed += 1) {
       const [index] = terrainSlots.splice(Math.floor(random() * terrainSlots.length), 1);
       terrain[index] = targetId;
@@ -1902,19 +1922,23 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   }
 
   const free = cave.layers.block.flatMap((_, index) =>
-    !isBarrier(cave, index) && Object.values(cave.layers).every((layer) => !layer[index]) ? [index] : []
+    !isBarrier(cave, index) && (!keepPlacement || !cave.layers.block[index]) &&
+    (!terrain[index] || terrain[index] === "floor") && !gimmicks[index] && !cave.layers.item[index] ? [index] : []
   );
   const eligibleAssets = {
+    gimmick: gimmickId ? [gimmickId] : [],
     item: (project.paletteAssets.item || []).filter((id) => !id.startsWith("ddung-")),
-    gimmick: (project.paletteAssets.gimmick || []).filter((id) => id === "switch" ||
-      (id === "ddung-box" && isDdungSource(cave.externalSource) && cave.externalSource.boxLayoutParsed)),
   };
   for (const [layer, assets] of Object.entries(eligibleAssets)) {
-    if (!assets.length || !free.length) continue;
+    if (!assets.length) continue;
+    if (!free.length && layer === "gimmick") return null;
+    const slots = layer === "gimmick" ? difficultyPatternSlots(cave, free, pattern, attempt) : free.slice();
+    if (!slots.length && layer === "gimmick") return null;
     const id = assets[Math.floor(random() * assets.length)];
-    const count = Math.min(free.length, Math.max(1, Math.round(free.length * (0.025 + target * 0.001) * (0.65 + random() * 0.7))));
+    const count = Math.min(slots.length, Math.max(1, Math.round(slots.length * (0.025 + target * 0.001) * (0.65 + random() * 0.7))));
     for (let placed = 0; placed < count; placed += 1) {
-      const [index] = free.splice(Math.floor(random() * free.length), 1);
+      const [index] = slots.splice(Math.floor(random() * slots.length), 1);
+      free.splice(free.indexOf(index), 1);
       cave.layers[layer][index] = id;
     }
   }
@@ -1990,6 +2014,8 @@ function renderDifficultyCandidates(source, candidates) {
 }
 
 function openDifficultyGenerator() {
+  $("difficultyGimmick").replaceChildren(new Option("추가 안 함", ""),
+    ...difficultyGimmickIds().map((id) => new Option(getAsset("gimmick", id).name, id)));
   $("difficultyOptions").replaceChildren();
   $("difficultyStatus").textContent = "";
   $("difficultyDialog").showModal();
@@ -2001,6 +2027,8 @@ async function generateDifficultyCandidates(event) {
   const dialog = $("difficultyDialog");
   const target = $("difficultyTarget").valueAsNumber;
   const keepPlacement = $("difficultyKeepPlacement").checked;
+  const pattern = $("difficultyPattern").value;
+  const gimmickId = $("difficultyGimmick").value;
   const status = $("difficultyStatus");
   const submit = $("difficultyGenerate");
   const fields = $("difficultyFields");
@@ -2030,7 +2058,7 @@ async function generateDifficultyCandidates(event) {
       status.textContent = "목표 " + target + " · 후보 생성 및 검증 " + (attempt + 1) + "/" + attempts;
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (canceled || !dialog.open || activeCave() !== source) return;
-      const cave = buildDifficultyCandidate(source, colors, target, attempt, keepPlacement);
+      const cave = buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern, gimmickId);
       if (!cave) continue;
       const signature = JSON.stringify([cave.layers, cave.objectives, cave.moveLimit]);
       if (signatures.has(signature)) continue;

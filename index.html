@@ -551,6 +551,16 @@
           <label>목표 난이도 (1~100)
             <input id="difficultyTarget" class="field" type="number" min="1" max="100" step="1" value="50" required>
           </label>
+          <label>배치 패턴
+            <select class="field" id="difficultyPattern">
+              <option value="random">랜덤</option>
+              <option value="border">보드 테두리</option>
+              <option value="checker">체크무늬</option>
+              <option value="rows">가로 줄무늬</option>
+              <option value="columns">세로 줄무늬</option>
+            </select>
+          </label>
+          <label>추가할 기믹 <select class="field" id="difficultyGimmick"></select></label>
           <label><input id="difficultyKeepPlacement" type="checkbox" checked> 기존 오브젝트 배치 유지</label>
         </fieldset>
         <p>Terrain 제거를 클리어 목표로 설정하고, 클리어율과 이동 횟수로 난이도를 추정합니다.</p>
@@ -786,7 +796,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=116"></script>
+    <script src="./app.js?v=117"></script>
   </body>
 </html>
 
