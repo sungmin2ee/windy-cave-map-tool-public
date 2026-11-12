@@ -2109,7 +2109,66 @@ function renderDifficultyChoices(container, layer, ids, enabled) {
   }));
 }
 
+const DIFFICULTY_BOARD_SHAPES = [
+  ["current", "현재 보드"],
+  ["rectangle", "직사각형"],
+  ["corners", "모서리를 자른 보드"],
+  ["diamond", "마름모"],
+  ["hourglass", "모래시계"],
+  ["lanes", "두 통로와 중앙 다리"],
+];
+
+function difficultyBoardMask(cave, shape, keepPlacement) {
+  if (shape === "current") return [...(cave.excludedCells || [])];
+  const { width, height } = cave;
+  const blocked = [];
+  for (let index = 0; index < width * height; index++) {
+    const x = index % width;
+    const y = Math.floor(index / width);
+    const dx = Math.abs(x - (width - 1) / 2) / (width / 2);
+    const dy = Math.abs(y - (height - 1) / 2) / (height / 2);
+    const excluded = (shape === "corners" && dx + dy > 1.35) ||
+      (shape === "diamond" && dx + dy > 1.15) ||
+      (shape === "hourglass" && dx > 0.42 + dy * 0.7) ||
+      (shape === "lanes" && dx < 0.29 && dy > 0.29);
+    if (!excluded) continue;
+    if (keepPlacement && (Object.values(cave.layers).some((layer) => layer[index]) || initialPieceAt(cave, index))) continue;
+    blocked.push(index);
+  }
+  return blocked;
+}
+
+function renderDifficultyBoardShapes() {
+  const cave = activeCave();
+  const options = $("difficultyBoardShapes");
+  const selected = options.querySelector("input:checked")?.value;
+  const keepPlacement = !$("difficultyAutomatic").checked && $("difficultyKeepPlacement").checked;
+  options.replaceChildren(...DIFFICULTY_BOARD_SHAPES.map(([id, name]) => {
+    const blocked = new Set(difficultyBoardMask(cave, id, keepPlacement));
+    const card = document.createElement("label");
+    const choice = document.createElement("input");
+    choice.type = "radio";
+    choice.name = "difficultyBoardShape";
+    choice.value = id;
+    choice.required = true;
+    choice.checked = selected === id;
+    const grid = document.createElement("span");
+    grid.className = "board-shape-grid";
+    grid.style.gridTemplateColumns = "repeat(" + cave.width + ", 6px)";
+    grid.setAttribute("aria-hidden", "true");
+    for (let cell = 0; cell < cave.width * cave.height; cell++) {
+      const tile = document.createElement("span");
+      if (blocked.has(cell)) tile.className = "board-shape-blocked";
+      grid.append(tile);
+    }
+    card.append(choice, name, grid);
+    return card;
+  }));
+}
+
 function openDifficultyGenerator() {
+  $("difficultyBoardShapes").replaceChildren();
+  renderDifficultyBoardShapes();
   const terrainIds = difficultyTerrainIds(activeCave());
   const allTerrain = [...new Set([...ASSETS.terrain.map(({ id }) => id), ...(project.paletteAssets.terrain || [])])];
   renderDifficultyChoices("difficultyTerrain", "terrain", allTerrain, (id) => terrainIds.includes(id));
@@ -2146,13 +2205,14 @@ async function generateDifficultyCandidates(event) {
   const target = $("difficultyTarget").valueAsNumber;
   const automatic = $("difficultyAutomatic").checked;
   const keepPlacement = !automatic && $("difficultyKeepPlacement").checked;
+  const shape = $("difficultyBoardShapes").querySelector("input:checked")?.value;
   const pattern = $("difficultyPattern").value;
   const gimmickIds = Array.from($("difficultyGimmick").querySelectorAll("input:checked"), (input) => input.value);
   const selectedTerrain = Array.from($("difficultyTerrain").querySelectorAll("input:checked"), (input) => input.value);
   const status = $("difficultyStatus");
   const submit = $("difficultyGenerate");
   const fields = $("difficultyFields");
-  if (submit.disabled || !Number.isInteger(target) || target < 1 || target > 100) return;
+  if (submit.disabled || !shape || !Number.isInteger(target) || target < 1 || target > 100) return;
   $("difficultyOptions").replaceChildren();
   if (!automatic && selectedTerrain.length > MAX_OBJECTIVES) {
     status.textContent = "Terrain은 최대 " + MAX_OBJECTIVES + "종까지 선택할 수 있습니다.";
@@ -2160,10 +2220,10 @@ async function generateDifficultyCandidates(event) {
   }
   let colors = (source.usableBlocks.length ? source.usableBlocks : project.paletteAssets.block || [])
     .filter((id) => blockWeight(source, id) > 0);
-  let generationSource = source;
+  let generationSource = { ...source, excludedCells: difficultyBoardMask(source, shape, keepPlacement) };
   if (automatic && colors.length < 4) {
     colors = [...new Set([...colors, "red", "blue", "green", "yellow", "purple"])].slice(0, 5);
-    generationSource = { ...source, blockWeights: { ...source.blockWeights } };
+    generationSource.blockWeights = { ...source.blockWeights };
     for (const color of colors) if (blockWeight(source, color) <= 0) generationSource.blockWeights[color] = 1;
   }
   if (colors.length < 2) {
@@ -5409,7 +5469,9 @@ function bindInputs() {
   $("difficultyForm").addEventListener("submit", generateDifficultyCandidates);
   $("difficultyAutomatic").addEventListener("change", ({ target }) => {
     $("difficultyManualOptions").hidden = target.checked;
+    renderDifficultyBoardShapes();
   });
+  $("difficultyKeepPlacement").addEventListener("change", renderDifficultyBoardShapes);
   $("regionItemButton").addEventListener("click", openRegionItems);
   $("regionItemCancel").addEventListener("click", () => $("regionItemDialog").close());
   $("undoButton").addEventListener("click", undo);

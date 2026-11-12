@@ -147,6 +147,10 @@
       .difficulty-choices { max-height: 9rem; overflow: auto; padding: 6px; border: 1px solid #444952; border-radius: 6px; }
       .difficulty-choices label { display: flex; gap: 8px; align-items: center; padding: 4px; }
       .difficulty-choices label:has(input:disabled) { opacity: .6; }
+      #difficultyBoardShapes { display: flex; flex-wrap: wrap; gap: 8px; }
+      #difficultyBoardShapes label { cursor: pointer; padding: 8px; border: 1px solid #52617a; border-radius: 6px; }
+      #difficultyBoardShapes label:has(input:checked) { border-color: #a992ff; background: #31254c; }
+      #difficultyBoardShapes .board-shape-grid > span { height: 6px; }
       #difficultyOptions details { padding: 12px; border: 1px solid #444952; border-radius: 8px; }
       #difficultyOptions summary { cursor: pointer; font-weight: 700; }
       .difficulty-preview-scroll { overflow: auto; max-height: 38vh; margin-block: 12px; }
@@ -551,7 +555,11 @@
       <div class="dialog-header"><h2 id="difficultyTitle">목표 난이도로 보드 생성</h2></div>
       <form id="difficultyForm">
         <fieldset id="difficultyFields">
-          <label>목표 난이도 (1~100)
+          <fieldset>
+            <legend>1. 보드 모양 선택</legend>
+            <div id="difficultyBoardShapes"></div>
+          </fieldset>
+          <label>2. 목표 난이도 (1~100)
             <input id="difficultyTarget" class="field" type="number" min="1" max="100" step="1" value="50" required>
           </label>
           <label><input id="difficultyAutomatic" type="checkbox" checked> 전체 자동 배치</label>
@@ -807,7 +815,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=124"></script>
+    <script src="./app.js?v=125"></script>
   </body>
 </html>
 
