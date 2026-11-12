@@ -2057,7 +2057,7 @@ function renderDifficultyCandidates(source, candidates) {
     card.open = index === 0;
     const summary = document.createElement("summary");
     summary.textContent = "후보 " + (index + 1) + (batch.wins ? " · 추정 난이도 " + score : " · 자동 검증 미클리어") +
-      " · 클리어 " + batch.clearRate + "% (" + batch.wins + "/" + batch.runs + ")";
+      " · 자동 플레이 " + batch.runs + "회 시도 · " + batch.wins + "회 클리어 (" + batch.clearRate + "%)";
     const info = document.createElement("p");
     info.textContent = "제한 " + cave.moveLimit + " Moves · 성공 평균 " + batch.average +
       " Moves · 막힘 " + batch.stuck + "/" + batch.runs;
