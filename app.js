@@ -590,7 +590,7 @@ function ddungGoalLimitation(cave, objective) {
   if (type === 9 && objective.targetId !== "ddung-dust-piece") return "먼지 목표를 판정하려면 원본 JSON을 다시 가져오세요.";
   if (type === 36) return ddungJellyCells(cave).size ? null : "원본 젤리 그룹 좌표가 필요합니다.";
   if (type === 7) return cave.externalSource.boxLayoutParsed ? null : "철 상자 배치를 확인하려면 원본 JSON을 다시 가져오세요.";
-  if ([8, 9, 10, 13, 14, 16, 17, 18, 24, 25, 34, 35].includes(type)) return null;
+  if ([8, 9, 10, 13, 14, 16, 17, 18, 21, 22, 23, 24, 25, 26, 33, 34, 35, 37].includes(type)) return null;
   return "원본 전용 오브젝트 동작";
 }
 
@@ -608,7 +608,9 @@ function countObjectiveAssets(cave, objective) {
       .map(([, cell]) => cell.group)).size;
   }
   return cave.layers[objective.layer].filter((id, index) => matchesObjectiveAsset(objective, id) &&
-    (id !== "ddung-heather-large" || heatherGroup(cave, index)[0] === index)).length;
+    (id !== "ddung-heather-large" || heatherGroup(cave, index)[0] === index) &&
+    (!isDdungSource(cave.externalSource) || !["ddung-mayor-large", "ddung-feng"].includes(id) ||
+      ddungGimmickGroup(cave, index)[0] === index)).length;
 }
 
 function resolvedObjectiveCount(cave, objective) {
@@ -1289,16 +1291,16 @@ function applyCellVisual(cell, cave, index) {
     if (cell.tagName === "BUTTON") cell.disabled = true;
     return;
   }
-  const smallMayor = isDdungSmallMayor(cave, index);
+  const solidGimmick = isDdungGimmickBarrier(cave, index);
   for (const layer of ["terrain", "block", "gimmick", "item"]) {
-    if (layer === "block" && smallMayor) continue;
+    if (layer === "block" && solidGimmick) continue;
     const assetId = cave.layers[layer][index];
     if (!assetId) continue;
     const asset = getAsset(layer, assetId, cave);
     if (!asset) continue;
     const visual = document.createElement("span");
     visual.className = `cell-${layer} ${asset.className || ""}`;
-    if (layer === "gimmick" && cave.layers.block[index] && !smallMayor) {
+    if (layer === "gimmick" && cave.layers.block[index] && !solidGimmick) {
       if (assetId === SPAWNER_ID) visual.classList.add("cell-spawner-badge");
       else if (asset.image?.endsWith(".webp") && asset.image.startsWith("./art/ddung/")) {
         visual.classList.add("cell-ddung-gimmick-badge");
@@ -2125,12 +2127,12 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
       const terrainId = cave.layers.terrain[index];
       const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
       const boxDurability = ddungBoxDurability(cave, index) ||
-        (isDdungGimmickBarrier(cave, index) ? DDUNG_GIMMICK_HITS[cave.layers.gimmick[index]] : 0) ||
+        ddungGimmickDurability(cave, index) ||
         cave.gimmickRules?.[cave.layers.gimmick[index]]?.durability;
       const hpIndex = terrainId === "ddung-heather-large" ? heatherGroup(cave, index)[0] : index;
       const durability = boxDurability || (rule && rule.reaction !== "none" ? terrainDurabilityAt(cave, hpIndex, rule) : 0);
       if (durability) {
-        const hits = boxDurability ? damage.gimmickHits[index] : damage.terrainHits[hpIndex];
+        const hits = boxDurability ? damage.gimmickHits[ddungGimmickGroup(cave, index)[0]] : damage.terrainHits[hpIndex];
         const remaining = Math.max(0, durability - (hits || 0));
         const badge = document.createElement("span");
         badge.className = `terrain-hp${remaining < durability ? " damaged" : ""}`;
@@ -2381,14 +2383,68 @@ function isSwapBlocked(cave, index) {
 
 const DDUNG_GIMMICK_HITS = Object.freeze({
   "ddung-mouse-panel": 4, "ddung-dungs": 4, "ddung-bulldozer": 4, "ddung-mayor-small": 2,
+  "ddung-mayor-large": 15, "ddung-spider-cave": 6, "ddung-bee": 7, "ddung-feng": 4,
+  "ddung-octo": 1, "ddung-bee-up": 3, "arrow-up": 5, "arrow-down": 5,
 });
 
 function isDdungSmallMayor(cave, index) {
   return cave.layers.gimmick[index] === "ddung-mayor-small" && isDdungSource(cave.externalSource);
 }
 
+function ddungGimmickGroup(cave, index) {
+  const id = cave.layers.gimmick[index];
+  const tile = ddungCellSource(cave, index)?.tile;
+  const pattern = id === "ddung-mayor-large" ? "ghij" :
+    id === "ddung-feng" && tile && "()[]bcde".includes(tile) ? ("()[]".includes(tile) ? "()[]" : "bcde") : "";
+  const offset = tile && pattern ? pattern.indexOf(tile) : -1;
+  if (offset < 0) return [index];
+  const anchor = index - (offset % 2) - (offset >= 2 ? cave.width : 0);
+  const cells = [anchor, anchor + 1, anchor + cave.width, anchor + cave.width + 1];
+  return anchor >= 0 && anchor % cave.width < cave.width - 1 && cells.every((cell, position) =>
+    cave.layers.gimmick[cell] === id && !isExcluded(cave, cell) && ddungCellSource(cave, cell)?.tile === pattern[position]) ? cells : [index];
+}
+
+function ddungGimmickDurability(cave, index) {
+  if (!isDdungSource(cave.externalSource)) return 0;
+  const id = cave.layers.gimmick[index];
+  const tile = ddungCellSource(cave, index)?.tile;
+  if (id === "switch") {
+    if (tile === "r") return 2;
+    if (tile && "YZ1234".includes(tile)) return 5;
+  }
+  if (id === "ddung-octo" && tile && "⑵⑶⑷⑸⑹".includes(tile)) return "⑵⑶⑷⑸⑹".indexOf(tile) + 1;
+  if (id === "ddung-feng" && ddungGimmickGroup(cave, index).length > 1) return 7;
+  return Object.hasOwn(DDUNG_GIMMICK_HITS, id) ? DDUNG_GIMMICK_HITS[id] : 0;
+}
+
 function isDdungGimmickBarrier(cave, index) {
-  return isDdungSource(cave.externalSource) && Object.hasOwn(DDUNG_GIMMICK_HITS, cave.layers.gimmick[index]);
+  return ddungGimmickDurability(cave, index) > 0;
+}
+
+function ddungPanelAttack(cave, index, tile, horizontal) {
+  const row = [[-1, 0], [1, 0]];
+  const column = [[0, -1], [0, 1]];
+  const rays = ({
+    Q: row, A: column, Z: [...row, ...column], Y: horizontal ? row : column,
+    1: [[-1,-1],[0,-1],[1,-1]], 2: [[1,-1],[1,0],[1,1]],
+    3: [[-1,1],[0,1],[1,1]], 4: [[-1,-1],[-1,0],[-1,1]], r: [[0,-1]],
+    "?": row, "(": row, a: column, b: column,
+  })[tile] ?? [];
+  const hits = new Set();
+  const origins = ddungGimmickGroup(cave, index);
+  for (const origin of origins) {
+    for (const [dx, dy] of rays) {
+      const maxDistance = tile === "r" ? 1 : Math.max(cave.width, cave.height);
+      for (let step = 1; step <= maxDistance; step++) {
+        const x = origin % cave.width + dx * step;
+        const y = Math.floor(origin / cave.width) + dy * step;
+        if (x < 0 || x >= cave.width || y < 0 || y >= cave.height) break;
+        const cell = y * cave.width + x;
+        if (!isExcluded(cave, cell) && !origins.includes(cell)) hits.add(cell);
+      }
+    }
+  }
+  return hits;
 }
 
 function ddungGimmickAttack(cave, index, id) {
@@ -2729,19 +2785,24 @@ function* gimmickHitResults(state, matches, removedBlocks) {
     const boxDurability = ddungBoxDurability(cave, index);
     const originId = state.gimmickOrigins.get(index);
     const rule = cave.gimmickRules?.[id];
-    const ddungDurability = isDdungGimmickBarrier(cave, index) ? DDUNG_GIMMICK_HITS[id] : 0;
+    const ddungDurability = ddungGimmickDurability(cave, index);
+    const group = ddungDurability ? ddungGimmickGroup(cave, index) : [index];
+    if (group[0] !== index) continue;
+    const tile = ddungDurability ? ddungCellSource(cave, index)?.tile : null;
+    const reusable = tile && (id === "switch" || id === "arrow-up" || id === "arrow-down") && "AQZY1234r".includes(tile);
     const durability = boxDurability || ddungDurability || rule?.durability || (originId ? 1 : 0);
     if (isDdungSource(cave.externalSource) && !durability) continue;
     const nearbyHits = durability ? removedBlocks : matches;
     const reaction = isDdungSmallMayor(cave, index) ? "adjacent" :
       boxDurability || ddungDurability ? "either" : rule?.reaction ?? "either";
-    if ((reaction !== "adjacent" && matches.has(index)) ||
-        (reaction !== "direct" && neighborsOf(cave, index).some((neighbor) => nearbyHits.has(neighbor)))) {
+    if ((reaction !== "adjacent" && group.some((cell) => matches.has(cell))) ||
+        (reaction !== "direct" && group.some((cell) => neighborsOf(cave, cell).some((neighbor) => nearbyHits.has(neighbor))))) {
       const amount = id === "ddung-mouse-panel" && ddungDurability && matches.has(index)
         ? Math.max(1, durability - state.gimmickHits[index]) : 1;
       const exhausted = durability > 0 && state.gimmickHits[index] + amount >= durability;
       const replacement = exhausted ? (boxDurability && id === "ddung-iron-box" ? "ddung-box" : rule?.nextId) : null;
-      yield { index, id, originId, durability, amount, replacement, broken: !durability || (exhausted && !replacement) };
+      yield { index, id, originId, durability, amount, replacement, group, tile, reusable,
+        broken: !durability || (exhausted && !replacement) };
     }
   }
 }
@@ -2785,9 +2846,31 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     for (const group of clearedJellyGroups) advanceObjectives(state, "terrain", "ddung-jelly");
     const convertedBoxes = [];
     const gimmickAttack = new Set();
-    for (const { index, id, originId, durability, amount, replacement, broken } of gimmickHitResults(state, matches, removedBlocks)) {
+    for (const { index, id, originId, durability, amount, replacement, broken, group, tile, reusable } of gimmickHitResults(state, matches, removedBlocks)) {
       if (durability) {
         state.gimmickHits[index] += amount;
+        if ((tile === "Y" && reusable) || id === "ddung-bee-up") state.turnPanelsHit.add(index);
+        if (reusable) {
+          if (broken) {
+            ddungPanelAttack(state.cave, index, tile, !state.verticalPanels.has(index)).forEach((cell) => gimmickAttack.add(cell));
+            state.gimmickHits[index] = 0;
+          }
+          continue;
+        }
+        if (id === "ddung-mayor-large" && ddungGimmickDurability(state.cave, index) && !broken) {
+          const { cave } = state;
+          const candidates = cave.layers.block.flatMap((block, cell) => block && !removedBlocks.has(cell) &&
+            !cave.playtestPieces[cell] && !isDdungTreasure(block) && !cave.layers.gimmick[cell] && cave.layers.terrain[cell] === "floor" ? [cell] : []);
+          if (candidates.length) {
+            const destination = candidates[Math.floor(state.gimmickRandom() * candidates.length)];
+            cave.layers.gimmick[destination] = "ddung-mayor-small";
+            cave.layers.block[destination] = null;
+            cave.objectives.forEach((objective, goal) => {
+              if (objective.layer === "gimmick" && objective.targetId === "ddung-mayor-small" &&
+                  objective.countMode === "auto-map") state.objectiveProgress[goal].target++;
+            });
+          }
+        }
         if (id === "ddung-mouse-panel" && isDdungGimmickBarrier(state.cave, index) && !broken) {
           const { cave } = state;
           const candidates = cave.layers.terrain.flatMap((terrain, cell) =>
@@ -2816,8 +2899,28 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
         if (isDdungGimmickBarrier(state.cave, index)) {
           ddungGimmickAttack(state.cave, index, id).forEach((cell) => gimmickAttack.add(cell));
         }
-        state.cave.layers.gimmick[index] = null;
-        state.gimmickHits[index] = 0;
+        if (id === "ddung-feng" && tile) ddungPanelAttack(state.cave, index, tile, true).forEach((cell) => gimmickAttack.add(cell));
+        for (const cell of group) {
+          state.cave.layers.gimmick[cell] = null;
+          state.gimmickHits[cell] = 0;
+        }
+        if (id === "ddung-spider-cave" && tile === "%") {
+          const { cave } = state;
+          let added = 0;
+          const x = index % cave.width;
+          const y = Math.floor(index / cave.width);
+          for (let row = Math.max(0, y - 1); row <= Math.min(cave.height - 1, y + 1); row++) {
+            for (let col = Math.max(0, x - 1); col <= Math.min(cave.width - 1, x + 1); col++) {
+              const cell = row * cave.width + col;
+              if (isExcluded(cave, cell) || cave.layers.gimmick[cell] || cave.layers.terrain[cell] !== "floor") continue;
+              cave.layers.terrain[cell] = "ddung-web";
+              added++;
+            }
+          }
+          cave.objectives.forEach((objective, goal) => {
+            if (objective.layer === "terrain" && objective.targetId === "ddung-web") state.objectiveProgress[goal].target += added;
+          });
+        }
       } else {
         state.activatedGimmicks.add(index);
       }
@@ -3367,6 +3470,33 @@ function playSimulationTurn(state, action, captureFrame) {
   state.movesLeft -= 1;
   const resolved = resolveMatches(state, captureFrame, combo ? [first, second] : activation ? [first] : [], activation || combo ? [] : [second, first], combo);
   state.message = (combo ? combo.label + " · " : "") + resolved.removed + "개 제거 · " + resolved.cascade + "연쇄 · Terrain " + resolved.terrainBroken + "개 파괴";
+  for (const [index, id] of cave.layers.gimmick.entries()) {
+    if (id !== "switch" || ddungCellSource(cave, index)?.tile !== "Y" || state.turnPanelsHit.has(index)) continue;
+    if (state.verticalPanels.has(index)) state.verticalPanels.delete(index);
+    else state.verticalPanels.add(index);
+  }
+  if (isDdungSource(cave.externalSource)) {
+    const bees = cave.layers.gimmick.flatMap((id, index) => id === "ddung-bee-up" ? [index] : []);
+    for (const index of bees) {
+      if (state.turnPanelsHit.has(index)) continue;
+      const next = index - cave.width;
+      if (next < 0) {
+        state.status = "lost";
+        state.message = "Bee Up이 보드 위쪽에 도달했습니다.";
+        state.turnPanelsHit.clear();
+        return;
+      }
+      if (cave.layers.terrain[next] !== "floor" || !cave.layers.block[next] ||
+          cave.layers.gimmick[next] || isBarrier(cave, next)) continue;
+      cave.layers.gimmick[index] = null;
+      cave.layers.gimmick[next] = "ddung-bee-up";
+      state.gimmickHits[next] = state.gimmickHits[index];
+      state.gimmickHits[index] = 0;
+      swapPlaytestBlocks(cave, index, next);
+      captureFrame?.("Bee Up 이동", [index, next], "fall");
+    }
+  }
+  state.turnPanelsHit.clear();
   if (allObjectivesComplete(state)) state.status = "won";
   else if (!state.movesLeft) state.status = "lost";
   else ensurePlayableBoard(state, captureFrame);
@@ -3408,6 +3538,8 @@ function createPlayState(cave, seedSuffix, manual = false) {
     ddungJellyCells: ddungJellyCells(copy),
     gimmickHits: Array(copy.width * copy.height).fill(0),
     gimmickOrigins: new Map(),
+    verticalPanels: new Set(),
+    turnPanelsHit: new Set(),
     activatedGimmicks: new Set(),
     objectiveProgress: createObjectiveProgress(copy),
     goalLimitations: copy.objectives.map((objective) => ddungGoalLimitation(copy, objective)),
