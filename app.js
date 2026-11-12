@@ -2129,7 +2129,14 @@ function renderDifficultyChoices(container, layer, ids, enabled) {
     input.type = "checkbox";
     input.value = id;
     input.disabled = !enabled(id);
-    label.append(input, getAsset(layer, id).name + (input.disabled ? " · 직접 배치" : ""));
+    const asset = getAsset(layer, id);
+    const icon = document.createElement("span");
+    icon.className = "asset-visual " + (asset.className || "");
+    icon.textContent = asset.visual;
+    icon.setAttribute("aria-hidden", "true");
+    if (asset.panelMark) icon.dataset.panelMark = asset.panelMark;
+    showObjectImage(icon, asset.image);
+    label.append(input, icon, asset.name + (input.disabled ? (layer === "terrain" ? " · 제거 목표 불가" : " · 직접 배치") : ""));
     return label;
   }));
 }
@@ -2162,23 +2169,9 @@ function openDifficultyGenerator() {
   $("difficultyDialog").showModal();
 }
 
-function automaticDifficultyOptions(cave, target, attempt) {
-  const random = seededRandom(cave.randomSeed + "|automatic|" + target + "|" + attempt);
-  const terrain = difficultyTerrainIds(cave).filter((id) =>
-    ["ddung-water", "ddung-stone", "ddung-web"].includes(id));
-  if (!terrain.length) terrain.push(...difficultyTerrainIds(cave));
-  const selected = [];
-  const count = target >= 55 ? 2 : 1;
-  while (selected.length < count && terrain.length) {
-    selected.push(terrain.splice(Math.floor(random() * terrain.length), 1)[0]);
-  }
-  const patterns = ["random", "border", "checker", "rows", "columns", "corners", "lanes", "bands"];
-  const gimmicks = ["ddung-attack-row", "ddung-attack-column", "ddung-attack-cross", "ddung-fire-up"];
-  return {
-    pattern: patterns[Math.floor(random() * patterns.length)],
-    terrain: selected,
-    gimmicks: [gimmicks[Math.floor(random() * gimmicks.length)]],
-  };
+function difficultyObjectOptions(random, pool, count) {
+  const available = [...pool];
+  return Array.from({ length: count }, () => available.splice(Math.floor(random() * available.length), 1)[0]);
 }
 
 async function generateDifficultyCandidates(event) {
@@ -2192,6 +2185,8 @@ async function generateDifficultyCandidates(event) {
   const pattern = $("difficultyPattern").value;
   const gimmickIds = Array.from($("difficultyGimmick").querySelectorAll("input:checked"), (input) => input.value);
   const selectedTerrain = Array.from($("difficultyTerrain").querySelectorAll("input:checked"), (input) => input.value);
+  const terrainCount = $("difficultyTerrainCount").valueAsNumber;
+  const gimmickCount = $("difficultyGimmickCount").valueAsNumber;
   const status = $("difficultyStatus");
   const submit = $("difficultyGenerate");
   const fields = $("difficultyFields");
@@ -2201,13 +2196,19 @@ async function generateDifficultyCandidates(event) {
     return;
   }
   $("difficultyOptions").replaceChildren();
-  if (!automatic && selectedTerrain.length > MAX_OBJECTIVES) {
-    status.textContent = "Terrain은 최대 " + MAX_OBJECTIVES + "종까지 선택할 수 있습니다.";
+  const terrainPool = selectedTerrain.length ? selectedTerrain : difficultyTerrainIds(source);
+  const gimmickPool = gimmickIds.length ? gimmickIds : difficultyGimmickIds()
+    .filter((id) => ![SPAWNER_ID, "teleport-a", "teleport-b", "exit"].includes(id));
+  if (!Number.isInteger(terrainCount) || terrainCount < 1 || terrainCount > MAX_OBJECTIVES ||
+      !Number.isInteger(gimmickCount) || gimmickCount < 0 || gimmickCount > 6) return;
+  if (terrainCount > terrainPool.length || gimmickCount > gimmickPool.length) {
+    status.textContent = "사용할 종류 수만큼 체크하거나 종류 수를 줄여 주세요.";
     return;
   }
   let colors = (source.usableBlocks.length ? source.usableBlocks : project.paletteAssets.block || [])
     .filter((id) => DDUNG_COLOR_IDS.includes(id) && blockWeight(source, id) > 0);
-  let generationSource = { ...source, excludedCells: [...shape] };
+  const generationSeed = source.randomSeed + "|recommend|" + crypto.randomUUID();
+  let generationSource = { ...source, randomSeed: generationSeed, excludedCells: [...shape] };
   if (automatic && colors.length < 4) {
     colors = [...DDUNG_COLOR_IDS];
     generationSource.blockWeights = { ...source.blockWeights };
@@ -2235,8 +2236,13 @@ async function generateDifficultyCandidates(event) {
       status.textContent = "목표 " + target + " · 후보 생성 및 검증 " + (attempt + 1) + "/" + attempts;
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (canceled || !dialog.open || activeCave() !== source) return;
-      const options = automatic ? automaticDifficultyOptions(generationSource, target, attempt) :
-        { pattern, gimmicks: gimmickIds, terrain: selectedTerrain };
+      const random = seededRandom(generationSeed + "|" + attempt);
+      const patterns = ["random", "border", "checker", "rows", "columns", "corners", "lanes", "bands"];
+      const options = {
+        pattern: automatic ? patterns[Math.floor(random() * patterns.length)] : pattern,
+        gimmicks: difficultyObjectOptions(random, gimmickPool, gimmickCount),
+        terrain: difficultyObjectOptions(random, terrainPool, terrainCount),
+      };
       const cave = buildDifficultyCandidate(generationSource, colors, target, attempt, keepPlacement,
         options.pattern, options.gimmicks, options.terrain, automatic);
       if (!cave) continue;

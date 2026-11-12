@@ -145,7 +145,8 @@
       #difficultyTarget { max-width: 7rem; }
       #difficultyOptions { display: grid; gap: 12px; }
       .difficulty-choices { max-height: 9rem; overflow: auto; padding: 6px; border: 1px solid #444952; border-radius: 6px; }
-      .difficulty-choices label { display: flex; gap: 8px; align-items: center; padding: 4px; }
+       .difficulty-choices label { display: flex; gap: 8px; align-items: center; padding: 4px; cursor: pointer; }
+      .difficulty-choices .asset-visual { position: relative; display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; margin: 0; }
       .difficulty-choices label:has(input:disabled) { opacity: .6; }
       #difficultyShapeOptions { display: flex; flex-wrap: wrap; gap: 8px; }
       #difficultyShapeOptions button[aria-pressed="true"] { border-color: #a992ff; background: #31254c; }
@@ -582,11 +583,13 @@
               <option value="bands">가로 띠와 세로 기둥</option>
             </select>
           </label>
-          <div><div>목표 Terrain (최대 4종)</div><div class="difficulty-choices" id="difficultyTerrain"></div></div>
-          <div><div>추가할 기믹</div><div class="difficulty-choices" id="difficultyGimmick"></div></div>
-          <p>클릭이나 터치로 여러 항목을 고를 수 있습니다. Terrain을 선택하지 않으면 한 종류를 자동으로 고릅니다.</p>
           <label><input id="difficultyKeepPlacement" type="checkbox" checked> 기존 오브젝트 배치 유지</label>
           </div>
+          <div><label>목표 Terrain 종류 수 <input class="field" id="difficultyTerrainCount" type="number" min="1" max="4" value="1" required></label>
+          <div class="difficulty-choices" id="difficultyTerrain"></div></div>
+          <div><label>추가할 기믹 종류 수 <input class="field" id="difficultyGimmickCount" type="number" min="0" max="6" value="1" required></label>
+          <div class="difficulty-choices" id="difficultyGimmick"></div></div>
+          <p>체크한 항목 중에서 지정한 종류 수만큼 고릅니다. 체크하지 않으면 사용 가능한 전체 목록에서 고릅니다.</p>
         </fieldset>
         <p>Terrain 제거를 목표로 설정합니다. 자동 플레이 결과는 후보에 표시합니다.</p>
         <button id="difficultyGenerate" class="button primary" type="submit">후보 생성</button>
@@ -821,7 +824,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=128"></script>
+    <script src="./app.js?v=129"></script>
   </body>
 </html>
 
