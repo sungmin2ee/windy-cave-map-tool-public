@@ -554,6 +554,8 @@
           <label>목표 난이도 (1~100)
             <input id="difficultyTarget" class="field" type="number" min="1" max="100" step="1" value="50" required>
           </label>
+          <label><input id="difficultyAutomatic" type="checkbox" checked> 전체 자동 배치</label>
+          <div id="difficultyManualOptions" hidden>
           <label>배치 패턴
             <select class="field" id="difficultyPattern">
               <option value="random">랜덤</option>
@@ -570,8 +572,9 @@
           <div><div>추가할 기믹</div><div class="difficulty-choices" id="difficultyGimmick"></div></div>
           <p>클릭이나 터치로 여러 항목을 고를 수 있습니다. Terrain을 선택하지 않으면 한 종류를 자동으로 고릅니다.</p>
           <label><input id="difficultyKeepPlacement" type="checkbox" checked> 기존 오브젝트 배치 유지</label>
+          </div>
         </fieldset>
-        <p>Terrain 제거를 클리어 목표로 설정하고, 클리어율과 이동 횟수로 난이도를 추정합니다.</p>
+        <p>전체 자동 배치는 자동 플레이에서 클리어한 후보를 보여줍니다. 클리어율과 이동 횟수로 난이도를 추정합니다.</p>
         <button id="difficultyGenerate" class="button primary" type="submit">후보 생성</button>
       </form>
       <p id="difficultyStatus" role="status"></p>
@@ -804,7 +807,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=120"></script>
+    <script src="./app.js?v=121"></script>
   </body>
 </html>
 

@@ -1933,7 +1933,7 @@ function difficultyGimmickIds() {
   return [...new Set([...ASSETS.gimmick.map(({ id }) => id), "ddung-iron-box", ...(project.paletteAssets.gimmick || [])])];
 }
 
-function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickIds = [], selectedTerrain = []) {
+function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickIds = [], selectedTerrain = [], automatic = false) {
   const cave = deepCopy(source);
   const seed = source.randomSeed + "|difficulty-" + target + "-" + (attempt + 1);
   const random = seededRandom(seed);
@@ -1971,9 +1971,10 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     terrain[index] = id;
     terrainCounts.set(id, (terrainCounts.get(id) ?? 0) + 1);
   }
+  const recovery = automatic && attempt >= 12;
   const goals = targets.map((id, index) => {
     const available = terrainCounts.get(id);
-    const count = Math.max(1, Math.min(available, Math.round(available * (0.25 + target * 0.007) * variation)));
+    const count = Math.max(1, Math.min(available, Math.round(available * (recovery ? 0.12 : 0.25 + target * 0.007) * variation)));
     return normalizeObjective({ id: "generated-terrain-goal-" + index, layer: "terrain", targetId: id, count });
   });
   const terrainCount = goals.reduce((count, goal) => count + goal.count, 0);
@@ -1986,7 +1987,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   );
   const eligibleAssets = {
     gimmick: gimmickIds,
-    item: (project.paletteAssets.item || []).filter((id) => !id.startsWith("ddung-")),
+    item: automatic ? ["coin"] : (project.paletteAssets.item || []).filter((id) => !id.startsWith("ddung-")),
   };
   for (const [layer, assets] of Object.entries(eligibleAssets)) {
     if (!assets.length) continue;
@@ -2038,6 +2039,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   cave.targetCount = terrainCount;
   const moveSpread = [-8, -4, 0, 4, 9, 15][attempt % 6];
   cave.moveLimit = Math.max(2, Math.min(35, Math.round(16 - target / 8 + Math.sqrt(terrainCount) * 3 + moveSpread)));
+  if (recovery) cave.moveLimit = Math.max(cave.moveLimit, 35 + (attempt - 12) * 2);
   cave.parMoves = Math.max(1, Math.floor(cave.moveLimit * 0.75));
   const validation = validateCave(cave, collectPaletteAssets([cave], project.paletteAssets, project.assetDefinitions));
   return validation.errors.length || validation.unsupported.length ? null : cave;
@@ -2118,12 +2120,32 @@ function openDifficultyGenerator() {
   $("difficultyDialog").showModal();
 }
 
+function automaticDifficultyOptions(cave, target, attempt) {
+  const random = seededRandom(cave.randomSeed + "|automatic|" + target + "|" + attempt);
+  const terrain = difficultyTerrainIds(cave).filter((id) =>
+    ["ddung-water", "ddung-stone", "ddung-web"].includes(id));
+  if (!terrain.length) terrain.push(...difficultyTerrainIds(cave));
+  const selected = [];
+  const count = attempt < 12 && target >= 55 ? 2 : 1;
+  while (selected.length < count && terrain.length) {
+    selected.push(terrain.splice(Math.floor(random() * terrain.length), 1)[0]);
+  }
+  const patterns = ["random", "border", "checker", "rows", "columns", "corners", "lanes", "bands"];
+  const gimmicks = ["ddung-attack-row", "ddung-attack-column", "ddung-attack-cross", "ddung-fire-up"];
+  return {
+    pattern: attempt >= 12 ? "random" : patterns[Math.floor(random() * patterns.length)],
+    terrain: selected,
+    gimmicks: [gimmicks[Math.floor(random() * gimmicks.length)]],
+  };
+}
+
 async function generateDifficultyCandidates(event) {
   event.preventDefault();
   const source = activeCave();
   const dialog = $("difficultyDialog");
   const target = $("difficultyTarget").valueAsNumber;
-  const keepPlacement = $("difficultyKeepPlacement").checked;
+  const automatic = $("difficultyAutomatic").checked;
+  const keepPlacement = !automatic && $("difficultyKeepPlacement").checked;
   const pattern = $("difficultyPattern").value;
   const gimmickIds = Array.from($("difficultyGimmick").querySelectorAll("input:checked"), (input) => input.value);
   const selectedTerrain = Array.from($("difficultyTerrain").querySelectorAll("input:checked"), (input) => input.value);
@@ -2132,12 +2154,18 @@ async function generateDifficultyCandidates(event) {
   const fields = $("difficultyFields");
   if (submit.disabled || !Number.isInteger(target) || target < 1 || target > 100) return;
   $("difficultyOptions").replaceChildren();
-  if (selectedTerrain.length > MAX_OBJECTIVES) {
+  if (!automatic && selectedTerrain.length > MAX_OBJECTIVES) {
     status.textContent = "Terrain은 최대 " + MAX_OBJECTIVES + "종까지 선택할 수 있습니다.";
     return;
   }
-  const colors = (source.usableBlocks.length ? source.usableBlocks : project.paletteAssets.block || [])
+  let colors = (source.usableBlocks.length ? source.usableBlocks : project.paletteAssets.block || [])
     .filter((id) => blockWeight(source, id) > 0);
+  let generationSource = source;
+  if (automatic && colors.length < 4) {
+    colors = [...new Set([...colors, "red", "blue", "green", "yellow", "purple"])].slice(0, 5);
+    generationSource = { ...source, blockWeights: { ...source.blockWeights } };
+    for (const color of colors) if (blockWeight(source, color) <= 0) generationSource.blockWeights[color] = 1;
+  }
   if (colors.length < 2) {
     status.textContent = "사용 색상에서 생성 가중치가 0보다 큰 블록을 2종 이상 선택하세요.";
     return;
@@ -2148,7 +2176,7 @@ async function generateDifficultyCandidates(event) {
   }
   const candidates = [];
   const signatures = new Set();
-  const attempts = 12;
+  const attempts = automatic ? 24 : 12;
   const runs = 6;
   let canceled = false;
   const cancel = () => { canceled = true; };
@@ -2160,7 +2188,11 @@ async function generateDifficultyCandidates(event) {
       status.textContent = "목표 " + target + " · 후보 생성 및 검증 " + (attempt + 1) + "/" + attempts;
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (canceled || !dialog.open || activeCave() !== source) return;
-      const cave = buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern, gimmickIds, selectedTerrain);
+      if (automatic && attempt === 12 && candidates.length) break;
+      const options = automatic ? automaticDifficultyOptions(generationSource, target, attempt) :
+        { pattern, gimmicks: gimmickIds, terrain: selectedTerrain };
+      const cave = buildDifficultyCandidate(generationSource, colors, target, attempt, keepPlacement,
+        options.pattern, options.gimmicks, options.terrain, automatic);
       if (!cave) continue;
       const signature = JSON.stringify([cave.layers, cave.objectives, cave.moveLimit]);
       if (signatures.has(signature)) continue;
@@ -2172,7 +2204,8 @@ async function generateDifficultyCandidates(event) {
         results.push(runAutoGame(cave, run));
       }
       const batch = summarizeBatch(results);
-      candidates.push({ cave, batch, score: difficultyCandidateScore(cave, batch) });
+      if (!automatic || batch.wins) candidates.push({ cave, batch, score: difficultyCandidateScore(cave, batch) });
+      if (automatic && attempt >= 12 && candidates.length >= 3) break;
     }
     candidates.sort((a, b) => Number(!a.batch.wins) - Number(!b.batch.wins) ||
       Math.abs(a.score - target) - Math.abs(b.score - target) || b.batch.wins - a.batch.wins);
@@ -2180,7 +2213,8 @@ async function generateDifficultyCandidates(event) {
     renderDifficultyCandidates(source, best);
     status.textContent = best.length
       ? "목표 " + target + " · 가까운 후보 " + best.length + "개 · 후보당 자동 플레이 " + runs + "회"
-      : "선택한 패턴에 배치할 공간이 부족하거나 시작 상태에서 교환할 수 없습니다. 배치 유지 옵션과 선택한 오브젝트를 확인해 주세요.";
+      : automatic ? "24번의 배치 시도에서 자동 플레이로 클리어한 후보를 찾지 못했습니다." :
+        "선택한 패턴에 배치할 공간이 부족하거나 시작 상태에서 교환할 수 없습니다. 배치 유지 옵션과 선택한 오브젝트를 확인해 주세요.";
   } catch (error) {
     console.error(error);
     status.textContent = "후보를 만드는 중 오류가 발생했습니다.";
@@ -5377,6 +5411,9 @@ function bindInputs() {
   $("boardShapeButton").addEventListener("click", openBoardShapes);
   $("difficultyButton").addEventListener("click", openDifficultyGenerator);
   $("difficultyForm").addEventListener("submit", generateDifficultyCandidates);
+  $("difficultyAutomatic").addEventListener("change", ({ target }) => {
+    $("difficultyManualOptions").hidden = target.checked;
+  });
   $("regionItemButton").addEventListener("click", openRegionItems);
   $("regionItemCancel").addEventListener("click", () => $("regionItemDialog").close());
   $("undoButton").addEventListener("click", undo);
