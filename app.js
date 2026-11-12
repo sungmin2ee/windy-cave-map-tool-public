@@ -133,28 +133,78 @@ const STORAGE_KEY = "windy-cave-map-tool-v1";
 const deepCopy = (value) => JSON.parse(JSON.stringify(value));
 const emptyLayers = (size) => ({ terrain: Array(size).fill(null), block: Array(size).fill(null), gimmick: Array(size).fill(null), item: Array(size).fill(null) });
 
-function packLayer(layer, values) {
-  const ids = [null, ...ASSETS[layer].map((asset) => asset.id)];
-  return values.map((value) => String.fromCharCode(33 + Math.max(0, ids.indexOf(value)))).join("");
+// Older saves used the then-current palette order and did not store a dictionary.
+const LEGACY_PACKED_LAYERS = [
+  {
+    terrain: ["floor","wall","ice","pit","conveyor","ddung-web","ddung-dust","ddung-oak","ddung-stone","ddung-stone-thick","ddung-water","ddung-frost","ddung-ice","ddung-heather-small","ddung-heather-large","ddung-jelly"],
+    item: ["coin","key","star","bomb","bonus","ddung-treasure-1","ddung-treasure-2","ddung-chocolate","ddung-jam-blue","ddung-jam-green","ddung-jam-orange","ddung-jam-pink","ddung-jam-purple","ddung-jam-yellow"],
+  },
+  {
+    terrain: ["floor","ddung-chocolate","wall","ice","pit","conveyor","ddung-web","ddung-dust","ddung-oak","ddung-stone","ddung-stone-thick","ddung-water","ddung-frost","ddung-ice","ddung-heather-small","ddung-heather-large","ddung-jelly"],
+    item: ["coin","key","star","bomb","bonus","ddung-treasure-1","ddung-treasure-2","ddung-jam-blue","ddung-jam-green","ddung-jam-orange","ddung-jam-pink","ddung-jam-purple","ddung-jam-yellow"],
+  },
+  {
+    terrain: ["floor","ddung-jam-blue","ddung-jam-green","ddung-jam-orange","ddung-jam-pink","ddung-jam-purple","ddung-jam-yellow","ddung-bomb-panel","ddung-chocolate","wall","ice","pit","conveyor","ddung-web","ddung-dust","ddung-oak","ddung-stone","ddung-stone-thick","ddung-water","ddung-frost","ddung-ice","ddung-heather-small","ddung-heather-large","ddung-jelly"],
+    item: ["coin","key","star","bomb","bonus","ddung-treasure-1","ddung-treasure-2"],
+  },
+];
+
+function legacyPackedCatalog(source) {
+  if (source.storageFormat !== "packed-layers-v1" && !source.caves.some((cave) => cave?.packedLayers)) return {};
+  // Browser saves contain a timestamp. These are the two Pages deployments that changed the old order.
+  const savedAt = Number(source.savedAt) || 0;
+  const preferred = savedAt >= Date.parse("2026-11-12T07:11:54Z") ? 2
+    : savedAt >= Date.parse("2026-11-12T07:03:34Z") ? 1 : 0;
+  const mismatches = (catalog) => {
+    let count = 0;
+    for (const layer of ["terrain", "item"]) {
+      const palette = new Set(source.paletteAssets?.[layer] || []);
+      const codes = new Set(source.caves.flatMap((cave) => [...String(cave?.packedLayers?.[layer] || "")]));
+      for (const code of codes) {
+        const index = code.charCodeAt(0) - 34;
+        if (index < 0) continue;
+        const id = catalog[layer][index];
+        if (!id || (palette.size && !palette.has(id))) count += 1;
+      }
+    }
+    return count;
+  };
+  let best = LEGACY_PACKED_LAYERS[preferred];
+  let errors = mismatches(best);
+  for (const catalog of LEGACY_PACKED_LAYERS) {
+    const count = mismatches(catalog);
+    if (count < errors) {
+      best = catalog;
+      errors = count;
+    }
+  }
+  return best;
 }
 
-function unpackLayer(layer, packed, size) {
-  const ids = [null, ...ASSETS[layer].map((asset) => asset.id)];
+function packLayer(ids, values) {
+  return values.map((value) => value === null ? "!" : String.fromCharCode(34 + ids.indexOf(value))).join("");
+}
+
+function unpackLayer(ids, packed, size) {
   const text = String(packed || "");
-  return Array.from({ length: size }, (_, index) => ids[Math.max(0, text.charCodeAt(index) - 33)] || null);
+  return Array.from({ length: size }, (_, index) => ids[text.charCodeAt(index) - 34] || null);
 }
 
 function packProjectForStorage(value) {
+  const packedLayerIds = Object.fromEntries(Object.entries(ASSETS).map(([layer, assets]) =>
+    [layer, assets.map(({ id }) => id)]));
   return {
     ...value,
-    storageFormat: "packed-layers-v1",
+    storageFormat: "packed-layers-v2",
+    packedLayerIds,
     caves: value.caves.map((cave) => {
       const layers = {};
       const packedLayers = {};
       for (const [layer, values] of Object.entries(cave.layers)) {
-        const knownIds = new Set(ASSETS[layer].map((asset) => asset.id));
+        const ids = packedLayerIds[layer];
+        const knownIds = new Set(ids);
         if (values.some((id) => id !== null && !knownIds.has(id))) layers[layer] = values;
-        else packedLayers[layer] = packLayer(layer, values);
+        else packedLayers[layer] = packLayer(ids, values);
       }
       const compact = { ...cave, layers, packedLayers };
       delete compact.targetType;
@@ -318,7 +368,9 @@ function normalizeProject(data) {
   const rawCaves = Array.isArray(source.caves) ? source.caves : [];
   const ddungOnly = rawCaves.some((cave) => isDdungSource(cave?.externalSource)) &&
     rawCaves.every((cave) => !cave?.externalSource || isDdungSource(cave.externalSource));
-  const caves = rawCaves.map((cave, index) => normalizeCave(cave, index, ddungOnly));
+  const catalog = source.storageFormat === "packed-layers-v2"
+    ? source.packedLayerIds || {} : legacyPackedCatalog({ ...source, caves: rawCaves });
+  const caves = rawCaves.map((cave, index) => normalizeCave(cave, index, ddungOnly, catalog));
   if (!caves.length) caves.push(createCave(1));
   const usedNumbers = new Set();
   for (const cave of caves) {
@@ -346,7 +398,8 @@ function normalizeProject(data) {
     ...palette,
     item: Array.isArray(palette?.item) ? palette.item.filter((id) => !ddungPanelFromItem(id, ddungOnly)) : [],
   }, assetDefinitions);
-  return { ...source, specialPieceRules: normalizeSpecialPieceRules(source.specialPieceRules), version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets };
+  const { savedAt, storageFormat, packedLayerIds, ...metadata } = source;
+  return { ...metadata, specialPieceRules: normalizeSpecialPieceRules(source.specialPieceRules), version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets };
 }
 
 function normalizeLevelSettings(source) {
@@ -403,7 +456,7 @@ function ddungPanelFromItem(id, ddung) {
   return id === "ddung-chocolate" || Object.hasOwn(DDUNG_JAM_COLORS, id) ? id : null;
 }
 
-function normalizeCave(data, index = 0, ddungProject = false) {
+function normalizeCave(data, index = 0, ddungProject = false, packedCatalog = {}) {
   const source = data && typeof data === "object" ? data : {};
   const width = clampNumber(source.width, 10, 4, 20);
   const height = clampNumber(source.height, 12, 4, 20);
@@ -412,7 +465,7 @@ function normalizeCave(data, index = 0, ddungProject = false) {
   for (const layer of Object.keys(layers)) {
     const values = Array.isArray(source.layers?.[layer])
       ? source.layers[layer]
-      : unpackLayer(layer, source.packedLayers?.[layer], size);
+      : unpackLayer(packedCatalog[layer] || ASSETS[layer].map(({ id }) => id), source.packedLayers?.[layer], size);
     for (let i = 0; i < size; i += 1) layers[layer][i] = assetId(values[i]);
   }
   const excludedCells = Array.isArray(source.excludedCells)
@@ -559,8 +612,7 @@ async function loadProject() {
     .sort((left, right) => (right.savedAt ?? 0) - (left.savedAt ?? 0));
   for (const saved of choices) {
     try {
-      const { savedAt, ...data } = saved;
-      return normalizeProject({ ...data, contentVersion: data.version || data.contentVersion });
+      return normalizeProject({ ...saved, contentVersion: saved.version || saved.contentVersion });
     } catch (_) {}
   }
   return normalizeProject(defaultProject());
@@ -1938,8 +1990,10 @@ function placeGenerationSpawners(cave) {
   const gimmicks = cave.layers.gimmick;
   for (const [index, id] of gimmicks.entries()) if (id === SPAWNER_ID) gimmicks[index] = null;
   cave.generatedSpawnerOverlaps = [];
-  for (const line of gravityLines(cave)) {
-    const index = line.slice().reverse().find((cell) => !isBarrier(cave, cell));
+  const directions = ddungCellGravities(cave);
+  const sources = directions ? localSpawnEdges(cave, directions, true)
+    : gravityLines(cave).map((line) => line.slice().reverse().find((cell) => !isBarrier(cave, cell)));
+  for (const index of sources) {
     if (index === undefined) continue;
     if (!gimmicks[index]) gimmicks[index] = SPAWNER_ID;
     else cave.generatedSpawnerOverlaps.push(index);
@@ -2775,6 +2829,38 @@ function objectiveProgressHtml(state) {
   }).join("")}</div>`;
 }
 
+const GRAVITY_VECTORS = { down: [0, 1], up: [0, -1], left: [-1, 0], right: [1, 0] };
+const DDUNG_GRAVITY = { 0: "up", 1: "down", 2: "left", 3: "right" };
+
+function ddungCellGravities(cave) {
+  const raw = cave.externalSource?.rawMap;
+  if (!isDdungSource(cave.externalSource) || Number(raw?.size) !== cave.width || cave.height !== cave.width ||
+      typeof raw.gravitys !== "string" || raw.gravitys.length !== cave.width * cave.height) return null;
+  const directions = Array.from({ length: cave.width * cave.height }, (_, index) => {
+    const offset = (cave.height - 1 - Math.floor(index / cave.width)) * cave.width + index % cave.width;
+    return DDUNG_GRAVITY[raw.gravitys[offset]] || cave.gravity;
+  });
+  return directions.some((direction) => direction !== cave.gravity) ? directions : null;
+}
+
+function offsetCell(cave, index, dx, dy) {
+  const x = index % cave.width + dx;
+  const y = Math.floor(index / cave.width) + dy;
+  return x >= 0 && x < cave.width && y >= 0 && y < cave.height ? y * cave.width + x : -1;
+}
+
+function localSpawnEdges(cave, directions, skipBarriers = false) {
+  return directions.flatMap((direction, index) => {
+    if (isBarrier(cave, index)) return [];
+    const [dx, dy] = GRAVITY_VECTORS[direction];
+    let upstream = offsetCell(cave, index, -dx, -dy);
+    while (skipBarriers && upstream >= 0 && isBarrier(cave, upstream)) {
+      upstream = offsetCell(cave, upstream, -dx, -dy);
+    }
+    return upstream < 0 ? [index] : [];
+  });
+}
+
 function gravityLines(cave) {
   const lines = [];
   if (cave.gravity === "down" || cave.gravity === "up") {
@@ -2961,14 +3047,14 @@ function settleStraight(cave, trackMove, warpRoutes) {
   }
 }
 
-function flowOffsets(cave, state) {
+function flowOffsets(cave, state, gravity = cave.gravity) {
   const directions = {
     down: [[-1, 1], [1, 1]],
     up: [[-1, -1], [1, -1]],
     left: [[-1, -1], [-1, 1]],
     right: [[1, -1], [1, 1]],
   };
-  const [first, second] = directions[cave.gravity];
+  const [first, second] = directions[gravity];
   if (cave.flowRule === "none") return [];
   if (cave.flowRule === "right-first") return [second, first];
   if (cave.flowRule === "alternate") {
@@ -2980,12 +3066,46 @@ function flowOffsets(cave, state) {
   return [first, second];
 }
 
+function settleCellGravity(cave, state, trackMove, warpRoutes, directions) {
+  const order = gravityLines(cave).flat();
+  const visited = new Map();
+  const blocks = cave.layers.block;
+  let moves = 0;
+  for (let pass = 0; pass < blocks.length; pass++) {
+    let changed = false;
+    for (const target of order) {
+      if (blocks[target] || isBarrier(cave, target)) continue;
+      const [dx, dy] = GRAVITY_VECTORS[directions[target]];
+      const upstream = offsetCell(cave, target, -dx, -dy);
+      const warp = warpRoutes.get(target);
+      let donors = [warp ?? upstream];
+      if (warp === undefined && upstream >= 0 && isBarrier(cave, upstream) && state && cave.flowRule !== "none") {
+        donors = flowOffsets(cave, state, directions[target]).map(([x, y]) => offsetCell(cave, target, -x, -y));
+      }
+      const donor = donors.find((index) => index >= 0 && blocks[index] &&
+        !isBarrier(cave, index) && !visited.get(index)?.has(target));
+      if (donor === undefined) continue;
+      const path = visited.get(donor) ?? new Set([donor]);
+      path.add(target);
+      visited.delete(donor);
+      visited.set(target, path);
+      trackMove?.(donor, target);
+      swapPlaytestBlocks(cave, donor, target);
+      moves += 1;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return moves;
+}
+
 function applyGravity(cave, state, trackMove) {
   const warpRoutes = ddungWarpRoutes(cave);
+  const directions = ddungCellGravities(cave);
+  if (directions) return settleCellGravity(cave, state, trackMove, warpRoutes, directions);
   settleStraight(cave, trackMove, warpRoutes);
   if (!state) return 0;
-  const directVectors = { down: [0, 1], up: [0, -1], left: [-1, 0], right: [1, 0] };
-  const [directX, directY] = directVectors[cave.gravity];
+  const [directX, directY] = GRAVITY_VECTORS[cave.gravity];
   let flowMoves = 0;
   for (let pass = 0; pass < cave.width * cave.height * 4; pass += 1) {
     let moved = false;
@@ -3116,7 +3236,9 @@ function refillBlocks(state, origins, trackMove) {
   const spawners = cave.layers.gimmick.flatMap((id, index) =>
     id === SPAWNER_ID || ddungMarkersAt(cave, index).includes(SPAWNER_ID) ? [index] : []);
   const sourceSet = new Set(spawners);
+  const directions = ddungCellGravities(cave);
   const sources = Array.isArray(cave.generatedSpawnerOverlaps) ? spawners
+    : directions ? [...new Set([...spawners, ...localSpawnEdges(cave, directions)])]
     : isDdungSource(cave.externalSource) ? gravityLines(cave).flatMap((line) => {
         const marked = line.filter((index) => sourceSet.has(index));
         return marked.length ? marked : [line.at(-1)];
@@ -3218,13 +3340,17 @@ function* terrainHitResults(state, matches, forcedTerrain, removedBlocks, bombPa
   }
 }
 
-function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), removedBlocks = new Set(), bombPanelIndex) {
+function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), removedBlocks = new Set(), bombPanelIndex, heatherAttacks) {
   let damaged = 0;
   const brokenDetails = [];
   for (const hit of terrainHitResults(state, matches, forcedTerrain, removedBlocks, bombPanelIndex)) {
+    if (heatherAttacks && hit.terrainId === "ddung-heather-large" && hit.group.length === 4) {
+      if (hit.broken) heatherAttacks.delete(hit.index);
+      else heatherAttacks.set(hit.index, (heatherAttacks.get(hit.index) || 0) + hit.amount);
+    }
     damaged += 1;
     if (hit.broken) {
-      brokenDetails.push({ index: hit.index, terrainId: hit.terrainId });
+      brokenDetails.push({ index: hit.index, terrainId: hit.terrainId, group: hit.group });
       if (hit.terrainId === "ddung-chocolate") state.chocolateRemoved = true;
       for (const cell of hit.group) state.cave.layers.terrain[cell] = null;
       state.terrainHits[hit.index] = 0;
@@ -3265,6 +3391,41 @@ function* gimmickHitResults(state, matches, removedBlocks) {
   }
 }
 
+function applyHeatherCounterattacks(state, attacks, captureFrame) {
+  if (!attacks.size) return;
+  const { cave } = state;
+  const { terrain, block, gimmick, item } = cave.layers;
+  const protectedSpawnBand = (index) => {
+    const x = index % cave.width;
+    const y = Math.floor(index / cave.width);
+    const nativeY = cave.height - 1 - y;
+    if (cave.gravity === "down") return y === x % 2;
+    if (cave.gravity === "up") return nativeY === x % 2;
+    if (cave.gravity === "left") return x === cave.width - 1 - nativeY % 2;
+    return x === nativeY % 2;
+  };
+  const targets = block.flatMap((id, index) =>
+    !isBarrier(cave, index) && !protectedSpawnBand(index) && (!terrain[index] || terrain[index] === "floor") &&
+    (!gimmick[index] || gimmick[index] === SPAWNER_ID) && !item[index] && !cave.playtestPieces[index] &&
+    id !== "ddung-dust-piece" && !isDdungTreasure(id) ? [index] : []);
+  for (const [anchor, count] of attacks) {
+    if (terrain[anchor] !== "ddung-heather-large") continue;
+    for (let attack = 0; attack < count && targets.length; attack++) {
+      const [index] = targets.splice(Math.floor(state.gimmickRandom() * targets.length), 1);
+      terrain[index] = "ddung-heather-small";
+      block[index] = null;
+      state.terrainHits[index] = 0;
+      for (const [goal, objective] of cave.objectives.entries()) {
+        if (objective.layer === "terrain" && objective.targetId === "ddung-heather-small" &&
+            ddungObjectiveType(objective) === 34 && objective.countMode === "auto-map") {
+          state.objectiveProgress[goal].target += 1;
+        }
+      }
+      captureFrame?.("큰 헤더 반격 · 작은 헤더 생성", [anchor, index], "match");
+    }
+  }
+}
+
 function resolveMatches(state, captureFrame, activation = [], preferred = [], combo = null) {
   let runs = [];
   let matches = findMatches(state.cave, runs);
@@ -3275,6 +3436,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
   let terrainBroken = 0;
   let flowMoves = 0;
   const newPieces = new Set();
+  const heatherAttacks = new Map();
   let protectedCells = new Set();
   let comboPending = combo;
   while (matches.size && cascade < 20) {
@@ -3288,12 +3450,14 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     const clearableCells = [...matches].filter((index) => !isBarrier(state.cave, index) &&
       !isDdungTreasure(state.cave.layers.block[index]));
     const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
-    const terrainResult = damageTerrainFromMatches(state, matches, expanded.targetedTerrain, removedBlocks, expanded.bombPanelIndex);
+    const terrainResult = damageTerrainFromMatches(
+      state, matches, expanded.targetedTerrain, removedBlocks, expanded.bombPanelIndex, heatherAttacks);
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
     const jellyCells = state.ddungJellyCells;
     const clearedJellyGroups = new Set();
-    for (const { index, terrainId } of terrainResult.brokenDetails) {
+    for (const { index, terrainId, group } of terrainResult.brokenDetails) {
+      if (terrainId === "ddung-heather-large") captureFrame?.("큰 헤더 제거", group, "match");
       const jelly = terrainId === "ddung-jelly" ? jellyCells.get(index) : null;
       if (jelly) clearedJellyGroups.add(jelly.group);
       else advanceObjectives(state, "terrain", terrainId);
@@ -3452,6 +3616,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
       matches = findMatches(state.cave, runs, protectedCells);
     }
   }
+  applyHeatherCounterattacks(state, heatherAttacks, captureFrame);
   return { cascade, removed, terrainDamaged, terrainBroken, flowMoves, capped: matches.size > 0 };
 }
 
@@ -4375,7 +4540,8 @@ async function showPlaytestFrames(state, frames) {
       const visuals = cell.querySelectorAll(".cell-block, .initial-piece-badge");
       const start = grid.children[from].getBoundingClientRect();
       const end = cell.getBoundingClientRect();
-      const [spawnX, spawnY] = spawned ? gravityOffset[frame.cave.gravity] : [0, 0];
+      const [spawnX, spawnY] = spawned
+        ? gravityOffset[ddungCellGravities(frame.cave)?.[from] || frame.cave.gravity] : [0, 0];
       visuals.forEach((visual) => visual.animate([
         { transform: `translate(${start.left - end.left + spawnX}px, ${start.top - end.top + spawnY}px)`, opacity: spawned ? 0 : 1 },
         { transform: "translate(0, 0)", opacity: 1 },
