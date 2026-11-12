@@ -558,9 +558,14 @@
               <option value="checker">체크무늬</option>
               <option value="rows">가로 줄무늬</option>
               <option value="columns">세로 줄무늬</option>
+              <option value="corners">모서리 구역</option>
+              <option value="lanes">세로 통로</option>
+              <option value="bands">가로 띠와 세로 기둥</option>
             </select>
           </label>
-          <label>추가할 기믹 <select class="field" id="difficultyGimmick"></select></label>
+          <label>목표 Terrain (최대 4종) <select class="field" id="difficultyTerrain" multiple size="4"></select></label>
+          <label>추가할 기믹 <select class="field" id="difficultyGimmick" multiple size="4"></select></label>
+          <p>PC에서 Ctrl 또는 ⌘를 누른 채 여러 항목을 선택하세요. Terrain을 선택하지 않으면 한 종류를 자동으로 고릅니다.</p>
           <label><input id="difficultyKeepPlacement" type="checkbox" checked> 기존 오브젝트 배치 유지</label>
         </fieldset>
         <p>Terrain 제거를 클리어 목표로 설정하고, 클리어율과 이동 횟수로 난이도를 추정합니다.</p>
@@ -796,7 +801,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=117"></script>
+    <script src="./app.js?v=118"></script>
   </body>
 </html>
 

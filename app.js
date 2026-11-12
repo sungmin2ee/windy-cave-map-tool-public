@@ -1804,6 +1804,18 @@ function openRegionItems() {
   dialog.showModal();
 }
 
+function placeGenerationSpawners(cave) {
+  const gimmicks = cave.layers.gimmick;
+  for (const [index, id] of gimmicks.entries()) if (id === SPAWNER_ID) gimmicks[index] = null;
+  cave.generatedSpawnerOverlaps = [];
+  for (const line of gravityLines(cave)) {
+    const index = line.slice().reverse().find((cell) => !isBarrier(cave, cell));
+    if (index === undefined) continue;
+    if (!gimmicks[index]) gimmicks[index] = SPAWNER_ID;
+    else cave.generatedSpawnerOverlaps.push(index);
+  }
+}
+
 function randomizeBlocks() {
   const cave = activeCave();
   const seed = ($("randomSeed").value.trim() || `CAVE-${Date.now().toString(36).toUpperCase()}`).slice(0, 40);
@@ -1839,6 +1851,7 @@ function randomizeBlocks() {
   }
   snapshot();
   cave.layers.block = blocks;
+  placeGenerationSpawners(cave);
   cave.usableBlocks = [...colors];
   project.paletteAssets = collectPaletteAssets(project.caves, project.paletteAssets);
   cave.randomSeed = seed;
@@ -1866,6 +1879,12 @@ function difficultyPatternSlots(cave, slots, pattern, attempt) {
     if (pattern === "checker") return (x + y) % 2 === attempt % 2;
     if (pattern === "rows") return y % 2 === attempt % 2;
     if (pattern === "columns") return x % 2 === attempt % 2;
+    if (pattern === "corners") {
+      return (x < Math.floor(width / 3) || x >= Math.ceil(width * 2 / 3)) &&
+        (y < Math.floor(height / 3) || y >= Math.ceil(height * 2 / 3));
+    }
+    if (pattern === "lanes") return x % 3 !== 1;
+    if (pattern === "bands") return y % 3 === 2 || (x % 2 === 0 && y >= 2);
     return true;
   });
 }
@@ -1875,12 +1894,13 @@ function difficultyGimmickIds() {
     id === "ddung-box" || (DDUNG_PANELS[id] && "AQZY1234r".includes(DDUNG_PANELS[id][0])));
 }
 
-function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickId = "") {
+function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickIds = [], selectedTerrain = []) {
   const cave = deepCopy(source);
   const seed = source.randomSeed + "|difficulty-" + target + "-" + (attempt + 1);
   const random = seededRandom(seed);
   if (!keepPlacement) {
     cave.layers = emptyLayers(cave.width * cave.height);
+    if (cave.externalSource?.overlappingMarkers) cave.externalSource.overlappingMarkers = {};
     cave.initialPieceTypes = Object.fromEntries(
       source.layers.block.flatMap((_, index) => initialPieceAt(source, index) ? [[index, null]] : [])
     );
@@ -1897,36 +1917,37 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     if (id && !isExcluded(cave, index)) terrainCounts.set(id, (terrainCounts.get(id) || 0) + 1);
   });
   const terrainIds = difficultyTerrainIds(cave).filter((id) =>
-    terrainCounts.has(id) || (terrainSlots.length && !cave.terrainRules[id].blocksFlow));
-  if (!terrainIds.length) return null;
-  const targetId = terrainIds[Math.floor(random() * terrainIds.length)];
+    (!selectedTerrain.length || selectedTerrain.includes(id)) &&
+    (terrainCounts.has(id) || (terrainSlots.length && !cave.terrainRules[id].blocksFlow)));
+  if (!terrainIds.length || (selectedTerrain.length && terrainIds.length !== selectedTerrain.length)) return null;
+  const targets = selectedTerrain.length ? terrainIds : [terrainIds[Math.floor(random() * terrainIds.length)]];
   const variation = 0.65 + random() * 0.7;
-  const existing = terrainCounts.get(targetId) || 0;
-  let terrainCount = Math.max(1, Math.min(existing, Math.round(existing * (0.2 + target * 0.008) * variation)));
-  if (!existing) {
-    terrainCount = Math.min(terrainSlots.length, Math.max(1, Math.round(terrainSlots.length * (pattern === "random" ? (0.05 + target * 0.002) * variation : 0.55 + target * 0.003))));
-    for (let placed = 0; placed < terrainCount; placed += 1) {
-      const [index] = terrainSlots.splice(Math.floor(random() * terrainSlots.length), 1);
-      terrain[index] = targetId;
-    }
+  const newTargets = targets.filter((id) => !terrainCounts.has(id));
+  if (terrainSlots.length < newTargets.length) return null;
+  const budget = Math.min(terrainSlots.length, Math.max(newTargets.length, Math.round(terrainSlots.length *
+    (pattern === "random" ? (0.05 + target * 0.002) * variation : 0.55 + target * 0.003))));
+  for (let placed = 0; placed < budget && newTargets.length; placed++) {
+    const [index] = terrainSlots.splice(Math.floor(random() * terrainSlots.length), 1);
+    const id = newTargets[placed % newTargets.length];
+    terrain[index] = id;
+    terrainCounts.set(id, (terrainCounts.get(id) ?? 0) + 1);
   }
-
-  const spawnEdge = new Set(gravityLines(cave).map((line) => line[line.length - 1]));
+  const goals = targets.map((id, index) => {
+    const available = terrainCounts.get(id);
+    const count = newTargets.includes(id) ? available :
+      Math.max(1, Math.min(available, Math.round(available * (0.2 + target * 0.008) * variation)));
+    return normalizeObjective({ id: "generated-terrain-goal-" + index, layer: "terrain", targetId: id, count });
+  });
+  const terrainCount = goals.reduce((count, goal) => count + goal.count, 0);
+  placeGenerationSpawners(cave);
   const gimmicks = cave.layers.gimmick;
-  for (let index = 0; index < gimmicks.length; index += 1) {
-    if (spawnEdge.has(index) && !isBarrier(cave, index)) {
-      if (!gimmicks[index]) gimmicks[index] = SPAWNER_ID;
-    } else if (gimmicks[index] === SPAWNER_ID) {
-      gimmicks[index] = null;
-    }
-  }
 
   const free = cave.layers.block.flatMap((_, index) =>
     !isBarrier(cave, index) && (!keepPlacement || !cave.layers.block[index]) &&
     (!terrain[index] || terrain[index] === "floor") && !gimmicks[index] && !cave.layers.item[index] ? [index] : []
   );
   const eligibleAssets = {
-    gimmick: gimmickId ? [gimmickId] : [],
+    gimmick: gimmickIds,
     item: (project.paletteAssets.item || []).filter((id) => !id.startsWith("ddung-")),
   };
   for (const [layer, assets] of Object.entries(eligibleAssets)) {
@@ -1934,12 +1955,14 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     if (!free.length && layer === "gimmick") return null;
     const slots = layer === "gimmick" ? difficultyPatternSlots(cave, free, pattern, attempt) : free.slice();
     if (!slots.length && layer === "gimmick") return null;
-    const id = assets[Math.floor(random() * assets.length)];
-    const count = Math.min(slots.length, Math.max(1, Math.round(slots.length * (0.025 + target * 0.001) * (0.65 + random() * 0.7))));
+    if (layer === "gimmick" && slots.length < assets.length) return null;
+    const offset = Math.floor(random() * assets.length);
+    const count = Math.min(slots.length, Math.max(layer === "gimmick" ? assets.length : 1,
+      Math.round(slots.length * (0.025 + target * 0.001) * (0.65 + random() * 0.7))));
     for (let placed = 0; placed < count; placed += 1) {
       const [index] = slots.splice(Math.floor(random() * slots.length), 1);
       free.splice(free.indexOf(index), 1);
-      cave.layers[layer][index] = id;
+      cave.layers[layer][index] = assets[(offset + (layer === "gimmick" ? placed : 0)) % assets.length];
     }
   }
 
@@ -1952,7 +1975,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   }
   if (findMatches(cave).size || !hasPossibleSwap(cave)) return null;
 
-  cave.objectives = [normalizeObjective({ id: "generated-terrain-goal", layer: "terrain", targetId, count: terrainCount })];
+  cave.objectives = goals;
   cave.targetType = null;
   cave.targetCount = terrainCount;
   const moveSpread = [-8, -4, 0, 4, 9, 15][attempt % 6];
@@ -2014,8 +2037,10 @@ function renderDifficultyCandidates(source, candidates) {
 }
 
 function openDifficultyGenerator() {
-  $("difficultyGimmick").replaceChildren(new Option("추가 안 함", ""),
-    ...difficultyGimmickIds().map((id) => new Option(getAsset("gimmick", id).name, id)));
+  $("difficultyTerrain").replaceChildren(...difficultyTerrainIds(activeCave())
+    .map((id) => new Option(getAsset("terrain", id).name, id)));
+  $("difficultyGimmick").replaceChildren(...difficultyGimmickIds()
+    .map((id) => new Option(getAsset("gimmick", id).name, id)));
   $("difficultyOptions").replaceChildren();
   $("difficultyStatus").textContent = "";
   $("difficultyDialog").showModal();
@@ -2028,12 +2053,17 @@ async function generateDifficultyCandidates(event) {
   const target = $("difficultyTarget").valueAsNumber;
   const keepPlacement = $("difficultyKeepPlacement").checked;
   const pattern = $("difficultyPattern").value;
-  const gimmickId = $("difficultyGimmick").value;
+  const gimmickIds = Array.from($("difficultyGimmick").selectedOptions, (option) => option.value);
+  const selectedTerrain = Array.from($("difficultyTerrain").selectedOptions, (option) => option.value);
   const status = $("difficultyStatus");
   const submit = $("difficultyGenerate");
   const fields = $("difficultyFields");
   if (submit.disabled || !Number.isInteger(target) || target < 1 || target > 100) return;
   $("difficultyOptions").replaceChildren();
+  if (selectedTerrain.length > MAX_OBJECTIVES) {
+    status.textContent = "Terrain은 최대 " + MAX_OBJECTIVES + "종까지 선택할 수 있습니다.";
+    return;
+  }
   const colors = (source.usableBlocks.length ? source.usableBlocks : project.paletteAssets.block || [])
     .filter((id) => blockWeight(source, id) > 0);
   if (colors.length < 2) {
@@ -2058,7 +2088,7 @@ async function generateDifficultyCandidates(event) {
       status.textContent = "목표 " + target + " · 후보 생성 및 검증 " + (attempt + 1) + "/" + attempts;
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (canceled || !dialog.open || activeCave() !== source) return;
-      const cave = buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern, gimmickId);
+      const cave = buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern, gimmickIds, selectedTerrain);
       if (!cave) continue;
       const signature = JSON.stringify([cave.layers, cave.objectives, cave.moveLimit]);
       if (signatures.has(signature)) continue;
@@ -2754,8 +2784,12 @@ function chooseDdungTreasure(state) {
 
 function ddungMarkersAt(cave, index) {
   const rawSize = Number(cave.externalSource?.rawMap?.size);
-  if (cave.width !== rawSize || cave.height !== rawSize) return [];
-  return cave.externalSource?.overlappingMarkers?.[index] ?? [];
+  const original = cave.width === rawSize && cave.height === rawSize
+    ? cave.externalSource?.overlappingMarkers?.[index] ?? [] : [];
+  if (!Array.isArray(cave.generatedSpawnerOverlaps)) return original;
+  const markers = original.filter((id) => id !== SPAWNER_ID);
+  if (cave.generatedSpawnerOverlaps.includes(index)) markers.push(SPAWNER_ID);
+  return markers;
 }
 
 function collectDdungTreasure(state) {
@@ -3665,7 +3699,7 @@ function createPlayState(cave, seedSuffix, manual = false) {
     goalLimitations: copy.objectives.map((objective) => ddungGoalLimitation(copy, objective)),
     flowTurn: 0,
   };
-  if ((isDdungSource(copy.externalSource) || copy.layers.gimmick.includes(SPAWNER_ID)) &&
+  if ((isDdungSource(copy.externalSource) || (copy.layers.gimmick.includes(SPAWNER_ID) || copy.generatedSpawnerOverlaps?.length)) &&
       copy.layers.block.some((block, index) => !block && !isBarrier(copy, index))) {
     applyGravity(copy, state);
     refillBlocks(state);
