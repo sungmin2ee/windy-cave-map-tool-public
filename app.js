@@ -1112,17 +1112,35 @@ function renderGrid() {
       cell.classList.add("asset-located");
       if (current.index === index) cell.classList.add("asset-located-current");
     }
+    let touchStart = null;
     cell.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "touch") {
+        if (event.isPrimary) touchStart = { id: event.pointerId, x: event.clientX, y: event.clientY };
+        return;
+      }
       if (event.button !== 0) return;
       if (activeTool === "inspect") { inspectCell(index); return; }
       event.preventDefault(); isPainting = true; strokeSnapshotTaken = false;
       editCell(index, activeTool === "fill");
     });
+    cell.addEventListener("pointerup", (event) => {
+      if (touchStart?.id !== event.pointerId) return;
+      const distance = Math.max(Math.abs(event.clientX - touchStart.x), Math.abs(event.clientY - touchStart.y));
+      touchStart = null;
+      if (distance >= 10) return;
+      if (activeTool === "inspect") inspectCell(index);
+      else {
+        strokeSnapshotTaken = false;
+        editCell(index, activeTool === "fill");
+      }
+    });
+    cell.addEventListener("pointercancel", () => { touchStart = null; });
     cell.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      inspectCell(index);
+      if (event.pointerType !== "touch") inspectCell(index);
     });
     cell.addEventListener("pointerenter", (event) => {
+      if (event.pointerType === "touch") return;
       if ((event.buttons & 1) === 0) { isPainting = false; strokeSnapshotTaken = false; return; }
       if (isPainting && activeTool !== "fill" && activeTool !== "shape") editCell(index, false);
     });
@@ -3495,42 +3513,45 @@ function togglePlaytestCombo() {
 function bindPlaytestCellInput(cell, index, canSwap) {
   let pointer = null;
   let dragged = false;
+  let handledTouch = false;
   const dragThreshold = 10;
-  if (canSwap) {
-    cell.classList.add("playtest-draggable");
-    cell.addEventListener("pointerdown", (event) => {
-      if (!event.isPrimary || event.button !== 0) return;
-      pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
-      dragged = false;
-      cell.setPointerCapture(event.pointerId);
-    });
-    cell.addEventListener("pointermove", (event) => {
-      if (pointer?.id !== event.pointerId) return;
-      dragged ||= Math.max(Math.abs(event.clientX - pointer.x), Math.abs(event.clientY - pointer.y)) >= dragThreshold;
-    });
-    cell.addEventListener("pointerup", (event) => {
-      if (pointer?.id !== event.pointerId) return;
-      const dx = event.clientX - pointer.x;
-      const dy = event.clientY - pointer.y;
-      pointer = null;
-      const distance = Math.max(Math.abs(dx), Math.abs(dy));
-      dragged ||= distance >= dragThreshold;
-      if (distance < dragThreshold) return;
-      const state = playtestState;
-      if (!state?.paused || state.status !== "playing" || state.animating) return;
-      const { width, height } = state.cave;
-      const horizontal = Math.abs(dx) >= Math.abs(dy);
-      const x = index % width + (horizontal ? Math.sign(dx) : 0);
-      const y = Math.floor(index / width) + (horizontal ? 0 : Math.sign(dy));
-      if (x >= 0 && x < width && y >= 0 && y < height) playtestSwap(state, index, y * width + x);
-    });
-    cell.addEventListener("lostpointercapture", () => { pointer = null; });
-  }
-  cell.addEventListener("click", (event) => {
-    if (dragged && event.detail !== 0) {
-      dragged = false;
+  if (canSwap) cell.classList.add("playtest-draggable");
+  cell.addEventListener("pointerdown", (event) => {
+    if (!event.isPrimary || (event.pointerType !== "touch" && event.button !== 0)) return;
+    handledTouch = false;
+    dragged = false;
+    if (!canSwap && event.pointerType !== "touch") return;
+    pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    cell.setPointerCapture(event.pointerId);
+  });
+  cell.addEventListener("pointermove", (event) => {
+    if (pointer?.id !== event.pointerId) return;
+    dragged ||= Math.max(Math.abs(event.clientX - pointer.x), Math.abs(event.clientY - pointer.y)) >= dragThreshold;
+  });
+  cell.addEventListener("pointerup", (event) => {
+    if (pointer?.id !== event.pointerId) return;
+    const dx = event.clientX - pointer.x;
+    const dy = event.clientY - pointer.y;
+    pointer = null;
+    const distance = Math.max(Math.abs(dx), Math.abs(dy));
+    dragged ||= distance >= dragThreshold;
+    handledTouch = event.pointerType === "touch";
+    if (!dragged) {
+      if (handledTouch) playtestCell(index);
       return;
     }
+    if (!canSwap || distance < dragThreshold) return;
+    const state = playtestState;
+    if (!state?.paused || state.status !== "playing" || state.animating) return;
+    const { width, height } = state.cave;
+    const horizontal = Math.abs(dx) >= Math.abs(dy);
+    const x = index % width + (horizontal ? Math.sign(dx) : 0);
+    const y = Math.floor(index / width) + (horizontal ? 0 : Math.sign(dy));
+    if (x >= 0 && x < width && y >= 0 && y < height) playtestSwap(state, index, y * width + x);
+  });
+  cell.addEventListener("lostpointercapture", () => { pointer = null; });
+  cell.addEventListener("click", (event) => {
+    if (event.pointerType === "touch" || ((handledTouch || dragged) && event.detail !== 0)) return;
     playtestCell(index);
   });
 }
