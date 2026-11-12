@@ -27,6 +27,13 @@ const DDUNG_PANELS = {
 const ASSETS = {
   terrain: [
     { id: "floor", name: "Floor", className: "terrain-floor", visual: "·" },
+    { id: "ddung-jam-blue", name: "DDUNG Jam Blue", visual: "●" },
+    { id: "ddung-jam-green", name: "DDUNG Jam Green", visual: "●" },
+    { id: "ddung-jam-orange", name: "DDUNG Jam Orange", visual: "●" },
+    { id: "ddung-jam-pink", name: "DDUNG Jam Pink", visual: "●" },
+    { id: "ddung-jam-purple", name: "DDUNG Jam Purple", visual: "●" },
+    { id: "ddung-jam-yellow", name: "DDUNG Jam Yellow", visual: "●" },
+    { id: "ddung-bomb-panel", name: "DDUNG Bomb Panel", visual: "✹" },
     { id: "ddung-chocolate", name: "DDUNG Chocolate", visual: "▣" },
     { id: "wall", name: "Wall", className: "terrain-wall", visual: "▦" },
     { id: "ice", name: "Ice", className: "terrain-ice", visual: "❄" },
@@ -78,16 +85,21 @@ const ASSETS = {
     { id: "bonus", name: "Bonus", visual: "+" },
     { id: "ddung-treasure-1", name: "DDUNG Treasure 1", visual: "◆" },
     { id: "ddung-treasure-2", name: "DDUNG Treasure 2", visual: "◇" },
-    { id: "ddung-jam-blue", name: "DDUNG Jam Blue", visual: "●" },
-    { id: "ddung-jam-green", name: "DDUNG Jam Green", visual: "●" },
-    { id: "ddung-jam-orange", name: "DDUNG Jam Orange", visual: "●" },
-    { id: "ddung-jam-pink", name: "DDUNG Jam Pink", visual: "●" },
-    { id: "ddung-jam-purple", name: "DDUNG Jam Purple", visual: "●" },
-    { id: "ddung-jam-yellow", name: "DDUNG Jam Yellow", visual: "●" },
   ],
 };
 
+const DDUNG_JAM_COLORS = {
+  "ddung-jam-blue": "blue", "ddung-jam-green": "green", "ddung-jam-orange": "orange",
+  "ddung-jam-pink": "red", "ddung-jam-purple": "purple", "ddung-jam-yellow": "yellow",
+};
+const DDUNG_PANEL_TILES = {
+  M: "ddung-bomb-panel", J: "ddung-chocolate", k: "ddung-jam-yellow", l: "ddung-jam-blue",
+  m: "ddung-jam-orange", n: "ddung-jam-green", o: "ddung-jam-pink", p: "ddung-jam-purple",
+};
+const DDUNG_SOLID_PANELS = new Set(Object.values(DDUNG_PANEL_TILES));
 const DEFAULT_TERRAIN_RULES = {
+  "ddung-bomb-panel": { blocksFlow: true, reaction: "splash", durability: 6 },
+  ...Object.fromEntries(Object.keys(DDUNG_JAM_COLORS).map((id) => [id, { blocksFlow: true, reaction: "none", durability: 3 }])),
   "ddung-chocolate": { blocksFlow: true, reaction: "splash", durability: 1 },
   floor: { blocksFlow: false, reaction: "none", durability: 1 },
   wall: { blocksFlow: true, reaction: "none", durability: 1 },
@@ -304,7 +316,9 @@ function collectPaletteAssets(caves, saved = {}, definitions = {}) {
 function normalizeProject(data) {
   const source = data && typeof data === "object" ? data : {};
   const rawCaves = Array.isArray(source.caves) ? source.caves : [];
-  const caves = rawCaves.map((cave, index) => normalizeCave(cave, index));
+  const ddungOnly = rawCaves.some((cave) => isDdungSource(cave?.externalSource)) &&
+    rawCaves.every((cave) => !cave?.externalSource || isDdungSource(cave.externalSource));
+  const caves = rawCaves.map((cave, index) => normalizeCave(cave, index, ddungOnly));
   if (!caves.length) caves.push(createCave(1));
   const usedNumbers = new Set();
   for (const cave of caves) {
@@ -320,15 +334,17 @@ function normalizeProject(data) {
   }
   const activeCaveId = caves.some((cave) => cave.id === source.activeCaveId) ? source.activeCaveId : caves[0].id;
   const assetDefinitions = normalizeAssetDefinitions(source.assetDefinitions);
-  const legacyChocolate = assetDefinitions.item.find(({ id }) => id === "ddung-chocolate");
-  if (legacyChocolate && !assetDefinitions.terrain.some(({ id }) => id === legacyChocolate.id)) {
-    assetDefinitions.terrain.push(legacyChocolate);
+  for (const definition of assetDefinitions.item) {
+    const id = ddungPanelFromItem(definition.id, ddungOnly);
+    if (id && !assetDefinitions.terrain.some((asset) => asset.id === id)) {
+      assetDefinitions.terrain.push({ ...definition, id });
+    }
   }
-  assetDefinitions.item = assetDefinitions.item.filter(({ id }) => id !== "ddung-chocolate");
+  assetDefinitions.item = assetDefinitions.item.filter(({ id }) => !ddungPanelFromItem(id, ddungOnly));
   const palette = source.paletteAssets;
   const paletteAssets = collectPaletteAssets(caves, {
     ...palette,
-    item: Array.isArray(palette?.item) ? palette.item.filter((id) => id !== "ddung-chocolate") : [],
+    item: Array.isArray(palette?.item) ? palette.item.filter((id) => !ddungPanelFromItem(id, ddungOnly)) : [],
   }, assetDefinitions);
   return { ...source, specialPieceRules: normalizeSpecialPieceRules(source.specialPieceRules), version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets };
 }
@@ -382,7 +398,12 @@ function saveLevelSettings(event) {
   $("levelSettingsStatus").textContent = "레벨 설정을 저장했습니다.";
 }
 
-function normalizeCave(data, index = 0) {
+function ddungPanelFromItem(id, ddung) {
+  if (id === "bomb" && ddung) return "ddung-bomb-panel";
+  return id === "ddung-chocolate" || Object.hasOwn(DDUNG_JAM_COLORS, id) ? id : null;
+}
+
+function normalizeCave(data, index = 0, ddungProject = false) {
   const source = data && typeof data === "object" ? data : {};
   const width = clampNumber(source.width, 10, 4, 20);
   const height = clampNumber(source.height, 12, 4, 20);
@@ -401,17 +422,22 @@ function normalizeCave(data, index = 0) {
   const usableBlocks = Array.isArray(source.usableBlocks)
     ? source.usableBlocks.map(assetId).filter(Boolean)
     : layers.block.filter(Boolean);
-  const migratedChocolate = layers.item.includes("ddung-chocolate");
-  for (const [cell, id] of layers.item.entries()) {
-    if (id !== "ddung-chocolate") continue;
-    layers.item[cell] = null;
-    layers.terrain[cell] = id;
-  }
-  const objectives = normalizeObjectives(source).map((objective) =>
-    objective.layer === "item" && objective.targetId === "ddung-chocolate"
-      ? normalizeObjective({ ...objective, layer: "terrain", action: OBJECTIVE_ACTIONS.terrain.action })
-      : objective);
   const externalSource = source.externalSource;
+  const ddung = isDdungSource(externalSource) || (!externalSource && ddungProject);
+  let migratedPanel = false;
+  for (const [cell, id] of layers.item.entries()) {
+    const panel = ddungPanelFromItem(id, ddung);
+    if (!panel) continue;
+    layers.item[cell] = null;
+    layers.terrain[cell] = panel;
+    migratedPanel = true;
+  }
+  const objectives = normalizeObjectives(source).map((objective) => {
+    const panel = objective.layer === "item" ? ddungPanelFromItem(objective.targetId, ddung) : null;
+    if (!panel) return objective;
+    migratedPanel = true;
+    return normalizeObjective({ ...objective, layer: "terrain", targetId: panel, action: OBJECTIVE_ACTIONS.terrain.action });
+  });
   if (isDdungSource(externalSource)) {
     for (const [cell, id] of layers.gimmick.entries()) {
       const tile = ddungCellSource({ width, externalSource }, cell)?.tile;
@@ -430,7 +456,7 @@ function normalizeCave(data, index = 0) {
   const migrateWaterReaction = isDdungSource(externalSource) && !externalSource.waterReactionNormalized;
   const savedWater = source.terrainRules?.["ddung-water"];
   const oldWaterRule = migrateWaterReaction && (!savedWater || (savedWater.reaction === "adjacent" && savedWater.durability === 1 && savedWater.blocksFlow === false));
-  let goalChanged = migratedChocolate || (oldWaterRule && layers.terrain.includes("ddung-water"));
+  let goalChanged = migratedPanel || (oldWaterRule && layers.terrain.includes("ddung-water"));
   if (migrateDdungGoals) {
     for (const objective of objectives) {
       const type = ddungObjectiveType(objective);
@@ -617,9 +643,8 @@ function getAsset(layer, id, cave = activeCave()) {
   const baseId = layer === "gimmick" ? ddungGimmickBase(id) : id;
   const known = ASSETS[layer === "block" && isDdungTreasure(id) ? "item" : layer].find((asset) => asset.id === baseId) ??
     (layer === "gimmick" && id === "ddung-iron-box" ? { name: "DDUNG Iron Box", visual: "▣" } : null);
-  const itemArt = (id === "ddung-chocolate" && layer === "terrain") || DDUNG_ITEM_IDS.has(id) && (
-    (layer === "item" && (id !== "bomb" || (cave && usesDdungGeneration(cave)))) ||
-    (layer === "block" && isDdungTreasure(id))
+  const itemArt = (layer === "terrain" && DDUNG_SOLID_PANELS.has(id)) || DDUNG_ITEM_IDS.has(id) && (
+    layer === "item" || (layer === "block" && isDdungTreasure(id))
   );
   const definitionLayer = itemArt && layer === "block" ? "item" : layer;
   const definition = project.assetDefinitions?.[definitionLayer]?.find((asset) => asset.id === baseId);
@@ -629,7 +654,7 @@ function getAsset(layer, id, cave = activeCave()) {
   const gimmickArt = panel?.[3] || (layer === "gimmick" && Object.hasOwn(DDUNG_GIMMICK_ART, baseId) &&
     (id === "switch" || id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[baseId] : null);
   const image = definition?.image || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
-    itemArt ? `./art/ddung/item-${id}.webp` : original ? `./art/ddung/${id}.png` : null);
+    itemArt ? `./art/ddung/item-${id === "ddung-bomb-panel" ? "bomb" : id}.webp` : original ? `./art/ddung/${id}.png` : null);
   return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer],
     ...known, id, name: definition?.name || known?.name || id, image, panelMark: panel && "AQZY1234r".includes(panel[0]) ? panel[2] : null };
 }
@@ -693,7 +718,7 @@ function ddungGoalLimitation(cave, objective) {
   if (type === 9 && objective.targetId !== "ddung-dust-piece") return "먼지 목표를 판정하려면 원본 JSON을 다시 가져오세요.";
   if (type === 36) return ddungJellyCells(cave).size ? null : "원본 젤리 그룹 좌표가 필요합니다.";
   if (type === 7) return cave.externalSource.boxLayoutParsed ? null : "철 상자 배치를 확인하려면 원본 JSON을 다시 가져오세요.";
-  if ([8, 9, 10, 13, 14, 16, 17, 18, 20, 21, 22, 23, 24, 25, 26, 33, 34, 35, 37].includes(type)) return null;
+  if ([8, 9, 10, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37].includes(type)) return null;
   return "원본 전용 오브젝트 동작";
 }
 
@@ -1982,7 +2007,8 @@ function difficultyTerrainAssets(cave) {
 
 function difficultyTerrainIds(cave) {
   return difficultyTerrainAssets(cave)
-    .filter((id) => cave.terrainRules[id]?.reaction && cave.terrainRules[id].reaction !== "none");
+    .filter((id) => Object.hasOwn(DDUNG_JAM_COLORS, id) ||
+      (cave.terrainRules[id]?.reaction && cave.terrainRules[id].reaction !== "none"));
 }
 
 function difficultyPatternSlots(cave, slots, pattern, attempt) {
@@ -2427,7 +2453,8 @@ function validateCave(cave, palette = project.paletteAssets) {
     if (target < 1 && !limitation) errors.push(`${label} 목표 수량은 1 이상이어야 합니다.`);
     if (!limitation && objective.countMode === "auto-map" && placed < 1) errors.push(`${label} 자동 수량 목표지만 맵에 배치된 대상이 없습니다.`);
     if (!limitation && objective.layer === "block" && !cave.usableBlocks.includes(objective.targetId) && (!isDdungSource(cave.externalSource) || placed < target)) errors.push(`${label} 색상이 사용 가능 블록에서 제외되어 있습니다.`);
-    if (objective.layer === "terrain" && cave.terrainRules?.[objective.targetId]?.reaction === "none") errors.push(`${label} 목표는 제거 불가 규칙입니다. Terrain 반응을 같은 칸 또는 인접 매치로 바꾸세요.`);
+    if (objective.layer === "terrain" && !Object.hasOwn(DDUNG_JAM_COLORS, objective.targetId) &&
+        cave.terrainRules?.[objective.targetId]?.reaction === "none") errors.push(`${label} 목표는 제거 불가 규칙입니다. Terrain 반응을 같은 칸 또는 인접 매치로 바꾸세요.`);
     if (objective.countMode === "manual" && objective.layer !== "block" && target > placed &&
         !(isDdungSource(cave.externalSource) && objective.layer === "item" && isDdungTreasure(objective.targetId))) warnings.push(`${label} 목표 ${target}개보다 맵 배치 ${placed}개가 적습니다.`);
     if (objective.layer === "block" && placed < target) warnings.push(`${label}은 현재 ${placed}개입니다. 리필에서 생성될 수 있지만 목표 달성 편차가 커질 수 있습니다.`);
@@ -2468,19 +2495,13 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
   grid.innerHTML = "";
   for (let index = 0; index < cave.width * cave.height; index += 1) {
     const cell = document.createElement(interactive ? "button" : "div");
-    const canActivate = interactive && !isBarrier(cave, index) && specialEffect(cave, cave.playtestPieces[index]);
+    const readyBomb = interactive && bombPanelReady(playtestState, index);
+    const canActivate = readyBomb || (interactive && !isBarrier(cave, index) && specialEffect(cave, cave.playtestPieces[index]));
     const canSwap = interactive && playtestState.paused && cave.layers.block[index] && !isSwapBlocked(cave, index);
     const selected = canSwap && playtestState.selectedIndex === index;
     cell.className = `map-cell${canActivate || canSwap ? " playable" : ""}${selected ? " selected" : ""}`;
     cell.type = interactive ? "button" : undefined;
     applyCellVisual(cell, cave, index);
-    if (isDdungTreasure(cave.layers.block[index])) {
-      const treasure = document.createElement("span");
-      treasure.className = "item-token";
-      treasure.textContent = getAsset("item", cave.layers.block[index]).visual;
-      treasure.title = getAsset("item", cave.layers.block[index]).name;
-      cell.append(treasure);
-    }
     if (interactive && [playtestState.hint?.first, playtestState.hint?.second].includes(index)) cell.classList.add("hinted");
     const targets = remainingTargets.filter(({ objective }) =>
       matchesObjectiveAsset(objective, cave.layers[objective.layer][index]) &&
@@ -2507,18 +2528,20 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
         ddungGimmickDurability(cave, index) ||
         cave.gimmickRules?.[cave.layers.gimmick[index]]?.durability;
       const hpIndex = terrainId === "ddung-heather-large" ? heatherGroup(cave, index)[0] : index;
-      const durability = boxDurability || (rule && rule.reaction !== "none" ? terrainDurabilityAt(cave, hpIndex, rule) : 0);
+      const durability = boxDurability || (rule && (rule.reaction !== "none" || Object.hasOwn(DDUNG_JAM_COLORS, terrainId)) ? terrainDurabilityAt(cave, hpIndex, rule) : 0);
       if (durability) {
         const hits = boxDurability ? damage.gimmickHits[ddungGimmickGroup(cave, index)[0]] : damage.terrainHits[hpIndex];
         const remaining = Math.max(0, durability - (hits || 0));
         const badge = document.createElement("span");
         badge.className = `terrain-hp${remaining < durability ? " damaged" : ""}`;
-        badge.textContent = remaining;
+        badge.textContent = terrainId === "ddung-bomb-panel" && remaining === 1 ? "PUSH" : remaining - Number(terrainId === "ddung-bomb-panel");
         badge.setAttribute("aria-hidden", "true");
         cell.appendChild(badge);
         const layer = boxDurability ? "gimmick" : "terrain";
         const assetId = cave.layers[layer][index];
-        details.push(`${getAsset(layer, assetId).name} 내구도 ${remaining}/${durability}`);
+        if (terrainId === "ddung-bomb-panel" && !boxDurability) {
+          details.push(remaining === 1 ? "폭탄 충전 완료 · 눌러서 발동" : "폭탄 충전까지 " + (remaining - 1) + "회");
+        } else details.push(`${getAsset(layer, assetId).name} 내구도 ${remaining}/${durability}`);
       }
       if (details.length) {
         cell.title = [cell.title, ...details].filter(Boolean).join(" · ");
@@ -2532,7 +2555,7 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
         cell.title = [cell.title, "발동 효과가 연결되지 않은 특수 피스"].filter(Boolean).join(" · ");
       }
       if (canActivate) {
-        cell.setAttribute("aria-label", [`특수 피스 발동 · ${specialEffectLabel(canActivate)}`, cell.title].filter(Boolean).join(" · "));
+        cell.setAttribute("aria-label", [readyBomb ? "폭탄 패널 발동" : `특수 피스 발동 · ${specialEffectLabel(canActivate)}`, cell.title].filter(Boolean).join(" · "));
       } else if (canSwap) {
         cell.setAttribute("aria-label", cellDescription(cave, index));
         cell.setAttribute("aria-pressed", String(selected));
@@ -2890,7 +2913,7 @@ function isBarrier(cave, index) {
       cave.gimmickRules?.[cave.layers.gimmick[index]]?.blocksFlow) return true;
   const terrainId = cave.layers.terrain[index];
   const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
-  return Boolean(rule?.blocksFlow || rule?.locksBlock);
+  return DDUNG_SOLID_PANELS.has(terrainId) || Boolean(rule?.blocksFlow || rule?.locksBlock);
 }
 
 function ddungWarpRoutes(cave) {
@@ -3072,11 +3095,11 @@ function collectDdungTreasure(state) {
   const { cave } = state;
   const isExit = (id, index) => id === "exit" || ddungMarkersAt(cave, index).includes("exit");
   const explicit = cave.layers.gimmick.some(isExit);
+  const edge = explicit ? null : new Set(gravityLines(cave).map((line) => line[0]));
   let collected = 0;
   cave.layers.block.forEach((id, index) => {
     if (!isDdungTreasure(id)) return;
-    const atExit = explicit ? isExit(cave.layers.gimmick[index], index)
-      : index >= (cave.height - 1) * cave.width;
+    const atExit = explicit ? isExit(cave.layers.gimmick[index], index) : edge.has(index);
     if (!atExit) return;
     advanceObjectives(state, "item", id);
     cave.layers.block[index] = null;
@@ -3164,13 +3187,14 @@ function terrainDurabilityAt(cave, index, rule, jellyCells) {
   return rule.durability;
 }
 
-function* terrainHitResults(state, matches, forcedTerrain, removedBlocks) {
+function* terrainHitResults(state, matches, forcedTerrain, removedBlocks, bombPanelIndex) {
   const cave = state.cave;
   const damagedGroups = new Set();
   const jellyCells = state.ddungJellyCells;
   for (let index = 0; index < cave.layers.terrain.length; index += 1) {
     if (isExcluded(cave, index)) continue;
     const terrainId = cave.layers.terrain[index];
+    if (Object.hasOwn(DDUNG_JAM_COLORS, terrainId)) continue;
     const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
     const group = terrainId === "ddung-heather-large" ? heatherGroup(cave, index) : [index];
     const anchor = group[0];
@@ -3186,15 +3210,18 @@ function* terrainHitResults(state, matches, forcedTerrain, removedBlocks) {
     if (!damage && !forced) continue;
     damagedGroups.add(anchor);
     const remaining = Math.max(1, (rule ? terrainDurabilityAt(cave, anchor, rule, jellyCells) : 1) - (state.terrainHits[anchor] || 0));
-    const amount = forced ? remaining : Math.min(damage, remaining);
-    yield { index: anchor, terrainId, group, amount, broken: amount === remaining };
+    const bomb = terrainId === "ddung-bomb-panel";
+    const amount = bomb && index !== bombPanelIndex
+      ? Math.min(damage || Number(forced), remaining - 1)
+      : forced ? remaining : Math.min(damage, remaining);
+    if (amount > 0) yield { index: anchor, terrainId, group, amount, broken: amount === remaining };
   }
 }
 
-function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), removedBlocks = new Set()) {
+function damageTerrainFromMatches(state, matches, forcedTerrain = new Set(), removedBlocks = new Set(), bombPanelIndex) {
   let damaged = 0;
   const brokenDetails = [];
-  for (const hit of terrainHitResults(state, matches, forcedTerrain, removedBlocks)) {
+  for (const hit of terrainHitResults(state, matches, forcedTerrain, removedBlocks, bombPanelIndex)) {
     damaged += 1;
     if (hit.broken) {
       brokenDetails.push({ index: hit.index, terrainId: hit.terrainId });
@@ -3261,7 +3288,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     const clearableCells = [...matches].filter((index) => !isBarrier(state.cave, index) &&
       !isDdungTreasure(state.cave.layers.block[index]));
     const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
-    const terrainResult = damageTerrainFromMatches(state, matches, expanded.targetedTerrain, removedBlocks);
+    const terrainResult = damageTerrainFromMatches(state, matches, expanded.targetedTerrain, removedBlocks, expanded.bombPanelIndex);
     terrainDamaged += terrainResult.damaged;
     terrainBroken += terrainResult.broken;
     const jellyCells = state.ddungJellyCells;
@@ -3418,6 +3445,12 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
       });
     }
     matches = findMatches(state.cave, runs, protectedCells);
+    while (!matches.size && consumeDdungJam(state, protectedCells, captureFrame)) {
+      applyGravity(state.cave, state);
+      collectDdungTreasure(state);
+      refillBlocks(state);
+      matches = findMatches(state.cave, runs, protectedCells);
+    }
   }
   return { cascade, removed, terrainDamaged, terrainBroken, flowMoves, capped: matches.size > 0 };
 }
@@ -3450,12 +3483,12 @@ function remainingObjectiveCount(state, objective, index) {
   return Math.max(0, progress.target - progress.current);
 }
 
-function scoreAutoMove(state, { hits, targetedTerrain }, goals, created = new Map()) {
+function scoreAutoMove(state, { hits, targetedTerrain, bombPanelIndex }, goals, created = new Map()) {
   const { cave } = state;
   const clearableCells = [...hits].filter((index) => !isBarrier(cave, index) && !isDdungTreasure(cave.layers.block[index]));
   const removedBlocks = new Set(clearableCells.filter((index) => cave.layers.block[index] && !created.has(index)));
   const terrain = goals.some(({ objective }) => objective.layer === "terrain")
-    ? [...terrainHitResults(state, hits, targetedTerrain, removedBlocks)] : [];
+    ? [...terrainHitResults(state, hits, targetedTerrain, removedBlocks, bombPanelIndex)] : [];
   const gimmicks = goals.some(({ objective }) => objective.layer === "gimmick")
     ? [...gimmickHitResults(state, hits, removedBlocks)] : [];
   let progress = 0;
@@ -3832,6 +3865,8 @@ function swapPlaytestBlocks(cave, first, second) {
 
 function findPlayableAction(state) {
   const { cave } = state;
+  const panel = cave.layers.terrain.findIndex((_, index) => bombPanelReady(state, index));
+  if (panel >= 0) return { first: panel, bombPanel: true };
   const special = cave.playtestPieces.findIndex((piece, index) =>
     cave.layers.block[index] && !isBarrier(cave, index) && specialEffect(cave, piece));
   return special >= 0 ? { first: special } : listPossibleSwaps(state, true)[0];
@@ -3882,6 +3917,11 @@ function chooseAutoAction(state) {
     objective, remaining: remainingObjectiveCount(state, objective, index),
   })).filter(({ remaining }) => remaining > 0);
   const candidates = listPossibleSwaps(state, false, goals);
+  cave.layers.terrain.forEach((_, index) => {
+    if (!bombPanelReady(state, index)) return;
+    const hits = bombPanelHits(state, index, state.beeRandom.copy());
+    candidates.push({ first: index, bombPanel: true, score: scoreAutoMove(state, hits, goals) });
+  });
   const runs = [];
   const existingMatches = findMatches(cave, runs);
   cave.playtestPieces.forEach((piece, index) => {
@@ -3930,6 +3970,54 @@ function spreadDdungChocolate(state, captureFrame) {
   captureFrame?.("초콜릿 확산", [index], "match");
 }
 
+function bombPanelReady(state, index) {
+  const { cave, terrainHits } = state;
+  return cave.layers.terrain[index] === "ddung-bomb-panel" && !isExcluded(cave, index) &&
+    terrainHits[index] >= cave.terrainRules["ddung-bomb-panel"].durability - 1;
+}
+
+function bombPanelHits(state, index, random) {
+  const { cave } = state;
+  const x = index % cave.width;
+  const y = Math.floor(index / cave.width);
+  const hits = new Set();
+  for (let row = Math.max(0, y - 1); row <= Math.min(cave.height - 1, y + 1); row++) {
+    for (let col = Math.max(0, x - 1); col <= Math.min(cave.width - 1, x + 1); col++) {
+      const cell = row * cave.width + col;
+      if (!isExcluded(cave, cell)) hits.add(cell);
+    }
+  }
+  const expanded = expandSpecialHits(state, hits, new Set(), random);
+  expanded.targetedTerrain.add(index);
+  return { ...expanded, bombPanelIndex: index, label: "폭탄 패널 폭발" };
+}
+
+function consumeDdungJam(state, protectedCells, captureFrame) {
+  const { cave } = state;
+  const { terrain, block, item, gimmick } = cave.layers;
+  const consumed = [];
+  const changed = [];
+  for (const [index, id] of terrain.entries()) {
+    const color = DDUNG_JAM_COLORS[id];
+    const above = index - cave.width;
+    if (!color || isExcluded(cave, index) || above < 0 || protectedCells.has(above) ||
+        block[above] !== color || item[above] || (gimmick[above] && gimmick[above] !== SPAWNER_ID) ||
+        (terrain[above] && terrain[above] !== "floor") || isBarrier(cave, above)) continue;
+    block[above] = null;
+    cave.playtestPieces[above] = null;
+    advanceObjectives(state, "block", color);
+    consumed.push(above);
+    changed.push(index);
+    if (++state.terrainHits[index] >= cave.terrainRules[id].durability) {
+      terrain[index] = null;
+      state.terrainHits[index] = 0;
+      advanceObjectives(state, "terrain", id);
+    }
+  }
+  if (consumed.length) captureFrame?.("잼이 같은 색 블록을 받음", [...consumed, ...changed], "match");
+  return consumed.length;
+}
+
 function playSimulationTurn(state, action, captureFrame) {
   if (!action) {
     state.status = "stuck";
@@ -3938,6 +4026,15 @@ function playSimulationTurn(state, action, captureFrame) {
   }
   const { first, second } = action;
   const cave = state.cave;
+  if (action.bombPanel) {
+    if (!bombPanelReady(state, first)) return;
+    const explosion = bombPanelHits(state, first, state.beeRandom);
+    resolveMatches(state, captureFrame, [first], [], explosion);
+    state.message = explosion.label;
+    if (allObjectivesComplete(state)) state.status = "won";
+    else ensurePlayableBoard(state, captureFrame);
+    return;
+  }
   if (action.combo && !canCombineSpecials(cave, first, second)) return;
   const combo = action.combo ? specialComboHits(state, first, second, state.beeRandom) : null;
   const activation = second === undefined;
@@ -3999,11 +4096,11 @@ function createPlayState(cave, seedSuffix, manual = false) {
   const copy = deepCopy(cave);
   copy.layers.block.forEach((id, index) => {
     const item = copy.layers.item[index];
-    if (isDdungSource(copy.externalSource) && isDdungTreasure(item)) {
+    if (usesDdungGeneration(copy) && isDdungTreasure(item)) {
       copy.layers.block[index] = item;
       copy.layers.item[index] = null;
     }
-    if (id && (copy.layers.terrain[index] === "ddung-chocolate" ||
+    if (id && (DDUNG_SOLID_PANELS.has(copy.layers.terrain[index]) ||
         ddungBoxDurability(copy, index) || isDdungGimmickBarrier(copy, index) ||
         copy.gimmickRules?.[copy.layers.gimmick[index]]?.blocksFlow)) copy.layers.block[index] = null;
   });
@@ -4026,7 +4123,7 @@ function createPlayState(cave, seedSuffix, manual = false) {
     gimmickRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|gimmick`),
     treasureMisses: 0,
     treasureGoals: copy.objectives.flatMap((objective, index) =>
-      isDdungSource(copy.externalSource) && objective.layer === "item" && isDdungTreasure(objective.targetId)
+      usesDdungGeneration(copy) && objective.layer === "item" && isDdungTreasure(objective.targetId)
         ? [{ index, targetId: objective.targetId }] : []),
     terrainHits: Array(copy.width * copy.height).fill(0),
     ddungJellyCells: ddungJellyCells(copy),
@@ -4042,9 +4139,17 @@ function createPlayState(cave, seedSuffix, manual = false) {
   if ((isDdungSource(copy.externalSource) || (copy.layers.gimmick.includes(SPAWNER_ID) || copy.generatedSpawnerOverlaps?.length)) &&
       copy.layers.block.some((block, index) => !block && !isBarrier(copy, index))) {
     applyGravity(copy, state);
+    collectDdungTreasure(state);
     refillBlocks(state);
   }
-  ensurePlayableBoard(state);
+  if (collectDdungTreasure(state)) refillBlocks(state);
+  while (!findMatches(copy).size && consumeDdungJam(state, new Set())) {
+    applyGravity(copy, state);
+    collectDdungTreasure(state);
+    refillBlocks(state);
+  }
+  if (allObjectivesComplete(state)) state.status = "won";
+  else ensurePlayableBoard(state);
   return state;
 }
 
@@ -4405,6 +4510,13 @@ function playtestCell(index) {
   const state = playtestState;
   if (!state || state.status !== "playing" || state.animating) return;
   const cave = state.cave;
+  if (bombPanelReady(state, index)) {
+    state.selectedIndex = null;
+    state.hint = null;
+    state.comboMode = false;
+    animatePlaytestTurn(state, { first: index, bombPanel: true });
+    return;
+  }
   if (isBarrier(cave, index) || !cave.layers.block[index]) return;
   state.hint = null;
 
@@ -5096,10 +5208,7 @@ const DDUNG_BLOCK_CHARACTERS = {
   purple: "ㅎㅏㅐㅑㅒ⒵",
 };
 
-const DDUNG_ITEM_TILES = {
-  M: "bomb", "⑺": "ddung-treasure-1", "⑻": "ddung-treasure-2",
-  l: "ddung-jam-blue", n: "ddung-jam-green", m: "ddung-jam-orange", o: "ddung-jam-pink", p: "ddung-jam-purple", k: "ddung-jam-yellow",
-};
+const DDUNG_ITEM_TILES = { "⑺": "ddung-treasure-1", "⑻": "ddung-treasure-2" };
 
 const DDUNG_ITEM_IDS = new Set(Object.values(DDUNG_ITEM_TILES));
 
@@ -5108,13 +5217,13 @@ const DDUNG_TARGETS = {
   4: ["block", "green"], 5: ["block", "red"], 6: ["block", "purple"],
   7: ["gimmick", "ddung-box"], 8: ["terrain", "ddung-web"], 9: ["block", "ddung-dust-piece"],
   10: ["terrain", "ddung-oak"], 11: ["item", "ddung-treasure-1"], 12: ["item", "ddung-treasure-2"],
-  13: ["terrain", "ddung-stone"], 14: ["terrain", "ddung-water"], 15: ["item", "bomb"],
+  13: ["terrain", "ddung-stone"], 14: ["terrain", "ddung-water"], 15: ["terrain", "ddung-bomb-panel"],
   16: ["gimmick", "ddung-mouse-panel"], 17: ["gimmick", "ddung-dungs"], 18: ["gimmick", "ddung-bulldozer"],
   20: ["terrain", "ddung-chocolate"], 21: ["gimmick", "ddung-spider-cave"], 22: ["gimmick", "ddung-bee"],
   23: ["gimmick", "ddung-feng"], 24: ["terrain", "ddung-ice"],
   25: ["gimmick", "ddung-mayor-small"], 26: ["gimmick", "ddung-mayor-large"],
-  27: ["item", "ddung-jam-blue"], 28: ["item", "ddung-jam-green"], 29: ["item", "ddung-jam-orange"],
-  30: ["item", "ddung-jam-pink"], 31: ["item", "ddung-jam-purple"], 32: ["item", "ddung-jam-yellow"],
+  27: ["terrain", "ddung-jam-blue"], 28: ["terrain", "ddung-jam-green"], 29: ["terrain", "ddung-jam-orange"],
+  30: ["terrain", "ddung-jam-pink"], 31: ["terrain", "ddung-jam-purple"], 32: ["terrain", "ddung-jam-yellow"],
   33: ["gimmick", "ddung-bee-up"], 34: ["terrain", "ddung-heather-small"],
   35: ["terrain", "ddung-heather-large"], 36: ["terrain", "ddung-jelly"], 37: ["gimmick", "ddung-octo"],
 };
@@ -5167,13 +5276,14 @@ function applyDdungTile(layers, index, character, unknownTokens) {
     return;
   }
   const terrainCharacters = [
-    ["ddung-chocolate", "J"], ["ddung-web", "W"], ["ddung-frost", "I"], ["ddung-oak", "!@#$"],
+    ["ddung-web", "W"], ["ddung-frost", "I"], ["ddung-oak", "!@#$"],
     ["ddung-stone", "F"], ["ddung-stone-thick", "G"], ["ddung-water", "U⒦⒧⒨⒩⒪⒫⒬⒭⒮⒯"],
     ["ddung-ice", "N"], ["ddung-heather-small", "s"], ["ddung-heather-large", "tuvw"],
     ["ddung-jelly", "①②③④⑤⑥⑦⑧⑨⑩ⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ"],
   ];
   const terrain = terrainCharacters.find(([, characters]) => characters.includes(character));
   if (terrain) { layers.terrain[index] = terrain[0]; return; }
+  if (Object.hasOwn(DDUNG_PANEL_TILES, character)) { layers.terrain[index] = DDUNG_PANEL_TILES[character]; return; }
   if (Object.hasOwn(DDUNG_ITEM_TILES, character)) { layers.item[index] = DDUNG_ITEM_TILES[character]; return; }
   const gimmickMap = {
     B: "ddung-box", H: "ddung-mouse-panel", L: "ddung-dungs", 5: "ddung-bulldozer",
