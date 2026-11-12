@@ -1622,7 +1622,7 @@ function clearCave() {
     initialPieceAt(cave, index) ? [[index, null]] : []));
   cave.layers = emptyLayers(cave.width * cave.height);
   cave.excludedCells = [];
-  cave.generatedSpawnerOverlaps = [];
+  delete cave.generatedSpawnerOverlaps;
   if (cave.externalSource?.overlappingMarkers) cave.externalSource.overlappingMarkers = {};
   cave.objectives = [];
   cave.testClearMoves = 0;
@@ -1957,6 +1957,14 @@ function difficultyGimmickIds() {
   return [...new Set([...ASSETS.gimmick.map(({ id }) => id), "ddung-iron-box", ...(project.paletteAssets.gimmick || [])])];
 }
 
+function difficultyItemIds(cave, automatic) {
+  const palette = project.paletteAssets.item || [];
+  const ddung = isDdungSource(cave.externalSource) ||
+    (!cave.externalSource && project.caves.some((level) => isDdungSource(level.externalSource)));
+  if (ddung) return Object.values(DDUNG_ITEM_TILES);
+  return automatic ? ["coin"] : palette.filter((id) => !id.startsWith("ddung-"));
+}
+
 function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickIds = [], selectedTerrain = [], automatic = false) {
   const cave = deepCopy(source);
   const seed = source.randomSeed + "|difficulty-" + target + "-" + (attempt + 1);
@@ -2012,7 +2020,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   );
   const eligibleAssets = {
     gimmick: gimmickIds,
-    item: automatic ? ["coin"] : (project.paletteAssets.item || []).filter((id) => !id.startsWith("ddung-")),
+    item: difficultyItemIds(cave, automatic),
   };
   for (const [layer, assets] of Object.entries(eligibleAssets)) {
     if (!assets.length) continue;
@@ -2970,11 +2978,12 @@ function refillBlocks(state, origins, trackMove) {
   const { cave } = state;
   const colors = cave.usableBlocks;
   if (!colors.length) return;
+  if (Array.isArray(cave.generatedSpawnerOverlaps)) placeGenerationSpawners(cave);
   const spawners = cave.layers.gimmick.flatMap((id, index) =>
     id === SPAWNER_ID || ddungMarkersAt(cave, index).includes(SPAWNER_ID) ? [index] : []);
   const sourceSet = new Set(spawners);
-  const sources = isDdungSource(cave.externalSource)
-    ? gravityLines(cave).flatMap((line) => {
+  const sources = Array.isArray(cave.generatedSpawnerOverlaps) ? spawners
+    : isDdungSource(cave.externalSource) ? gravityLines(cave).flatMap((line) => {
         const marked = line.filter((index) => sourceSet.has(index));
         return marked.length ? marked : [line.at(-1)];
       }) : spawners.length ? spawners : null;
@@ -4912,6 +4921,11 @@ const DDUNG_BLOCK_CHARACTERS = {
   purple: "ㅎㅏㅐㅑㅒ⒵",
 };
 
+const DDUNG_ITEM_TILES = {
+  M: "bomb", J: "ddung-chocolate", "⑺": "ddung-treasure-1", "⑻": "ddung-treasure-2",
+  l: "ddung-jam-blue", n: "ddung-jam-green", m: "ddung-jam-orange", o: "ddung-jam-pink", p: "ddung-jam-purple", k: "ddung-jam-yellow",
+};
+
 const DDUNG_TARGETS = {
   1: ["block", "yellow"], 2: ["block", "blue"], 3: ["block", "orange"],
   4: ["block", "green"], 5: ["block", "red"], 6: ["block", "purple"],
@@ -4983,11 +4997,7 @@ function applyDdungTile(layers, index, character, unknownTokens) {
   ];
   const terrain = terrainCharacters.find(([, characters]) => characters.includes(character));
   if (terrain) { layers.terrain[index] = terrain[0]; return; }
-  const itemMap = {
-    M: "bomb", J: "ddung-chocolate", "⑺": "ddung-treasure-1", "⑻": "ddung-treasure-2",
-    l: "ddung-jam-blue", n: "ddung-jam-green", m: "ddung-jam-orange", o: "ddung-jam-pink", p: "ddung-jam-purple", k: "ddung-jam-yellow",
-  };
-  if (itemMap[character]) { layers.item[index] = itemMap[character]; return; }
+  if (Object.hasOwn(DDUNG_ITEM_TILES, character)) { layers.item[index] = DDUNG_ITEM_TILES[character]; return; }
   const gimmickMap = {
     B: "ddung-box", H: "ddung-mouse-panel", L: "ddung-dungs", 5: "ddung-bulldozer",
     "%": "ddung-spider-cave", "^": "ddung-bee", q: "ddung-bee-up", z: "exit",
