@@ -2003,6 +2003,7 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
   const canPractice = playMode && !validation.errors.length;
   $("playtestGuide").hidden = !canPractice;
   $("playtestResetButton").hidden = !canPractice;
+  $("playtestSpeedControl").hidden = !canPractice;
   $("usePlaytestResultButton").hidden = true;
   if (canPractice) {
     playtestState = createPlayState(cave, `playtest-${crypto.randomUUID()}`, true);
@@ -2225,13 +2226,18 @@ function isBarrier(cave, index) {
   return Boolean(rule?.blocksFlow || rule?.locksBlock);
 }
 
-function settleStraight(cave) {
+function settleStraight(cave, trackMove) {
   const pieces = cave.playtestPieces;
   for (const line of gravityLines(cave)) {
     let segment = [];
     const settle = () => {
       const values = segment.filter((index) => cave.layers.block[index])
-        .map((index) => ({ block: cave.layers.block[index], piece: pieces?.[index] }));
+        .map((index) => ({ index, block: cave.layers.block[index], piece: pieces?.[index] }));
+      if (trackMove) {
+        values.forEach(({ index }, position) => {
+          if (index !== segment[position]) trackMove(index, segment[position]);
+        });
+      }
       segment.forEach((index, position) => {
         cave.layers.block[index] = values[position]?.block ?? null;
         if (pieces) pieces[index] = values[position]?.piece ?? null;
@@ -2265,8 +2271,8 @@ function flowOffsets(cave, state) {
   return [first, second];
 }
 
-function applyGravity(cave, state) {
-  settleStraight(cave);
+function applyGravity(cave, state, trackMove) {
+  settleStraight(cave, trackMove);
   if (!state || cave.flowRule === "none") return 0;
   const directVectors = { down: [0, 1], up: [0, -1], left: [-1, 0], right: [1, 0] };
   const [directX, directY] = directVectors[cave.gravity];
@@ -2290,6 +2296,7 @@ function applyGravity(cave, state) {
         if (targetX < 0 || targetX >= cave.width || targetY < 0 || targetY >= cave.height) continue;
         const targetIndex = targetY * cave.width + targetX;
         if (isBarrier(cave, targetIndex) || cave.layers.block[targetIndex]) continue;
+        trackMove?.(index, targetIndex);
         swapPlaytestBlocks(cave, targetIndex, index);
         flowMoves += 1;
         moved = true;
@@ -2297,7 +2304,7 @@ function applyGravity(cave, state) {
       }
     }
     if (!moved) break;
-    settleStraight(cave);
+    settleStraight(cave, trackMove);
   }
   return flowMoves;
 }
@@ -2367,7 +2374,7 @@ function collectDdungTreasure(state) {
   return collected;
 }
 
-function refillBlocks(state) {
+function refillBlocks(state, origins, trackMove) {
   const { cave } = state;
   const colors = cave.usableBlocks;
   if (!colors.length) return;
@@ -2380,7 +2387,9 @@ function refillBlocks(state) {
       }) : spawners.length ? spawners : null;
   if (!sources) {
     cave.layers.block.forEach((block, index) => {
-      if (!block && !isBarrier(cave, index)) cave.layers.block[index] = chooseRefillColor(state, colors);
+      if (block || isBarrier(cave, index)) return;
+      cave.layers.block[index] = chooseRefillColor(state, colors);
+      if (cave.layers.block[index]) origins?.set(index, { from: index, spawned: true });
     });
     return;
   }
@@ -2392,10 +2401,11 @@ function refillBlocks(state) {
       const block = chooseDdungTreasure(state) ?? chooseRefillColor(state, colors);
       if (!block) continue;
       cave.layers.block[index] = block;
+      origins?.set(index, { from: index, spawned: true });
       spawned = true;
     }
     if (!spawned) break;
-    applyGravity(cave, state);
+    applyGravity(cave, state, trackMove);
     collectDdungTreasure(state);
   }
 }
@@ -2619,10 +2629,22 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
         continue;
       }
     }
-    flowMoves += applyGravity(state.cave, state);
+    const origins = captureFrame ? new Map() : null;
+    const trackMove = origins ? (from, to) => {
+      const origin = origins.get(from) ?? { from };
+      origins.delete(from);
+      origins.set(to, origin);
+    } : undefined;
+    const captureMovement = (label, kind) => {
+      const motions = [...origins].flatMap(([to, origin]) => state.cave.layers.block[to] ? [{ ...origin, to }] : []);
+      if (motions.length) captureFrame(label, motions.map(({ to }) => to), kind, 450, motions);
+      origins.clear();
+    };
+    flowMoves += applyGravity(state.cave, state, trackMove);
+    if (origins) captureMovement("블록 낙하", "fall");
     collectDdungTreasure(state);
-    refillBlocks(state);
-    captureFrame?.("낙하 및 블록 채우기", [], "refill");
+    refillBlocks(state, origins, trackMove);
+    if (origins) captureMovement("새 블록 채우기", "refill");
     cascade += 1;
     runs = [];
     preferred = [];
@@ -3107,7 +3129,14 @@ function playSimulationTurn(state, action, captureFrame) {
     captureFrame?.("특수 피스 발동", [first], "match");
   } else {
     swapPlaytestBlocks(cave, first, second);
-    captureFrame?.("블록 교환", [first, second], "swap", 250);
+    const motions = [{ from: first, to: second }, { from: second, to: first }];
+    captureFrame?.("블록 교환", [first, second], "swap", 400, motions);
+    if (action.invalid) {
+      swapPlaytestBlocks(cave, first, second);
+      captureFrame?.("매치 없음 · 원래 위치로 복귀", [first, second], "swap", 400, motions);
+      state.message = "매치가 만들어지지 않아 교환을 되돌렸습니다.";
+      return;
+    }
   }
   state.movesLeft -= 1;
   const resolved = resolveMatches(state, captureFrame, combo ? [first, second] : activation ? [first] : [], activation || combo ? [] : [second, first], combo);
@@ -3359,35 +3388,55 @@ function startBatchReplay(cave, validation, example) {
   playtestState.replay = { cave, example };
   $("playtestGuide").hidden = false;
   $("playtestResetButton").hidden = false;
+  $("playtestSpeedControl").hidden = false;
   renderPlaytest();
   runAnimatedPlaytest(playtestState);
 }
 
-async function showPlaytestFrames(state, frames, stopOnPause) {
+async function showPlaytestFrames(state, frames) {
   for (const frame of frames) {
-    if (playtestState !== state || !$("simulationDialog").open || (stopOnPause && state.paused)) return;
+    if (playtestState !== state || !$("simulationDialog").open) return;
     renderSimulationGrid(frame.cave, false, [], frame);
     const grid = $("simulationGrid");
-    for (const index of frame.cells) grid.children[index]?.classList.add("playtest-frame-" + frame.kind);
     $("playtestFrameStatus").textContent = frame.label;
-    await new Promise((resolve) => setTimeout(resolve, frame.delay));
+    const delay = frame.delay / (Number($("playtestSpeed").value) || 1);
+    for (const index of frame.cells) {
+      const cell = grid.children[index];
+      cell?.classList.add("playtest-frame-" + frame.kind);
+      if (frame.kind === "match") cell?.querySelector(".cell-block")?.animate(
+        [{ opacity: 1 }, { opacity: 0.35 }, { opacity: 1 }], { duration: delay });
+    }
+    const gravityOffset = { down: [0, -18], up: [0, 18], left: [18, 0], right: [-18, 0] };
+    for (const { from, to, spawned } of frame.motions) {
+      const cell = grid.children[to];
+      if (!cell) continue;
+      const visuals = cell.querySelectorAll(".cell-block, .initial-piece-badge");
+      const start = grid.children[from].getBoundingClientRect();
+      const end = cell.getBoundingClientRect();
+      const [spawnX, spawnY] = spawned ? gravityOffset[frame.cave.gravity] : [0, 0];
+      visuals.forEach((visual) => visual.animate([
+        { transform: `translate(${start.left - end.left + spawnX}px, ${start.top - end.top + spawnY}px)`, opacity: spawned ? 0 : 1 },
+        { transform: "translate(0, 0)", opacity: 1 },
+      ], { duration: delay, easing: "ease-out" }));
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }
 
 async function animatePlaytestTurn(state, action) {
   const frames = [];
-  const capture = (label, cells, kind, delay = 180) => {
+  const capture = (label, cells, kind, delay = 360, motions = []) => {
     const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
     frames.push({
       cave: { ...state.cave, layers, playtestPieces: [...state.cave.playtestPieces] },
       terrainHits: [...state.terrainHits], gimmickHits: [...state.gimmickHits],
-      label, cells, kind, delay,
+      label, cells, kind, delay, motions,
     });
   };
   state.animating = true;
   try {
     playSimulationTurn(state, action, capture);
-    await showPlaytestFrames(state, frames, !state.paused);
+    await showPlaytestFrames(state, frames);
   } finally {
     state.animating = false;
     if (playtestState === state && $("simulationDialog").open) renderPlaytest();
@@ -3400,7 +3449,7 @@ async function runAnimatedPlaytest(state) {
   try {
     while (playtestState === state && $("simulationDialog").open && !state.paused && state.status === "playing") {
       // Keep the settled board available for clicks before the next automatic turn.
-      await new Promise((resolve) => setTimeout(resolve, 650));
+      await new Promise((resolve) => setTimeout(resolve, 900 / (Number($("playtestSpeed").value) || 1)));
       if (playtestState !== state || !$("simulationDialog").open || state.paused || state.status !== "playing") break;
       if (!state.animating) await animatePlaytestTurn(state, chooseAutoAction(state));
     }
@@ -3466,12 +3515,7 @@ function playtestCell(index) {
   if (specialEffect(cave, cave.playtestPieces[index])) {
     state.selectedIndex = null;
     const action = { first: index };
-    if (state.paused) {
-      playSimulationTurn(state, action);
-      renderPlaytest();
-    } else {
-      animatePlaytestTurn(state, action);
-    }
+    animatePlaytestTurn(state, action);
     return;
   }
   if (!state.paused || isSwapBlocked(cave, index)) return;
@@ -3487,11 +3531,8 @@ function playtestCell(index) {
     swapPlaytestBlocks(cave, first, index);
     const matched = findMatches(cave);
     swapPlaytestBlocks(cave, first, index);
-    if (matched.has(first) || matched.has(index)) {
-      playSimulationTurn(state, { first, second: index });
-    } else {
-      state.message = "매치가 만들어지지 않아 교환을 되돌렸습니다.";
-    }
+    animatePlaytestTurn(state, { first, second: index, invalid: !matched.has(first) && !matched.has(index) });
+    return;
   }
   renderPlaytest();
 }
