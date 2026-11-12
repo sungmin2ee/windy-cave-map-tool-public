@@ -176,8 +176,9 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
 }
 
 const defaultProject = () => ({ version: "V0001", assetDefinitions: {}, paletteAssets: { gimmick: [SPAWNER_ID] }, caves: [createCave(1)], activeCaveId: null });
-let project = loadProject();
-if (!project.activeCaveId || !project.caves.some((c) => c.id === project.activeCaveId)) project.activeCaveId = project.caves[0].id;
+let project;
+let projectDatabase;
+let saveQueue = Promise.resolve();
 
 let activeLayer = "terrain";
 let activeTool = "brush";
@@ -480,23 +481,68 @@ function normalizeCave(data, index = 0) {
   return normalized;
 }
 
-function loadProject() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (saved?.caves?.length) return normalizeProject({ ...saved, contentVersion: saved.version || saved.contentVersion });
-  } catch (_) {}
-  return defaultProject();
+function openProjectDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("windy-cave-map-tool", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("projects");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("저장소를 열 수 없습니다."));
+  });
 }
 
-function persist(showMessage = false, value = project) {
+async function loadProject() {
+  let local = null;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(packProjectForStorage(value)));
-    if (showMessage) toast("브라우저에 저장했습니다.");
-    return true;
-  } catch (_) {
-    toast("프로젝트가 너무 커서 브라우저 저장 공간을 초과했습니다. JSON으로 내보내 백업하세요.");
-    return false;
+    local = JSON.parse(localStorage.getItem(STORAGE_KEY));
+  } catch (_) {}
+  let stored = null;
+  try {
+    projectDatabase = await openProjectDatabase();
+    projectDatabase.onversionchange = () => {
+      projectDatabase.close();
+      projectDatabase = null;
+    };
+    stored = await new Promise((resolve, reject) => {
+      const request = projectDatabase.transaction("projects").objectStore("projects").get(STORAGE_KEY);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (_) {}
+  const choices = [stored, local].filter((saved) => saved?.caves?.length)
+    .sort((left, right) => (right.savedAt ?? 0) - (left.savedAt ?? 0));
+  for (const saved of choices) {
+    try {
+      const { savedAt, ...data } = saved;
+      return normalizeProject({ ...data, contentVersion: data.version || data.contentVersion });
+    } catch (_) {}
   }
+  return normalizeProject(defaultProject());
+}
+
+function persist(showMessage = false, message = "브라우저에 저장했습니다.") {
+  const saved = { ...packProjectForStorage(project), savedAt: Date.now() };
+  saveQueue = saveQueue.then(async () => {
+    try {
+      if (!projectDatabase) throw new Error("IndexedDB를 열 수 없습니다.");
+      await new Promise((resolve, reject) => {
+        const transaction = projectDatabase.transaction("projects", "readwrite");
+        transaction.oncomplete = resolve;
+        transaction.onabort = () => reject(transaction.error);
+        transaction.objectStore("projects").put(saved, STORAGE_KEY);
+      });
+    } catch (_) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+      } catch (_) {
+        toast("브라우저에 저장하지 못했습니다. 현재 변경사항은 전체 레벨 JSON으로 내보낼 수 있습니다.");
+        return false;
+      }
+    }
+    if (showMessage) toast(message);
+    return true;
+  });
+  return saveQueue;
 }
 
 function snapshot() {
@@ -943,11 +989,10 @@ function saveObjectImage(layer, id, image) {
   const next = definitions.filter((asset) => asset.id !== id);
   if (image || current) next.push({ id, name: current?.name ?? getAsset(layer, id).name, ...(image ? { image } : {}) });
   const updated = { ...project, assetDefinitions: { ...project.assetDefinitions, [layer]: next } };
-  if (!persist(false, updated)) return;
   snapshot();
   project = updated;
   renderAll();
-  toast(image ? "오브젝트 이미지를 저장했습니다." : "기본 이미지로 복원했습니다.");
+  persist(true, image ? "오브젝트 이미지를 저장했습니다." : "기본 이미지로 복원했습니다.");
 }
 
 async function chooseObjectImage(event) {
@@ -1523,7 +1568,7 @@ function addCave() {
       continue;
     }
     const cave = createCave(number);
-    if (commitCaveSave([...project.caves, cave], cave.id)) toast(`${cave.name}을 만들었습니다.`);
+    commitCaveSave([...project.caves, cave], cave.id, `${cave.name}을 만들었습니다.`);
     return;
   }
 }
@@ -1556,18 +1601,16 @@ function saveCaveAs() {
   const caves = [...project.caves];
   if (destination) caves[destinationIndex] = copy;
   else caves.push(copy);
-  if (commitCaveSave(caves, copy.id)) toast(`${label}에 저장했습니다.`);
+  commitCaveSave(caves, copy.id, `${label}에 저장했습니다.`);
 }
 
-function commitCaveSave(caves, activeCaveId) {
-  const next = { ...project, caves, activeCaveId };
-  if (!persist(false, next)) return false;
+function commitCaveSave(caves, activeCaveId, message) {
   snapshot();
-  project = next;
+  project = { ...project, caves, activeCaveId };
   caveSearchQuery = "";
   $("caveSearch").value = "";
   renderAll();
-  return true;
+  persist(true, message);
 }
 
 function deleteCave() {
@@ -5646,6 +5689,8 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 }
 
-bindInputs();
-renderAll();
-
+loadProject().then((loaded) => {
+  project = loaded;
+  bindInputs();
+  renderAll();
+});
