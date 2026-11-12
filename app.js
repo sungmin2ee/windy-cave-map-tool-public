@@ -1977,7 +1977,7 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
         cell.setAttribute("aria-label", cellDescription(cave, index));
         cell.setAttribute("aria-pressed", String(selected));
       }
-      if (!cell.disabled) cell.addEventListener("click", () => playtestCell(index));
+      if (!cell.disabled) bindPlaytestCellInput(cell, index, canSwap);
     }
     grid.appendChild(cell);
   }
@@ -2734,7 +2734,6 @@ function listPossibleSwaps(state, firstOnly = false, goals = []) {
   const candidates = [];
   for (let first = 0; first < blocks.length; first += 1) {
     if (!blocks[first] || isSwapBlocked(cave, first)) continue;
-    const firstIsSpecial = specialEffect(cave, cave.playtestPieces[first]);
     const x = first % cave.width;
     const others = [];
     if (x < cave.width - 1) others.push(first + 1);
@@ -2746,9 +2745,7 @@ function listPossibleSwaps(state, firstOnly = false, goals = []) {
         candidates.push({ ...action, score: scoreAutoMove(state, specialComboHits(state, first, second, state.beeRandom.copy()), goals) });
         continue;
       }
-      if (firstIsSpecial) continue;
-      if (!blocks[second] || blocks[first] === blocks[second] || isSwapBlocked(cave, second) ||
-          specialEffect(cave, cave.playtestPieces[second])) continue;
+      if (!blocks[second] || blocks[first] === blocks[second] || isSwapBlocked(cave, second)) continue;
       swapPlaytestBlocks(cave, first, second);
       const runs = firstOnly ? undefined : [];
       const matches = findMatches(cave, runs);
@@ -3481,6 +3478,66 @@ function togglePlaytestCombo() {
   renderPlaytest();
 }
 
+function bindPlaytestCellInput(cell, index, canSwap) {
+  let pointer = null;
+  let dragged = false;
+  const dragThreshold = 10;
+  if (canSwap) {
+    cell.classList.add("playtest-draggable");
+    cell.addEventListener("pointerdown", (event) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+      dragged = false;
+      cell.setPointerCapture(event.pointerId);
+    });
+    cell.addEventListener("pointermove", (event) => {
+      if (pointer?.id !== event.pointerId) return;
+      dragged ||= Math.max(Math.abs(event.clientX - pointer.x), Math.abs(event.clientY - pointer.y)) >= dragThreshold;
+    });
+    cell.addEventListener("pointerup", (event) => {
+      if (pointer?.id !== event.pointerId) return;
+      const dx = event.clientX - pointer.x;
+      const dy = event.clientY - pointer.y;
+      pointer = null;
+      const distance = Math.max(Math.abs(dx), Math.abs(dy));
+      dragged ||= distance >= dragThreshold;
+      if (distance < dragThreshold) return;
+      const state = playtestState;
+      if (!state?.paused || state.status !== "playing" || state.animating) return;
+      const { width, height } = state.cave;
+      const horizontal = Math.abs(dx) >= Math.abs(dy);
+      const x = index % width + (horizontal ? Math.sign(dx) : 0);
+      const y = Math.floor(index / width) + (horizontal ? 0 : Math.sign(dy));
+      if (x >= 0 && x < width && y >= 0 && y < height) playtestSwap(state, index, y * width + x);
+    });
+    cell.addEventListener("lostpointercapture", () => { pointer = null; });
+  }
+  cell.addEventListener("click", (event) => {
+    if (dragged && event.detail !== 0) {
+      dragged = false;
+      return;
+    }
+    playtestCell(index);
+  });
+}
+
+function playtestSwap(state, first, second) {
+  const { cave } = state;
+  if (!neighborsOf(cave, first).includes(second) ||
+      [first, second].some((index) => !cave.layers.block[index] || isSwapBlocked(cave, index))) return;
+  state.selectedIndex = null;
+  state.hint = null;
+  state.comboMode = false;
+  if (canCombineSpecials(cave, first, second)) {
+    animatePlaytestTurn(state, { first, second, combo: true });
+    return;
+  }
+  swapPlaytestBlocks(cave, first, second);
+  const matches = findMatches(cave);
+  swapPlaytestBlocks(cave, first, second);
+  animatePlaytestTurn(state, { first, second, invalid: !matches.has(first) && !matches.has(second) });
+}
+
 function playtestCell(index) {
   const state = playtestState;
   if (!state || state.status !== "playing" || state.animating) return;
@@ -3528,10 +3585,7 @@ function playtestCell(index) {
     state.selectedIndex = index;
     state.message = "교환할 인접 블록을 클릭하세요.";
   } else {
-    swapPlaytestBlocks(cave, first, index);
-    const matched = findMatches(cave);
-    swapPlaytestBlocks(cave, first, index);
-    animatePlaytestTurn(state, { first, second: index, invalid: !matched.has(first) && !matched.has(index) });
+    playtestSwap(state, first, index);
     return;
   }
   renderPlaytest();

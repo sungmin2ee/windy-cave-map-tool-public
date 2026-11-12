@@ -68,6 +68,7 @@
     .board-shape-grid > .board-shape-blocked { background: #191e2b; box-shadow: inset 0 0 0 1px #52617a; }
       .playtest-frame-swap { outline: 2px solid #7dd3fc; outline-offset: -2px; z-index: 1; }
     #simulationGrid .playtest-frame-swap, #simulationGrid .playtest-frame-fall, #simulationGrid .playtest-frame-refill { overflow: visible; z-index: 2; }
+    #simulationGrid .playtest-draggable { touch-action: none; cursor: grab; }
     .playtest-frame-match { outline: 2px solid #fbbf24; outline-offset: -2px; background-color: #4d3312; z-index: 1; }
   </style>
     <style>
@@ -620,7 +621,7 @@
         <button class="icon-button" id="closeSimulationButton">×</button>
       </div>
       <div id="simulationResult" class="simulation-result"></div>
-      <div id="playtestGuide" class="playtest-guide" hidden>인접 블록 두 개를 클릭해 교환하거나 특수 피스를 클릭해 발동하세요. 자동 플레이 시작 버튼으로 모드를 바꿀 수 있습니다.</div>
+      <div id="playtestGuide" class="playtest-guide" hidden>인접 칸으로 드래그해 블록이나 특수 피스를 교환하세요. 일반 블록은 두 칸을 차례로 클릭해도 교환할 수 있고, 특수 피스는 클릭하면 바로 발동합니다. 자동 플레이 시작 버튼으로 모드를 바꿀 수 있습니다.</div>
       <p id="playtestFrameStatus" role="status" style="min-height:1.3em;margin:4px 0;"></p>
       <div id="simulationGrid" class="simulation-grid"></div>
       <div class="dialog-footer">
@@ -704,7 +705,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script src="./app.js?v=99"></script>
+    <script src="./app.js?v=100"></script>
   </body>
 </html>
 
