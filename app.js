@@ -4231,19 +4231,25 @@ function runDdungTurnEvent(state, captureFrame) {
     while (row.length > 1) {
       const first = pick(row);
       const second = pick(row);
-      swapPlaytestBlocks(cave, first, second);
       motions.push({ from: first, to: second }, { from: second, to: first });
     }
-    captureFrame?.("쥐 등장 · 한 행의 블록 교환", motions.map(({ to }) => to), "swap", 450, motions);
+    const affected = motions.map(({ to }) => to);
+    captureFrame?.("쥐 등장 · 교환할 블록", affected, "swap", 550);
+    for (let pair = 0; pair < motions.length; pair += 2) {
+      const { from, to } = motions[pair];
+      swapPlaytestBlocks(cave, from, to);
+    }
+    captureFrame?.("쥐 등장 · 한 행의 블록 교환", affected, "swap", 900, motions, { type: "mouse", index: start });
     if (motions.length) resolveMatches(state, captureFrame);
   } else if (ddungEvents.spider && movesUsed % 4 === 2) {
     const cells = cave.layers.block.flatMap((id, index) => available(index) &&
       !cave.playtestPieces[index] && !isDdungTreasure(id) && id !== "ddung-dust-piece" ? [index] : []);
     if (cells.length < 2) return;
     const target = pick(cells);
+    captureFrame?.("거미 등장 · 블록을 가져갑니다", [target], "swap", 1150, [], { type: "spider", index: target });
     const hits = new Set([target]);
     resolveMatches(state, captureFrame, [target], [], {
-      hits, targetedTerrain: new Set(), directOnly: true, label: "거미 등장 · 블록 1개 제거",
+      hits, targetedTerrain: new Set(), directOnly: true, label: "거미가 가져간 칸",
     });
   }
 }
@@ -4589,6 +4595,61 @@ function startBatchReplay(cave, validation, example) {
   runAnimatedPlaytest(playtestState);
 }
 
+function animateDdungTurnActor(grid, { type, index }, duration) {
+  const cell = grid.children[index];
+  if (!cell) return;
+  const board = grid.getBoundingClientRect();
+  const target = cell.getBoundingClientRect();
+  const sprite = document.createElement("img");
+  sprite.className = "playtest-turn-actor";
+  sprite.alt = "";
+  sprite.src = `./art/ddung/turn-${type}.png`;
+  const options = { duration, fill: "both" };
+  const width = target.width * (type === "mouse" ? 1.2 : 1.05);
+  sprite.style.width = `${width}px`;
+  const y = target.top - board.top - grid.clientTop;
+  if (type === "mouse") {
+    sprite.style.left = `${board.width - width}px`;
+    sprite.style.top = `${y - target.height * 0.45}px`;
+    grid.appendChild(sprite);
+    sprite.animate([
+      { transform: "translateX(0)", opacity: 0, offset: 0 },
+      { opacity: 1, offset: 0.12 },
+      { opacity: 1, offset: 0.84 },
+      { transform: `translateX(${width - board.width}px)`, opacity: 0, offset: 1 },
+    ], options);
+    return;
+  }
+
+  const lift = y + target.height * 0.6;
+  const center = target.left - board.left - grid.clientLeft + target.width / 2;
+  const thread = document.createElement("span");
+  thread.className = "playtest-spider-thread";
+  thread.style.left = `${center}px`;
+  thread.style.height = `${lift}px`;
+  sprite.style.left = `${center - width / 2}px`;
+  sprite.style.top = `${y - target.height * 0.48}px`;
+  grid.append(thread, sprite);
+  const raised = `translateY(-${lift}px)`;
+  sprite.animate([
+    { transform: raised, opacity: 0, offset: 0 },
+    { transform: "translateY(0)", opacity: 1, offset: 0.48 },
+    { transform: "translateY(0)", opacity: 1, offset: 0.62 },
+    { transform: raised, opacity: 0, offset: 1 },
+  ], options);
+  thread.animate([
+    { transform: "scaleY(0)", offset: 0 },
+    { transform: "scaleY(1)", offset: 0.48 },
+    { transform: "scaleY(1)", offset: 0.62 },
+    { transform: "scaleY(0)", offset: 1 },
+  ], options);
+  cell.querySelector(".cell-block")?.animate([
+    { transform: "translateY(0)", opacity: 1, offset: 0 },
+    { transform: "translateY(0)", opacity: 1, offset: 0.62 },
+    { transform: raised, opacity: 0, offset: 1 },
+  ], options);
+}
+
 async function showPlaytestFrames(state, frames) {
   for (const frame of frames) {
     if (playtestState !== state || !$("simulationDialog").open) return;
@@ -4616,18 +4677,19 @@ async function showPlaytestFrames(state, frames) {
         { transform: "translate(0, 0)", opacity: 1 },
       ], { duration: delay, easing: "ease-out" }));
     }
+    if (frame.turnActor) animateDdungTurnActor(grid, frame.turnActor, delay);
     await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }
 
 async function animatePlaytestTurn(state, action) {
   const frames = [];
-  const capture = (label, cells, kind, delay = 360, motions = []) => {
+  const capture = (label, cells, kind, delay = 360, motions = [], turnActor = null) => {
     const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
     frames.push({
       cave: { ...state.cave, layers, playtestPieces: [...state.cave.playtestPieces] },
       terrainHits: [...state.terrainHits], gimmickHits: [...state.gimmickHits],
-      label, cells, kind, delay, motions,
+      label, cells, kind, delay, motions, turnActor,
     });
   };
   state.animating = true;
