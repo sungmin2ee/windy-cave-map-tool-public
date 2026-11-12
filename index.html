@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>3-Match Puzzle Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=23" />
+    <link rel="stylesheet" href="./styles.css?v=24" />
     <style>
     .object-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
     .asset-visual { position: relative; }
@@ -136,7 +136,9 @@
     .board-shape-grid > .board-shape-blocked { background: #191e2b; box-shadow: inset 0 0 0 1px #52617a; }
       .playtest-frame-swap { outline: 2px solid #7dd3fc; outline-offset: -2px; z-index: 1; }
     #simulationGrid .playtest-frame-swap, #simulationGrid .playtest-frame-fall, #simulationGrid .playtest-frame-refill { overflow: visible; z-index: 2; }
-    #caveEventBadges:not([hidden]) { display: flex; gap: 6px; margin-top: 6px; }
+    .editor-board-layout { display: grid; grid-auto-flow: column; align-items: start; gap: 14px; }
+    .editor-board-layout:has(#caveEventBadges:not([hidden])) { --cave-event-space: 46px; }
+    #caveEventBadges:not([hidden]) { display: flex; flex-direction: column; gap: 6px; }
     #caveEventBadges img:not([hidden]) {
       width: 32px;
       height: 28px;
@@ -442,10 +444,6 @@
               <div>
                 <span class="eyebrow">CURRENT CAVE</span>
                 <h1 id="currentCaveTitle">Cave 0001</h1>
-                <div id="caveEventBadges" aria-label="스테이지 기믹" hidden>
-                  <img id="caveMouseBadge" src="./art/ddung/turn-mouse.png" alt="쥐" title="쥐 · 4번 움직일 때마다 한 행의 블록 교환" hidden />
-                  <img id="caveSpiderBadge" src="./art/ddung/turn-spider.png" alt="거미" title="거미 · 2번째 이동부터 4번마다 블록 1개 제거" hidden />
-                </div>
               </div>
               <div class="canvas-meta">
                 <span id="mapSizeBadge">10 × 12</span>
@@ -454,7 +452,13 @@
             </div>
 
             <div class="grid-viewport">
-              <div id="mapGrid" class="map-grid" aria-label="Cave grid editor"></div>
+              <div class="editor-board-layout">
+                <div id="caveEventBadges" aria-label="스테이지 기믹" hidden>
+                  <img id="caveMouseBadge" src="./art/ddung/turn-mouse.png" alt="쥐" title="쥐 · 4번 움직일 때마다 한 행의 블록 교환" hidden />
+                  <img id="caveSpiderBadge" src="./art/ddung/turn-spider.png" alt="거미" title="거미 · 2번째 이동부터 4번마다 블록 1개 제거" hidden />
+                </div>
+                <div id="mapGrid" class="map-grid" aria-label="Cave grid editor"></div>
+              </div>
             </div>
 
             <div class="canvas-footer">
