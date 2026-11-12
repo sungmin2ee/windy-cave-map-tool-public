@@ -558,7 +558,9 @@
       <form id="difficultyForm">
         <fieldset id="difficultyFields">
           <fieldset>
-            <legend>1. 보드 모양 선택</legend>
+            <legend>1. 보드 크기와 모양 선택</legend>
+            <label>가로 (칸) <input id="difficultyWidth" class="field" type="number" min="4" max="20" step="1" required></label>
+            <label>세로 (칸) <input id="difficultyHeight" class="field" type="number" min="4" max="20" step="1" required></label>
             <label>대칭 <select id="difficultyShapeSymmetry" class="field"><option value="none">없음</option><option value="horizontal">좌우 대칭</option><option value="vertical">상하 대칭</option></select></label>
             <label>막힌 칸 (%) <input id="difficultyShapePercent" class="field" type="number" min="0" max="70" value="20"></label>
             <button id="difficultyShapeRefresh" class="button ghost" type="button">후보 다시 생성</button>

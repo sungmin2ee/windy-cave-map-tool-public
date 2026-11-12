@@ -1520,6 +1520,11 @@ function resizeMap() {
   const height = Math.max(4, Math.min(20, Number($("mapHeight").value)));
   if (width === cave.width && height === cave.height) return;
   snapshot();
+  resizeCaveBoard(cave, width, height);
+  renderAll(); persist(); toast(`맵 크기를 ${width} × ${height}(으)로 변경했습니다.`);
+}
+
+function resizeCaveBoard(cave, width, height) {
   const next = emptyLayers(width * height);
   for (const layer of Object.keys(next)) {
     for (let y = 0; y < Math.min(height, cave.height); y += 1) {
@@ -1537,7 +1542,6 @@ function resizeMap() {
     }));
   }
   cave.width = width; cave.height = height; cave.layers = next;
-  renderAll(); persist(); toast(`맵 크기를 ${width} × ${height}(으)로 변경했습니다.`);
 }
 
 function nextCaveNumber() {
@@ -2094,7 +2098,7 @@ function renderDifficultyCandidates(source, candidates) {
     summary.textContent = "후보 " + (index + 1) + (batch.wins ? " · 추정 난이도 " + score : " · 자동 검증 미클리어") +
       " · 자동 플레이 " + batch.runs + "회 시도 · " + batch.wins + "회 클리어 (" + batch.clearRate + "%)";
     const info = document.createElement("p");
-    info.textContent = "제한 " + cave.moveLimit + " Moves · 성공 평균 " + batch.average +
+    info.textContent = cave.width + " × " + cave.height + " · 제한 " + cave.moveLimit + " Moves · 성공 평균 " + batch.average +
       " Moves · 막힘 " + batch.stuck + "/" + batch.runs;
     const goals = document.createElement("p");
     goals.textContent = cave.objectives.map((goal) => objectiveLabel(goal) + " " + goal.count + "개").join(" · ");
@@ -2151,14 +2155,33 @@ function renderDifficultyChoices(container, layer, ids, enabled) {
 
 let difficultyShapeCells = null;
 
+function difficultyBoardSize() {
+  const width = $("difficultyWidth");
+  const height = $("difficultyHeight");
+  return width.validity.valid && height.validity.valid
+    ? { width: width.valueAsNumber, height: height.valueAsNumber } : null;
+}
+
 function renderDifficultyBoardShapes() {
   const cave = activeCave();
-  const keepPlacement = !$("difficultyAutomatic").checked && $("difficultyKeepPlacement").checked;
-  const shapeSource = keepPlacement ? cave : {
-    ...cave, externalSource: null, initialPieceTypes: {}, layers: emptyLayers(cave.width * cave.height),
-  };
+  const size = difficultyBoardSize();
   difficultyShapeCells = null;
+  $("difficultyOptions").replaceChildren();
+  $("difficultyStatus").textContent = "";
   $("difficultyShapeSelection").textContent = "생성할 보드 모양을 선택하세요.";
+  if (!size) {
+    $("difficultyShapeOptions").replaceChildren();
+    $("difficultyShapeStatus").textContent = "가로와 세로를 각각 4~20칸으로 입력하세요.";
+    return;
+  }
+  const keepPlacement = !$("difficultyAutomatic").checked && $("difficultyKeepPlacement").checked;
+  const { width, height } = size;
+  const shapeSource = keepPlacement ? deepCopy(cave) : {
+    ...cave, width, height, externalSource: null, initialPieceTypes: {}, layers: emptyLayers(width * height),
+  };
+  if (keepPlacement && (width !== cave.width || height !== cave.height)) {
+    resizeCaveBoard(shapeSource, width, height);
+  }
   renderBoardShapeCandidates(shapeSource, "difficultyShape", (cells) => {
     difficultyShapeCells = cells;
     $("difficultyShapeSelection").textContent = "선택한 모양 · 막힌 칸 " + cells.length + "개";
@@ -2166,8 +2189,11 @@ function renderDifficultyBoardShapes() {
 }
 
 function openDifficultyGenerator() {
+  const cave = activeCave();
+  $("difficultyWidth").value = cave.width;
+  $("difficultyHeight").value = cave.height;
   renderDifficultyBoardShapes();
-  const terrainIds = difficultyTerrainIds(activeCave());
+  const terrainIds = difficultyTerrainIds(cave);
   const allTerrain = [...new Set([...ASSETS.terrain.map(({ id }) => id), ...(project.paletteAssets.terrain || [])])];
   renderDifficultyChoices("difficultyTerrain", "terrain", allTerrain, (id) => terrainIds.includes(id));
   renderDifficultyChoices("difficultyGimmick", "gimmick", difficultyGimmickIds(),
@@ -2190,6 +2216,7 @@ async function generateDifficultyCandidates(event) {
   const automatic = $("difficultyAutomatic").checked;
   const keepPlacement = !automatic && $("difficultyKeepPlacement").checked;
   const shape = difficultyShapeCells;
+  const size = difficultyBoardSize();
   const pattern = $("difficultyPattern").value;
   const gimmickIds = Array.from($("difficultyGimmick").querySelectorAll("input:checked"), (input) => input.value);
   const selectedTerrain = Array.from($("difficultyTerrain").querySelectorAll("input:checked"), (input) => input.value);
@@ -2199,8 +2226,8 @@ async function generateDifficultyCandidates(event) {
   const submit = $("difficultyGenerate");
   const fields = $("difficultyFields");
   if (submit.disabled || !Number.isInteger(target) || target < 1 || target > 100) return;
-  if (!shape) {
-    status.textContent = "보드 모양 후보를 먼저 선택하세요.";
+  if (!size || !shape) {
+    status.textContent = "보드 크기를 입력하고 모양 후보를 선택하세요.";
     return;
   }
   $("difficultyOptions").replaceChildren();
@@ -2216,7 +2243,12 @@ async function generateDifficultyCandidates(event) {
   let colors = (source.usableBlocks.length ? source.usableBlocks : project.paletteAssets.block || [])
     .filter((id) => DDUNG_COLOR_IDS.includes(id) && blockWeight(source, id) > 0);
   const generationSeed = source.randomSeed + "|recommend|" + crypto.randomUUID();
-  let generationSource = { ...source, randomSeed: generationSeed, excludedCells: [...shape] };
+  const generationSource = deepCopy(source);
+  if (size.width !== source.width || size.height !== source.height) {
+    resizeCaveBoard(generationSource, size.width, size.height);
+  }
+  generationSource.randomSeed = generationSeed;
+  generationSource.excludedCells = [...shape];
   if (automatic && colors.length < 4) {
     colors = [...DDUNG_COLOR_IDS];
     generationSource.blockWeights = { ...source.blockWeights };
@@ -5476,6 +5508,9 @@ function bindInputs() {
     renderDifficultyBoardShapes();
   });
   $("difficultyKeepPlacement").addEventListener("change", renderDifficultyBoardShapes);
+  for (const id of ["difficultyWidth", "difficultyHeight"]) {
+    $(id).addEventListener("input", renderDifficultyBoardShapes);
+  }
   $("difficultyShapeRefresh").addEventListener("click", renderDifficultyBoardShapes);
   $("difficultyShapeSymmetry").addEventListener("change", renderDifficultyBoardShapes);
   $("difficultyShapePercent").addEventListener("change", renderDifficultyBoardShapes);
