@@ -2291,7 +2291,10 @@ function applyGravity(cave, state, trackMove) {
       const nextY = y + directY;
       if (nextX < 0 || nextX >= cave.width || nextY < 0 || nextY >= cave.height) continue;
       const directIndex = nextY * cave.width + nextX;
-      if (!isBarrier(cave, directIndex)) continue;
+      const blockedAhead = isBarrier(cave, directIndex);
+      const upstreamIndex = index - (directY * cave.width + directX);
+      if (!blockedAhead && !neighborsOf(cave, index).some((side) =>
+        side !== directIndex && side !== upstreamIndex && isBarrier(cave, side))) continue;
       const offsets = flowOffsets(cave, state);
       for (const [offsetX, offsetY] of offsets) {
         const targetX = x + offsetX;
@@ -2299,6 +2302,9 @@ function applyGravity(cave, state, trackMove) {
         if (targetX < 0 || targetX >= cave.width || targetY < 0 || targetY >= cave.height) continue;
         const targetIndex = targetY * cave.width + targetX;
         if (isBarrier(cave, targetIndex) || cave.layers.block[targetIndex]) continue;
+        const targetUpstream = (targetY - directY) * cave.width + targetX - directX;
+        // A gap below a barrier can receive a block from the neighboring lane.
+        if (!blockedAhead && !isBarrier(cave, targetUpstream)) continue;
         trackMove?.(index, targetIndex);
         swapPlaytestBlocks(cave, targetIndex, index);
         flowMoves += 1;
