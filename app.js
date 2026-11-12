@@ -929,6 +929,9 @@ function renderRules() {
   $("caveName").value = cave.name;
   const events = ddungTurnEvents(cave);
   $("ddungTurnEvents").hidden = !events.mouse && !events.spider;
+  $("caveEventBadges").hidden = !events.mouse && !events.spider;
+  $("caveMouseBadge").hidden = !events.mouse;
+  $("caveSpiderBadge").hidden = !events.spider;
   $("ddungTurnEvents").textContent = [
     events.mouse ? "쥐 · 사용한 이동이 4의 배수일 때 한 행의 블록 교환" : "",
     events.spider ? "거미 · 2번째 이동부터 4번마다 블록 1개 제거" : "",
