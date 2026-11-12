@@ -1946,7 +1946,9 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     );
   }
   cave.randomSeed = seed;
-  cave.usableBlocks = keepPlacement ? [...new Set([...source.usableBlocks, ...colors])] : colors;
+  colors = colors.filter((id) => DDUNG_COLOR_IDS.includes(id));
+  if (colors.length < 2) return null;
+  cave.usableBlocks = colors;
   cave.testClearMoves = 0;
 
   const terrain = cave.layers.terrain;
@@ -2219,15 +2221,15 @@ async function generateDifficultyCandidates(event) {
     return;
   }
   let colors = (source.usableBlocks.length ? source.usableBlocks : project.paletteAssets.block || [])
-    .filter((id) => blockWeight(source, id) > 0);
+    .filter((id) => DDUNG_COLOR_IDS.includes(id) && blockWeight(source, id) > 0);
   let generationSource = { ...source, excludedCells: difficultyBoardMask(source, shape, keepPlacement) };
   if (automatic && colors.length < 4) {
-    colors = [...new Set([...colors, "red", "blue", "green", "yellow", "purple"])].slice(0, 5);
+    colors = [...DDUNG_COLOR_IDS];
     generationSource.blockWeights = { ...source.blockWeights };
     for (const color of colors) if (blockWeight(source, color) <= 0) generationSource.blockWeights[color] = 1;
   }
   if (colors.length < 2) {
-    status.textContent = "사용 색상에서 생성 가중치가 0보다 큰 블록을 2종 이상 선택하세요.";
+    status.textContent = "사용 색상에서 생성 가중치가 0보다 큰 DDUNG 기본 색상을 2종 이상 선택하세요.";
     return;
   }
   if (!difficultyTerrainIds(source).length) {
@@ -2350,7 +2352,7 @@ function validateCave(cave, palette = project.paletteAssets) {
   else if (!cave.usableBlocks.some((id) => blockWeight(cave, id) > 0)) errors.push("사용 색상 중 하나 이상의 생성 가중치를 0보다 높게 설정하세요.");
   if (teleportA !== teleportB) errors.push(`Teleport A/B 개수가 다릅니다. (${teleportA}/${teleportB})`);
   if (cave.layers.block.some((block) => block && !cave.usableBlocks.includes(block))) {
-    if (isDdungSource(cave.externalSource)) warnings.push("리필 색상에 없는 고정 배치 블록이 있습니다.");
+    if (isDdungSource(cave.externalSource) || cave.generatedBlockArt === "ddung") warnings.push("리필 색상에 없는 고정 배치 블록이 있습니다.");
     else errors.push("사용 색상에서 제외된 블록이 맵에 배치되어 있습니다.");
   }
   if (cave.moveLimit < cave.parMoves) errors.push(`Moves ${cave.moveLimit}회가 권장 클리어 ${cave.parMoves}회보다 적습니다.`);
