@@ -1614,6 +1614,23 @@ function commitCaveSave(caves, activeCaveId, message) {
   persist(true, message);
 }
 
+function clearCave() {
+  const cave = activeCave();
+  if (!window.confirm(`${cave.name}의 모든 배치, 막힌 칸, 클리어 목표를 지울까요?`)) return;
+  snapshot();
+  cave.initialPieceTypes = Object.fromEntries(cave.layers.block.flatMap((_, index) =>
+    initialPieceAt(cave, index) ? [[index, null]] : []));
+  cave.layers = emptyLayers(cave.width * cave.height);
+  cave.excludedCells = [];
+  cave.generatedSpawnerOverlaps = [];
+  if (cave.externalSource?.overlappingMarkers) cave.externalSource.overlappingMarkers = {};
+  cave.objectives = [];
+  cave.testClearMoves = 0;
+  syncLegacyTarget(cave);
+  renderAll();
+  persist(true, `${cave.name}을 비웠습니다.`);
+}
+
 function deleteCave() {
   if (project.caves.length === 1) return toast("마지막 Cave는 삭제할 수 없습니다.");
   if (!window.confirm(`${activeCave().name}을(를) 삭제할까요?`)) return;
@@ -5463,6 +5480,7 @@ function bindInputs() {
   $("newCaveButton").addEventListener("click", addCave);
   $("duplicateCaveButton").addEventListener("click", duplicateCave);
   $("saveCaveAsButton").addEventListener("click", saveCaveAs);
+  $("clearCaveButton").addEventListener("click", clearCave);
   $("deleteCaveButton").addEventListener("click", deleteCave);
   $("resizeButton").addEventListener("click", resizeMap);
   $("randomizeButton").addEventListener("click", randomizeBlocks);
