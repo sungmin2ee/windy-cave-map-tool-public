@@ -136,13 +136,21 @@
     .board-shape-grid > .board-shape-blocked { background: #191e2b; box-shadow: inset 0 0 0 1px #52617a; }
       .playtest-frame-swap { outline: 2px solid #7dd3fc; outline-offset: -2px; z-index: 1; }
     #simulationGrid .playtest-frame-swap, #simulationGrid .playtest-frame-fall, #simulationGrid .playtest-frame-refill { overflow: visible; z-index: 2; }
-    .editor-board-layout { display: grid; grid-auto-flow: column; align-items: start; gap: 14px; }
-    .editor-board-layout:has(#caveEventBadges:not([hidden])) { --cave-event-space: 46px; }
-    #caveEventBadges:not([hidden]) { display: flex; flex-direction: column; gap: 6px; }
+    .editor-board-layout {
+      --cave-event-size: clamp(44px, 9cqw, 68px);
+      --cave-event-gap: 14px;
+      display: grid;
+      grid-auto-flow: column;
+      align-items: start;
+      gap: var(--cave-event-gap);
+    }
+    .editor-board-layout:has(#caveEventBadges:not([hidden])) { --cave-event-space: calc(var(--cave-event-size) + var(--cave-event-gap)); }
+    #caveEventBadges:not([hidden]) { display: flex; flex-direction: column; gap: 8px; }
     #caveEventBadges img:not([hidden]) {
-      width: 32px;
-      height: 28px;
-      padding: 3px;
+      box-sizing: border-box;
+      width: var(--cave-event-size);
+      height: var(--cave-event-size);
+      padding: 4px;
       object-fit: contain;
       border: 1px solid #34394a;
       border-radius: 6px;
