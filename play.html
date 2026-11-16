@@ -6,18 +6,23 @@
   <meta name="theme-color" content="#171d34">
   <title>DDUNG 퍼즐</title>
   <link rel="stylesheet" href="./styles.css?v=24">
-  <link rel="stylesheet" href="./play.css?v=4">
+  <link rel="stylesheet" href="./play.css?v=5">
   <script src="./app.js?v=145" defer></script>
-  <script src="./play.js?v=2" defer></script>
+  <script src="./play.js?v=3" defer></script>
 </head>
 <body data-puzzle-player>
   <main class="puzzle-shell">
     <header class="puzzle-heading">
       <div><p>DDUNG 퍼즐</p><h1 id="levelTitle">레벨 1</h1></div>
-      <div class="puzzle-moves">남은 이동<strong id="movesLeft">—</strong></div>
+      <div class="puzzle-hud">
+        <div class="puzzle-hud-card puzzle-moves">남은 이동<strong id="movesLeft">—</strong></div>
+        <section class="puzzle-hud-card" aria-labelledby="goalTitle">
+          <div id="goalTitle">목표</div>
+          <ul id="goals" class="puzzle-goals"></ul>
+        </section>
+      </div>
     </header>
     <section class="puzzle-stage" id="simulationDialog" aria-labelledby="levelTitle">
-      <div id="goals" aria-label="목표"></div>
       <div id="simulationGrid" class="simulation-grid" aria-label="퍼즐판"></div>
       <p id="playtestFrameStatus" role="status">퍼즐을 불러오는 중입니다.</p>
       <input type="hidden" id="playtestSpeed" value="1">

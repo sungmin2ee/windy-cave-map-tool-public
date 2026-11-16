@@ -22,10 +22,35 @@ function startPuzzle(index) {
   renderPlaytest();
 }
 
+function renderPuzzleGoals(state) {
+  const goals = state.cave.objectives.map((objective, index) => {
+    const asset = getAsset(objective.layer, objective.targetId, state.cave);
+    const { current, target } = state.objectiveProgress[index];
+    const goal = document.createElement("li");
+    goal.className = "puzzle-goal";
+    goal.title = asset?.name || objective.targetId;
+
+    const icon = document.createElement("span");
+    icon.className = "puzzle-goal-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = asset?.visual || "◆";
+    if (asset?.color) icon.style.color = asset.color;
+    icon.dataset.goal = objective.targetId;
+    showObjectImage(icon, asset?.image);
+
+    const count = document.createElement("strong");
+    count.textContent = `${Math.min(current, target)} / ${target}`;
+    count.setAttribute("aria-label", `${goal.title} ${target}개 중 ${Math.min(current, target)}개 달성`);
+    goal.append(icon, count);
+    return goal;
+  });
+  $("goals").replaceChildren(...goals);
+}
+
 function renderPuzzlePlayer() {
   const state = playtestState;
   $("movesLeft").textContent = state.movesLeft;
-  $("goals").innerHTML = objectiveProgressHtml(state);
+  renderPuzzleGoals(state);
 
   const playing = state.status === "playing";
   const won = state.status === "won";
