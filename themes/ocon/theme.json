@@ -1,0 +1,18 @@
+{
+  "block": {
+    "blue": "../../art/ddung/green.png",
+    "green": "../../art/ddung/blue.png",
+    "purple": "../../art/ddung/orange.png",
+    "orange": "../../art/ddung/purple.png"
+  },
+  "goals": {
+    "ddung-water": "./water-goal.png"
+  },
+  "effects": {
+    "blockBurst": {
+      "particle": "./spark.png",
+      "sound": "./pop.wav",
+      "volume": 0.65
+    }
+  }
+}
