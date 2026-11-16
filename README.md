@@ -6,6 +6,10 @@ Cave 하나를 퍼즐 레벨 하나로 편집하는 브라우저 기반 맵툴�
 
 [▶ 맵툴 실행하기](https://sungmin2ee.github.io/windy-cave-map-tool-public/)
 
+[▶ DDUNG 퍼즐 플레이](https://sungmin2ee.github.io/windy-cave-map-tool-public/play.html)
+
+퍼즐은 1번에서 시작하며, 클리어하면 다음 레벨로 진행할 수 있습니다. 현재 1~124번을 제공합니다.
+
 ## 사용법
 
 맵툴 상단의 **사용법**에서도 아래 내용을 볼 수 있습니다.

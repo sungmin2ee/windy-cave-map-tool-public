@@ -4874,6 +4874,7 @@ function playtestRemainingTargets(state) {
 }
 
 function renderPlaytest() {
+  if (document.body.dataset.puzzlePlayer !== undefined) return renderPuzzlePlayer();
   $("playtestFrameStatus").textContent = "";
   const state = playtestState;
   if (!state) return;
@@ -6654,7 +6655,7 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 }
 
-loadProject().then((loaded) => {
+if (document.body.dataset.puzzlePlayer === undefined) loadProject().then((loaded) => {
   project = loaded;
   bindInputs();
   renderAll();
