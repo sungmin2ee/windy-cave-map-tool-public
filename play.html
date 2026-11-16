@@ -7,7 +7,7 @@
   <title>DDUNG 퍼즐</title>
   <link rel="stylesheet" href="./styles.css?v=25">
   <link rel="stylesheet" href="./play.css?v=10">
-  <script type="module" src="./play.js?v=9"></script>
+  <script type="module" src="./play.js?v=10"></script>
 </head>
 <body data-puzzle-player>
   <main class="puzzle-shell">
@@ -15,8 +15,10 @@
       <div class="puzzle-level">
         <p>DDUNG 퍼즐</p>
         <h1 id="levelTitle">레벨 1</h1>
-        <label for="levelSelect">레벨 선택</label>
-        <select id="levelSelect" class="field" disabled></select>
+        <div id="levelSelectControl">
+          <label for="levelSelect">레벨 선택</label>
+          <select id="levelSelect" class="field" disabled></select>
+        </div>
       </div>
       <div class="puzzle-hud">
         <div class="puzzle-hud-card puzzle-moves">남은 이동<strong id="movesLeft">—</strong></div>

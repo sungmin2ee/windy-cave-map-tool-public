@@ -1,5 +1,5 @@
 import {
-  $, activeCave, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
+  $, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
 } from "./app.js?v=152";
@@ -11,6 +11,10 @@ const PUZZLE_GOAL_IMAGES = {
 
 const PUZZLE_PROGRESS_KEY = "ddung-puzzle-progress-v1";
 
+const puzzleParams = new URLSearchParams(location.search);
+const reportedAttempts = new WeakSet();
+let linkedPuzzle;
+let resultOrigin;
 let puzzleMaps;
 let puzzleProgress = { current: 1, bestStars: {} };
 
@@ -63,27 +67,37 @@ function clearStarCount(state) {
 let puzzleIndex = 0;
 
 function startPuzzle(index) {
+  if (linkedPuzzle) {
+    beginPuzzle(linkedPuzzle.project, linkedPuzzle.cave, linkedPuzzle.title);
+    return;
+  }
   if (!Number.isInteger(index) || index < 0 || index >= unlockedLevelCount()) {
     throw new Error("아직 열리지 않은 레벨입니다.");
   }
   const level = puzzleMaps.mapinfos[index];
   const imported = adaptImportedJson({ version: puzzleMaps.version, mapinfos: [level] });
-  setPuzzleProject(imported.project);
-  const cave = activeCave();
+  if (imported.unknownTokens.length) throw new Error("읽을 수 없는 타일이 있습니다.");
+  puzzleIndex = index;
+  beginPuzzle(imported.project, imported.project.caves[0], `레벨 ${level.level}`);
+}
+
+function beginPuzzle(mapProject, cave, title) {
+  setPuzzleProject(mapProject);
   const validation = validateCave(cave);
-  if (validation.errors.length || validation.unsupported.length || imported.unknownTokens.length) {
-    throw new Error("이 레벨을 불러올 수 없습니다.");
+  if (validation.errors.length || validation.unsupported.length) {
+    throw new Error("이 레벨을 플레이할 수 없습니다. 맵툴의 검증 결과를 확인해 주세요.");
   }
 
   const state = createPlayState(cave, crypto.randomUUID(), true);
   $("clearDialog").close();
-  puzzleIndex = index;
   setPuzzlePlaytestState(state);
-  playtestState.validation = validation;
-  $("levelTitle").textContent = `레벨 ${level.level}`;
-  puzzleProgress.current = level.level;
-  savePuzzleProgress();
-  renderLevelSelect();
+  state.validation = validation;
+  $("levelTitle").textContent = title;
+  if (!linkedPuzzle) {
+    puzzleProgress.current = puzzleMaps.mapinfos[puzzleIndex].level;
+    savePuzzleProgress();
+    renderLevelSelect();
+  }
   renderPlaytest();
 }
 
@@ -119,7 +133,7 @@ function renderPuzzlePlayer() {
 
   const playing = state.status === "playing";
   const won = state.status === "won";
-  const hasNext = puzzleIndex + 1 < puzzleMaps.mapinfos.length;
+  const hasNext = !linkedPuzzle && puzzleIndex + 1 < puzzleMaps.mapinfos.length;
 
   $("playtestFrameStatus").textContent = won
     ? (hasNext ? "클리어!" : "준비된 레벨을 모두 클리어했어요!")
@@ -130,17 +144,20 @@ function renderPuzzlePlayer() {
   $("hint").hidden = !playing;
   $("next").hidden = !won || !hasNext;
   renderSimulationGrid(state.cave, playing);
+  if (!playing) reportPuzzleResult(state, won);
 
   const dialog = $("clearDialog");
   if (won && !dialog.open) {
-    const level = puzzleMaps.mapinfos[puzzleIndex].level;
     const stars = clearStarCount(state);
-    puzzleProgress.bestStars[level] = Math.max(stars, puzzleProgress.bestStars[level] || 0);
-    savePuzzleProgress();
-    renderLevelSelect();
+    if (!linkedPuzzle) {
+      const level = puzzleMaps.mapinfos[puzzleIndex].level;
+      puzzleProgress.bestStars[level] = Math.max(stars, puzzleProgress.bestStars[level] || 0);
+      savePuzzleProgress();
+      renderLevelSelect();
+    }
     $("clearStars").textContent = "★".repeat(stars) + "☆".repeat(3 - stars);
     $("clearStars").setAttribute("aria-label", `별 ${stars}개`);
-    $("clearMessage").textContent = hasNext
+    $("clearMessage").textContent = linkedPuzzle || hasNext
       ? `${$("levelTitle").textContent}의 목표를 달성했어요.`
       : "준비된 레벨을 모두 클리어했어요!";
     $("clearError").textContent = "";
@@ -185,7 +202,7 @@ function puzzleArtworkImages(entries, base) {
 }
 
 async function loadPuzzleArtwork() {
-  const path = new URLSearchParams(location.search).get("theme");
+  const path = puzzleParams.get("theme");
   if (!path) return;
 
   try {
@@ -213,8 +230,75 @@ async function loadPuzzleArtwork() {
   }
 }
 
+function reportPuzzleResult(state, success) {
+  if (!linkedPuzzle || !resultOrigin || reportedAttempts.has(state)) return;
+  const receiver = window.parent !== window ? window.parent : window.opener;
+  if (!receiver) return;
+
+  reportedAttempts.add(state);
+  receiver.postMessage({
+    type: "windy-cave:puzzle-result",
+    version: 1,
+    requestId: puzzleParams.get("requestId"),
+    levelId: linkedPuzzle.cave.id,
+    level: linkedPuzzle.cave.number,
+    success,
+    movesUsed: state.cave.moveLimit - state.movesLeft,
+    stars: success ? clearStarCount(state) : 0,
+  }, resultOrigin);
+}
+
+function readResultOrigin() {
+  const value = puzzleParams.get("resultOrigin");
+  if (!value) return null;
+  const url = new URL(value);
+  if (!["http:", "https:"].includes(url.protocol) || url.origin !== value) {
+    throw new Error("결과를 받을 게임의 주소는 경로 없이 입력해 주세요.");
+  }
+  return url.origin;
+}
+
+async function loadLinkedPuzzle(mapPath, levelKey) {
+  resultOrigin = readResultOrigin();
+  const url = new URL(mapPath || "./play-maps.json?v=2", location.href);
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new Error("맵 JSON의 HTTP 또는 HTTPS 주소를 입력해 주세요.");
+  }
+
+  const [response] = await Promise.all([fetch(url, { credentials: "omit" }), loadPuzzleArtwork()]);
+  if (!response.ok) throw new Error(`맵 JSON을 읽을 수 없습니다 (HTTP ${response.status}).`);
+  const data = await response.json();
+  let imported;
+  if (Array.isArray(data?.mapinfos)) {
+    const raw = data.mapinfos.find((entry) => !levelKey || String(entry.level) === levelKey || `ddung-level-${entry.level}` === levelKey);
+    if (!raw) throw new Error("JSON에 지정된 레벨이 없습니다.");
+    imported = adaptImportedJson({ ...data, mapinfos: [raw] });
+  } else if (Array.isArray(data?.caves) && data.caves.length) {
+    imported = adaptImportedJson(data);
+  } else {
+    throw new Error("맵툴의 전체 레벨 내보내기 JSON을 사용해 주세요.");
+  }
+  if (imported.unknownTokens.length) throw new Error("읽을 수 없는 타일이 있습니다.");
+  const mapProject = imported.project;
+  const cave = levelKey
+    ? mapProject.caves.find(({ id }) => id === levelKey) || mapProject.caves.find(({ number }) => String(number) === levelKey)
+    : mapProject.caves.find(({ id }) => id === mapProject.activeCaveId);
+  if (!cave) throw new Error("JSON에 지정된 레벨이 없습니다.");
+
+  mapProject.activeCaveId = cave.id;
+  linkedPuzzle = { project: mapProject, cave, title: cave.name || `레벨 ${cave.number}` };
+  $("levelSelectControl").hidden = true;
+  beginPuzzle(mapProject, cave, linkedPuzzle.title);
+}
+
 async function loadPuzzleMaps() {
   try {
+    const mapPath = puzzleParams.get("map");
+    const levelKey = puzzleParams.get("level");
+    if (mapPath || levelKey) {
+      await loadLinkedPuzzle(mapPath, levelKey);
+      return;
+    }
     const [response] = await Promise.all([fetch("./play-maps.json?v=2"), loadPuzzleArtwork()]);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     puzzleMaps = await response.json();
@@ -223,7 +307,9 @@ async function loadPuzzleMaps() {
     startPuzzle(puzzleProgress.current - 1);
   } catch (error) {
     console.error(error);
-    $("playtestFrameStatus").textContent = "퍼즐을 불러오지 못했어요. 페이지를 새로고침해 주세요.";
+    $("playtestFrameStatus").textContent = puzzleParams.has("map") || puzzleParams.has("level")
+      ? `퍼즐을 불러오지 못했어요. ${error.message}`
+      : "퍼즐을 불러오지 못했어요. 페이지를 새로고침해 주세요.";
   }
 }
 

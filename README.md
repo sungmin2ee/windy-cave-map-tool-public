@@ -72,6 +72,34 @@ Cave 하나를 퍼즐 레벨 하나로 편집하는 브라우저 기반 맵툴�
 
 필요한 항목만 지정하면 됩니다. 블록 ID와 맵의 설정은 그대로이며, 테마 링크에서도 같은 브라우저의 진행 기록을 사용합니다.
 
+## 다른 게임에서 레벨 실행하기
+
+맵툴에서 **전체 레벨 JSON으로 내보내기**를 선택해 파일을 호스팅합니다. 같은 GitHub Pages에 올리거나, 다른 호스트에서 퍼즐 사이트의 CORS 요청을 허용하면 됩니다. 아래 예제는 iframe에 JSON의 7번 Cave를 바로 엽니다. `level`에는 Cave 번호 또는 ID를 넣을 수 있고, 생략하면 JSON에 저장된 현재 Cave를 엽니다. `theme`도 기존 방식으로 함께 지정할 수 있습니다.
+
+```html
+<iframe id="puzzle" title="퍼즐 게임"></iframe>
+<script>
+  const frame = document.getElementById("puzzle");
+  const url = new URL("https://sungmin2ee.github.io/windy-cave-map-tool-public/play.html");
+  url.searchParams.set("map", "./maps/ocon.json");
+  url.searchParams.set("level", "7");
+  url.searchParams.set("resultOrigin", location.origin);
+  const requestId = crypto.randomUUID();
+  url.searchParams.set("requestId", requestId);
+
+  window.addEventListener("message", (event) => {
+    if (event.origin !== url.origin || event.source !== frame.contentWindow) return;
+    const result = event.data;
+    if (result?.type !== "windy-cave:puzzle-result" ||
+        result.version !== 1 || result.requestId !== requestId) return;
+    console.log(result.levelId, result.level, result.success, result.movesUsed, result.stars);
+  });
+  frame.src = url.href;
+</script>
+```
+
+`resultOrigin`은 결과를 받을 게임의 오리진입니다. 호출한 iframe의 부모 창이나 팝업을 연 창에 한 판당 한 번 전송합니다. 실패하면 `success: false`, `stars: 0`입니다. 다시 시작해 끝낸 판은 별도의 결과를 보냅니다. 지정 레벨은 기본 캠페인의 진행 기록을 읽거나 저장하지 않습니다. 메시지는 브라우저에서 발생한 게임 결과이므로, 서버에서 지급하는 보상의 증빙이 필요하다면 호출 게임이 별도로 검증해야 합니다.
+
 ## 로컬 실행
 
 저장소 루트에서 정적 HTTP 서버를 실행합니다.
