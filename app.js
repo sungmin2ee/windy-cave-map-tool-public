@@ -4653,9 +4653,13 @@ function animateDdungTurnActor(grid, { type, index }, duration) {
   ], options);
 }
 
+function playtestIsVisible() {
+  return document.body.dataset.puzzlePlayer !== undefined || $("simulationDialog").open;
+}
+
 async function showPlaytestFrames(state, frames) {
   for (const frame of frames) {
-    if (playtestState !== state || !$("simulationDialog").open) return;
+    if (playtestState !== state || !playtestIsVisible()) return;
     renderSimulationGrid(frame.cave, false, [], frame);
     const grid = $("simulationGrid");
     $("playtestFrameStatus").textContent = frame.label;
@@ -4701,7 +4705,7 @@ async function animatePlaytestTurn(state, action) {
     await showPlaytestFrames(state, frames);
   } finally {
     state.animating = false;
-    if (playtestState === state && $("simulationDialog").open) renderPlaytest();
+    if (playtestState === state && playtestIsVisible()) renderPlaytest();
   }
 }
 

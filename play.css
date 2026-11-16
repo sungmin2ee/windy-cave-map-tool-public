@@ -157,27 +157,29 @@
 body[data-puzzle-player] {
   min-height: 100dvh;
   margin: 0;
+  overflow-y: auto;
   background: radial-gradient(ellipse at top, #253260, #111526 58%);
   color: #f7f4ff;
   font-family: "DM Sans", system-ui, sans-serif;
 }
-.puzzle-shell { width: min(100% - 24px, 740px); margin: auto; padding: clamp(20px, 5vw, 46px) 0; }
+.puzzle-shell { width: min(calc(100% - 24px), 640px); margin: auto; padding: clamp(20px, 5vw, 46px) 0; }
 .puzzle-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
 .puzzle-heading p { color: #c6c0dc; margin: 0 0 4px; font-size: .88rem; }
 .puzzle-heading h1 { margin: 0; font-size: clamp(1.6rem, 6vw, 2.5rem); }
 .puzzle-moves { text-align: center; min-width: 76px; }
 .puzzle-moves strong { display: block; font-size: 1.65rem; }
-.puzzle-stage { position: static; width: 100%; max-width: none; margin: 16px 0 0; padding: 14px; border: 1px solid #424969; border-radius: 18px; background: #171d34; color: inherit; }
+.puzzle-stage { width: 100%; min-width: 0; margin: 16px 0 0; padding: 14px; border: 1px solid #424969; border-radius: 18px; background: #171d34; color: inherit; }
 .puzzle-stage .simulation-grid {
-  --cell-size: clamp(14px, min(calc((100vw - 68px) / var(--board-columns) - 3px), calc(680px / var(--board-columns) - 3px), calc(57dvh / var(--board-rows) - 3px)), 65px);
+  --cell-size: min(calc(100% / var(--board-columns) - 3px), clamp(26px, calc(57dvh / var(--board-rows) - 3px), 65px));
   max-height: none;
   margin: 10px 0;
   overflow: visible;
 }
-.puzzle-stage .map-cell { border-radius: clamp(3px, 1vw, 8px); }
+.puzzle-stage .simulation-grid .map-cell { width: 100%; height: auto; min-width: 0; aspect-ratio: 1; border-radius: clamp(3px, 1vw, 8px); }
 #playtestFrameStatus { min-height: 1.5em; margin: 0; text-align: center; color: #e3dfff; font-size: .9rem; }
 .puzzle-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 14px; }
 .puzzle-actions button { min-height: 42px; }
 .puzzle-actions button[hidden] { display: none; }
 .puzzle-help { text-align: center; font-size: .85rem; color: #cfc9e2; }
 .puzzle-stage .objective-progress { margin: 0 auto; max-width: 420px; }
+.puzzle-stage .objective-progress-row span { white-space: normal; overflow-wrap: anywhere; }
