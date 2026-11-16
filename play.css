@@ -217,20 +217,3 @@ body[data-puzzle-player] {
 .puzzle-goal { display: grid; justify-items: center; min-width: 44px; white-space: nowrap; }
 .puzzle-goal-icon { position: relative; display: grid; place-items: center; width: 28px; height: 28px; font-size: 18px; }
 .puzzle-goal-icon.has-object-image { color: transparent !important; }
-
-.puzzle-goal-icon[data-goal="ddung-oak"],
-.puzzle-goal-icon[data-goal="ddung-dust-piece"] { color: transparent !important; }
-.puzzle-goal-icon[data-goal="ddung-oak"] {
-  background:
-    radial-gradient(ellipse at 50% 36%, #a4d76e 0 21%, transparent 24%),
-    radial-gradient(ellipse at 34% 54%, #75ad4a 0 21%, transparent 25%),
-    radial-gradient(ellipse at 67% 54%, #5e963a 0 21%, transparent 25%),
-    linear-gradient(#96734d, #61442d) center 81% / 4px 9px no-repeat;
-}
-.puzzle-goal-icon[data-goal="ddung-dust-piece"] {
-  background:
-    radial-gradient(circle at 35% 56%, #aaa5b3 0 18%, transparent 22%),
-    radial-gradient(circle at 53% 41%, #e4dfeb 0 23%, transparent 27%),
-    radial-gradient(circle at 66% 60%, #c1bbc9 0 23%, transparent 27%),
-    radial-gradient(circle at 46% 71%, #a09ba8 0 18%, transparent 22%);
-}

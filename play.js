@@ -1,5 +1,10 @@
 "use strict";
 
+const PUZZLE_GOAL_IMAGES = {
+  "ddung-oak": "./art/ddung/goal-oak.png",
+  "ddung-dust-piece": "./art/ddung/goal-dust.png",
+};
+
 let puzzleMaps;
 let puzzleIndex = 0;
 
@@ -35,8 +40,7 @@ function renderPuzzleGoals(state) {
     icon.setAttribute("aria-hidden", "true");
     icon.textContent = asset?.visual || "◆";
     if (asset?.color) icon.style.color = asset.color;
-    icon.dataset.goal = objective.targetId;
-    showObjectImage(icon, asset?.image);
+    showObjectImage(icon, PUZZLE_GOAL_IMAGES[objective.targetId] || asset?.image);
 
     const count = document.createElement("strong");
     count.textContent = `${Math.min(current, target)} / ${target}`;
