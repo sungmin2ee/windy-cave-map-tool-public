@@ -1,4 +1,4 @@
-import { createGameEngine } from "./game-engine.js?v=3";
+import { createGameEngine } from "./game-engine.js?v=4";
 
 const {
   SPAWNER_ID,
@@ -71,7 +71,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.47";
+const CLIENT_VERSION = "2.7.48";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -248,6 +248,7 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
     usableBlocks: [],
     levelSettings: normalizeLevelSettings({}),
     objectives: [],
+    scoreTarget: null, pointsPerBlock: 100,
     targetType: null, targetCount: 0,
     moveLimit: 20, parMoves: 14, testClearMoves: 0,
     simulationRuns: 30,
@@ -576,6 +577,9 @@ function normalizeCave(data, index = 0, ddungProject = false, packedCatalog = {}
     id: source.id || crypto.randomUUID(),
     name: String(source.name || `Cave ${String(index + 1).padStart(4, "0")}`),
     width, height, gravity: normalizeGravity(source.gravity), layers, excludedCells,
+    scoreTarget: Number.isSafeInteger(source.scoreTarget) && source.scoreTarget > 0 ? source.scoreTarget : null,
+    pointsPerBlock: Number.isInteger(source.pointsPerBlock) && source.pointsPerBlock >= 1 && source.pointsPerBlock <= 1000000
+      ? source.pointsPerBlock : 100,
     levelSettings: normalizeLevelSettings(source),
     specialMatches: source.specialMatches ?? true,
     usableBlocks: [...new Set(usableBlocks)],
@@ -905,6 +909,7 @@ function renderRules() {
   ].filter(Boolean).join(" / ");
   $("mapWidth").value = cave.width;
   $("mapHeight").value = cave.height;
+  renderClearMode(cave);
   renderObjectives();
   $("moveLimit").value = cave.moveLimit;
   $("parMoves").value = cave.parMoves;
@@ -2388,7 +2393,7 @@ async function generateDifficultyCandidates(event) {
       const cave = buildDifficultyCandidate(generationSource, colors, target, attempt, keepPlacement,
         options.pattern, options.gimmicks, options.terrain);
       if (!cave) continue;
-      const signature = JSON.stringify([cave.layers, cave.objectives, cave.moveLimit]);
+      const signature = JSON.stringify([cave.layers, cave.objectives, cave.moveLimit, cave.scoreTarget, cave.pointsPerBlock]);
       if (signatures.has(signature)) continue;
       signatures.add(signature);
       const results = [];
@@ -2416,7 +2421,7 @@ async function generateDifficultyCandidates(event) {
   }
 }
 
-function analyzeDifficulty(cave) {
+function analyzeDifficulty(cave, scoreTarget = cave.scoreTarget) {
   const totalBlocks = cave.layers.block.filter(Boolean).length;
   const usedColors = new Set(cave.layers.block.filter(Boolean));
   const gimmickCount = cave.layers.gimmick.filter(Boolean).length;
@@ -2425,7 +2430,7 @@ function analyzeDifficulty(cave) {
   const referenceMoves = cave.testClearMoves > 0 ? cave.testClearMoves : cave.parMoves;
   const slack = cave.moveLimit - referenceMoves;
   const budgetRatio = cave.moveLimit / Math.max(1, referenceMoves);
-  const objectiveWork = cave.objectives.reduce((sum, objective) => {
+  const objectiveWork = scoreTarget != null ? Math.ceil(scoreTarget / cave.pointsPerBlock) : cave.objectives.reduce((sum, objective) => {
     const count = resolvedObjectiveCount(cave, objective);
     if (objective.layer !== "terrain") return sum + count;
     const durability = cave.terrainRules?.[objective.targetId]?.durability || 1;
@@ -2449,19 +2454,20 @@ function analyzeDifficulty(cave) {
   return { ...levels, score, slack, budgetRatio, totalBlocks, usedColors: usedColors.size, gimmickCount, itemCount, referenceMoves, objectiveWork };
 }
 
-function validateCave(cave, palette = project.paletteAssets) {
+function validateCave(cave, palette = project.paletteAssets, scoreTarget = cave.scoreTarget ?? null) {
   const errors = [];
   const warnings = [];
   const unsupported = [];
-  const analysis = analyzeDifficulty(cave);
+  const analysis = analyzeDifficulty(cave, scoreTarget);
   const teleportA = cave.layers.gimmick.filter((value, index) => value === "teleport-a" || ddungMarkersAt(cave, index).includes("teleport-a")).length;
   const teleportB = cave.layers.gimmick.filter((value, index) => value === "teleport-b" || ddungMarkersAt(cave, index).includes("teleport-b")).length;
   const initialMatches = findMatches(cave).size;
   if (!analysis.totalBlocks) errors.push("퍼즐 블록이 하나도 없습니다.");
-  if (!cave.objectives.length) errors.push("목표를 하나 이상 설정해야 합니다.");
-  if (cave.objectives.length > MAX_OBJECTIVES) errors.push(`목표는 최대 ${MAX_OBJECTIVES}개까지 설정할 수 있습니다.`);
+  const objectives = scoreTarget === null ? cave.objectives : [];
+  if (scoreTarget === null && !objectives.length) errors.push("목표를 하나 이상 설정해야 합니다.");
+  if (objectives.length > MAX_OBJECTIVES) errors.push(`목표는 최대 ${MAX_OBJECTIVES}개까지 설정할 수 있습니다.`);
   const objectiveKeys = new Set();
-  cave.objectives.forEach((objective) => {
+  objectives.forEach((objective) => {
     const label = objectiveLabel(objective);
     const key = `${objective.layer}:${objective.targetId}:${objective.action}`;
     const placed = countObjectiveAssets(cave, objective);
@@ -2622,7 +2628,9 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
     const baseline = blocked ? null : readValidationBaseline(cave);
     const simulationCave = baseline ? { ...cave, randomSeed: baseline.seed } : cave;
     const batch = blocked ? null : runBatchSimulation(simulationCave, baseline?.runs ?? cave.simulationRuns);
-    const objectiveSummary = cave.objectives.map((objective) => `${escapeHtml(objectiveLabel(objective))} × ${resolvedObjectiveCount(cave, objective)}`).join(" · ");
+    const objectiveSummary = cave.scoreTarget != null
+      ? `${cave.scoreTarget}점 · 블록당 ${cave.pointsPerBlock}점`
+      : cave.objectives.map((objective) => `${escapeHtml(objectiveLabel(objective))} × ${resolvedObjectiveCount(cave, objective)}`).join(" · ");
     const result = $("simulationResult");
     result.className = `simulation-result ${blocked ? "error" : validation.warnings.length ? "warning" : "success"}`;
     result.innerHTML = `
@@ -2673,6 +2681,9 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
 }
 
 function objectiveProgressHtml(state) {
+  if (state.scoreTarget !== null) {
+    return `<div>점수 <b>${state.blocksRemoved * state.pointsPerBlock}</b> / ${state.scoreTarget}</div>`;
+  }
   return `<div class="objective-progress">${state.cave.objectives.map((objective, index) => {
     const progress = state.objectiveProgress[index];
     if (state.goalLimitations[index]) return `<div class="objective-progress-row"><span>${escapeHtml(objectiveLabel(objective))}</span><span></span><b>판정 미지원</b></div>`;
@@ -3174,9 +3185,9 @@ function renderPlaytest() {
   const state = playtestState;
   if (!state) return;
   const failed = state.status === "lost" || state.status === "stuck";
-  const remainingTargets = failed ? playtestRemainingTargets(state) : [];
+  const remainingTargets = failed && state.scoreTarget === null ? playtestRemainingTargets(state) : [];
   const usedMoves = state.cave.moveLimit - state.movesLeft;
-  const practice = state.goalLimitations.some(Boolean);
+  const practice = state.scoreTarget === null && state.goalLimitations.some(Boolean);
   const flowLabels = { "left-first": "왼쪽/위 우선", "right-first": "오른쪽/아래 우선", alternate: "교대", "seeded-random": "시드 랜덤", none: "우회 없음" };
   const result = $("simulationResult");
   result.className = `simulation-result ${state.status === "won" ? "success" : ["lost", "stuck"].includes(state.status) ? "error" : "warning"}`;
@@ -3334,6 +3345,11 @@ function buildDdungLevelExport(cave) {
 function exportGridTilesProfile() {
   const cave = activeCave();
   try {
+    if (cave.scoreTarget != null) {
+      const payload = buildProjectExport({ ...project, caves: [cave], activeCaveId: cave.id });
+      downloadJson(payload, `windy-cave-${cave.number}.json`);
+      return;
+    }
     if (isDdungSource(cave.externalSource) && cave.externalSource.rawMap) {
       downloadJson(buildDdungLevelExport(cave), "DDUNG-level-" + cave.externalSource.sourceId + ".json");
       return;
@@ -3346,24 +3362,27 @@ function exportGridTilesProfile() {
   }
 }
 
-function exportProject() {
-  persist();
-  const payload = {
-    ...project,
+function buildProjectExport(projectData) {
+  return {
+    ...projectData,
     schema: `windy-cave-map-tool/v${SCHEMA_VERSION}`,
     schemaVersion: SCHEMA_VERSION,
-    contentVersion: project.version,
+    contentVersion: projectData.version,
     minimumClientVersion: CLIENT_VERSION,
     exportedAt: new Date().toISOString(),
   };
-  downloadJson(payload, `windy-caves-${project.version.toLowerCase()}.json`);
+}
+
+function exportProject() {
+  persist();
+  downloadJson(buildProjectExport(project), `windy-caves-${project.version.toLowerCase()}.json`);
   toast("프로젝트 JSON을 내보냈습니다.");
 }
 
 function describePatchChanges(previous, cave) {
   const groups = [
     ["보드 배치", ["layers", "excludedCells", "width", "height", "initialPieceTypes", "initialPieceDefinitions", "specialMatches"]],
-    ["클리어 목표", ["objectives", "targetType", "targetCount"]],
+    ["클리어 목표", ["objectives", "targetType", "targetCount", "scoreTarget", "pointsPerBlock"]],
     ["이동 횟수", ["moveLimit", "parMoves", "testClearMoves"]],
   ];
   const changed = (key) => JSON.stringify(previous[key]) !== JSON.stringify(cave[key]);
@@ -4408,6 +4427,9 @@ function bindInputs() {
   });
   $("caveName").addEventListener("change", (event) => { snapshot(); activeCave().name = event.target.value.trim() || "Untitled Cave"; renderAll(); persist(); });
   $("addObjectiveButton").addEventListener("click", () => addObjective());
+  for (const id of ["clearMode", "caveScoreTarget", "cavePointsPerBlock"]) {
+    $(id).addEventListener("change", updateClearMode);
+  }
   $("moveLimit").addEventListener("change", updateRule);
   $("parMoves").addEventListener("change", updateRule);
   $("testClearMoves").addEventListener("change", updateRule);
@@ -4464,6 +4486,33 @@ function updateRandomSettings() {
   activeCave().randomSeed = $("randomSeed").value.trim() || activeCave().randomSeed;
   activeCave().randomDensity = clampNumber($("randomDensity").value, 100, 10, 100);
   renderRules(); persist();
+}
+
+function renderClearMode(cave) {
+  const scoreMode = cave.scoreTarget != null;
+  $("clearMode").value = scoreMode ? "score" : "mission";
+  $("scoreSettings").hidden = !scoreMode;
+  $("missionSettings").hidden = scoreMode;
+  $("caveScoreTarget").value = cave.scoreTarget ?? 500;
+  $("cavePointsPerBlock").value = cave.pointsPerBlock;
+}
+
+function updateClearMode() {
+  const cave = activeCave();
+  const scoreMode = $("clearMode").value === "score";
+  const target = $("caveScoreTarget").valueAsNumber;
+  const points = $("cavePointsPerBlock").valueAsNumber;
+  if (scoreMode && (!Number.isSafeInteger(target) || target < 1 || !Number.isInteger(points) || points < 1 || points > 1000000)) {
+    toast("목표 점수와 블록당 점수는 입력 범위 내의 양의 정수여야 합니다.");
+    renderClearMode(cave);
+    return;
+  }
+  snapshot();
+  cave.scoreTarget = scoreMode ? target : null;
+  if (scoreMode) cave.pointsPerBlock = points;
+  renderClearMode(cave);
+  renderDifficultySummary(cave);
+  persist();
 }
 
 function updateRule() {

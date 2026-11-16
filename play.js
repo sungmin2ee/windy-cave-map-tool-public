@@ -3,7 +3,7 @@ import {
   $, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
-} from "./app.js?v=156";
+} from "./app.js?v=157";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.webp",
@@ -19,7 +19,6 @@ const puzzleEffects = createPuzzleEffects();
 const reportedAttempts = new WeakSet();
 let rules = {
   threeStars: 0.25, twoStars: 0.10, pointsPerGoalUnit: 0, pointsPerMoveLeft: 0,
-  scoreTarget: null, pointsPerBlock: 100,
 };
 let versions = { mapVersion: null, themeVersion: null };
 let linkedPuzzle;
@@ -99,7 +98,11 @@ function startPuzzle(index) {
 
 function beginPuzzle(mapProject, cave, title) {
   setPuzzleProject(mapProject);
-  const validation = validateCave(cave);
+  const scoreTarget = rules.scoreTarget === undefined ? cave.scoreTarget : rules.scoreTarget;
+  if (scoreTarget != null && rules.pointsPerBlock === 0) {
+    throw new Error("점수제의 블록당 점수는 1점 이상이어야 합니다.");
+  }
+  const validation = validateCave(cave, mapProject.paletteAssets, scoreTarget);
   if (validation.errors.length || validation.unsupported.length) {
     throw new Error("이 레벨을 플레이할 수 없습니다. 맵툴의 검증 결과를 확인해 주세요.");
   }
@@ -341,7 +344,7 @@ async function loadPuzzleRules() {
   if (!response.ok) throw new Error(`규칙 JSON을 읽을 수 없습니다 (HTTP ${response.status}).`);
   const overrides = await response.json();
   const configured = { ...rules, ...overrides };
-  const { threeStars, twoStars, pointsPerGoalUnit, pointsPerMoveLeft, scoreTarget, pointsPerBlock } = configured;
+  const { threeStars, twoStars, pointsPerGoalUnit, pointsPerMoveLeft, scoreTarget = null, pointsPerBlock = 100 } = configured;
   if (!overrides || typeof overrides !== "object" || Array.isArray(overrides) ||
       !Number.isFinite(twoStars) || !Number.isFinite(threeStars) ||
       twoStars < 0 || threeStars > 1 || twoStars > threeStars ||

@@ -1133,6 +1133,7 @@ export function createGameEngine(getProject) {
     const clearableCells = [...hits].filter((index) => !isBarrier(cave, index) && !isDdungTreasure(cave.layers.block[index]));
     const removedBlocks = new Set(clearableCells.filter((index) => cave.layers.block[index] && !created.has(index) &&
       blockMatchKey(cave, index) === cave.layers.block[index]));
+    if (state.scoreTarget !== null) return { progress: removedBlocks.size, damage: 0, hitCount: hits.size };
     const terrain = goals.some(({ objective }) => objective.layer === "terrain")
       ? [...terrainHitResults(state, hits, targetedTerrain, removedBlocks, bombPanelIndex, specialHits)] : [];
     const gimmicks = goals.some(({ objective }) => objective.layer === "gimmick")
@@ -1556,9 +1557,9 @@ export function createGameEngine(getProject) {
 
   function chooseAutoAction(state) {
     const cave = state.cave;
-    const goals = cave.objectives.map((objective, index) => ({
+    const goals = state.scoreTarget === null ? cave.objectives.map((objective, index) => ({
       objective, remaining: remainingObjectiveCount(state, objective, index),
-    })).filter(({ remaining }) => remaining > 0);
+    })).filter(({ remaining }) => remaining > 0) : [];
     const candidates = listPossibleSwaps(state, false, goals);
     cave.layers.terrain.forEach((_, index) => {
       if (!bombPanelReady(state, index)) return;
@@ -1780,7 +1781,7 @@ export function createGameEngine(getProject) {
     }
   }
 
-  function createPlayState(cave, seedSuffix, manual = false, { scoreTarget = null, pointsPerBlock = 0 } = {}) {
+  function createPlayState(cave, seedSuffix, manual = false, { scoreTarget = cave.scoreTarget ?? null, pointsPerBlock = cave.pointsPerBlock ?? 100 } = {}) {
     const copy = deepCopy(cave);
     copy.layers.block.forEach((id, index) => {
       const item = copy.layers.item[index];

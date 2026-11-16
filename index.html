@@ -331,7 +331,18 @@
             </select>
             <small class="rule-help">중력 방향이 아래/위면 좌우, 왼쪽/오른쪽이면 위아래 통로를 뜻합니다.</small>
 
-            <div class="objective-panel">
+            <label class="field-label spaced" for="clearMode">클리어 방식</label>
+            <select class="field" id="clearMode">
+              <option value="mission">기존 미션</option>
+              <option value="score">목표 점수</option>
+            </select>
+            <div id="scoreSettings" hidden>
+              <div class="field-row">
+                <label><span class="field-label">목표 점수</span><input class="field" id="caveScoreTarget" type="number" min="1" max="9007199254740991" step="1" /></label>
+                <label><span class="field-label">블록당 점수</span><input class="field" id="cavePointsPerBlock" type="number" min="1" max="1000000" step="1" /></label>
+              </div>
+            </div>
+            <div class="objective-panel" id="missionSettings">
               <div class="objective-header">
                 <div>
                   <span class="field-label">클리어 목표</span>
@@ -920,7 +931,7 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script type="module" src="./app.js?v=156"></script>
+    <script type="module" src="./app.js?v=157"></script>
   </body>
 </html>
 
