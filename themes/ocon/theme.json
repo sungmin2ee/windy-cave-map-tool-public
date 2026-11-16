@@ -1,16 +1,17 @@
 {
+  "version": "1",
   "block": {
-    "blue": "../../art/ddung/green.png",
-    "green": "../../art/ddung/blue.png",
-    "purple": "../../art/ddung/orange.png",
-    "orange": "../../art/ddung/purple.png"
+    "blue": "../../art/ddung/green.webp",
+    "green": "../../art/ddung/blue.webp",
+    "purple": "../../art/ddung/orange.webp",
+    "orange": "../../art/ddung/purple.webp"
   },
   "goals": {
-    "ddung-water": "./water-goal.png"
+    "ddung-water": "./water-goal.webp"
   },
   "effects": {
     "blockBurst": {
-      "particle": "./spark.png",
+      "particle": "./spark.webp",
       "sound": "./pop.wav",
       "volume": 0.65
     }

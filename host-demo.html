@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>퍼즐 연동 데모</title>
+  <link rel="stylesheet" href="./host-demo.css">
+  <script type="module" src="./host-demo.js"></script>
+</head>
+<body>
+  <main>
+    <section id="lobby">
+      <h1>퍼즐 연동 데모</h1>
+      <p>게임 화면에서 퍼즐을 열고 돌아오면 여기서 결과와 예제 보상을 확인할 수 있어요.</p>
+      <form id="launch">
+        <label>맵 JSON <input name="map" value="./play-maps.json?v=2" required></label>
+        <label>레벨 번호 또는 ID <input name="level" value="1" required></label>
+        <label>테마 JSON <input name="theme" value="./themes/ocon/theme.json"></label>
+        <label>맵 버전 <input name="mapVersion" value="68"></label>
+        <label>테마 버전 <input name="themeVersion" value="1"></label>
+        <label>규칙 JSON <input name="rules" value="./host-rules.json"></label>
+        <button id="start">퍼즐 시작</button>
+      </form>
+      <p id="status" role="status"></p>
+      <p>예제 코인 <strong id="coins">0</strong></p>
+      <pre id="result" hidden></pre>
+    </section>
+    <section id="session" aria-label="퍼즐 실행 화면" hidden>
+      <div class="session-bar">
+        <span id="loading" role="status">퍼즐을 불러오는 중이에요.</span>
+        <button id="back" type="button">게임으로 돌아가기</button>
+      </div>
+      <div id="frameSlot"></div>
+    </section>
+  </main>
+</body>
+</html>

@@ -722,23 +722,25 @@ function getAsset(layer, id, cave = activeCave()) {
   const panel = layer === "gimmick" ? DDUNG_PANELS[baseId] : null;
   const gimmickArt = panel?.[3] || (layer === "gimmick" && Object.hasOwn(DDUNG_GIMMICK_ART, baseId) &&
     (id === "switch" || id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[baseId] : null);
-  const iceArt = id === "ddung-octo" ? "./art/ddung/ice-bag.png" :
-    id === "ddung-frost" ? "./art/ddung/frost-3.png" : null;
-  const exitArt = layer === "gimmick" && id === "exit" ? "./art/ddung/exit.png" : null;
+  const iceArt = id === "ddung-octo" ? "./art/ddung/ice-bag.webp" :
+    id === "ddung-frost" ? "./art/ddung/frost-3.webp" : null;
+  const exitArt = layer === "gimmick" && id === "exit" ? "./art/ddung/exit.webp" : null;
   const image = definition?.image || exitArt || iceArt || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
-    itemArt ? `./art/ddung/item-${id === "ddung-bomb-panel" ? "bomb" : id}.webp` : original ? `./art/ddung/${id}.png` : null);
+    itemArt ? `./art/ddung/item-${id === "ddung-bomb-panel" ? "bomb" : id}.webp` : original ? `./art/ddung/${id}.webp` : null);
   return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer],
     ...known, id, name: definition?.name || known?.name || id, image, panelMark: panel && "AQZY1234r".includes(panel[0]) ? panel[2] : null };
 }
 
 function showObjectImage(element, source) {
   if (!source) return;
+  // Older map exports can reference the built-in sprites by their PNG paths.
+  source = source.replace(/^(\.\/art\/ddung\/[^/]+)\.png$/, "$1.webp");
   const image = document.createElement("img");
   image.alt = "";
   image.draggable = false;
   image.className = "object-image";
   // These Unity prefabs rotate their sprite child by +90° in world space.
-  if (/^\.\/art\/ddung\/(?:red|blue|purple|yellow)\.png$/.test(source)) {
+  if (/^\.\/art\/ddung\/(?:red|blue|purple|yellow)\.webp$/.test(source)) {
     image.classList.add("object-image-rotate-left");
   }
   image.onload = () => element.classList.add("has-object-image");
@@ -1514,10 +1516,10 @@ function applyCellVisual(cell, cave, index, damage = null) {
       } else if (layer === "gimmick" && assetId === "ddung-octo" && !customImage) {
         const hp = ddungGimmickDurability(cave, index) - (damage?.gimmickHits[index] || 0);
         if (hp <= 2) showObjectImage(visual, asset.image);
-        if (hp > 0) showObjectImage(visual, `./art/ddung/frost-${hp}.png`);
+        if (hp > 0) showObjectImage(visual, `./art/ddung/frost-${hp}.webp`);
       } else if (layer === "terrain" && assetId === "ddung-frost" && !customImage) {
         const hp = terrainDurabilityAt(cave, index, frost || DEFAULT_TERRAIN_RULES[assetId]) - (damage?.terrainHits[index] || 0);
-        showObjectImage(visual, `./art/ddung/frost-${Math.min(5, Math.max(1, hp))}.png`);
+        showObjectImage(visual, `./art/ddung/frost-${Math.min(5, Math.max(1, hp))}.webp`);
       } else {
         showObjectImage(visual, asset.image);
       }
@@ -2894,7 +2896,7 @@ function animateDdungTurnActor(grid, { type, index }, duration) {
   const sprite = document.createElement("img");
   sprite.className = "playtest-turn-actor";
   sprite.alt = "";
-  sprite.src = `./art/ddung/turn-${type}.png`;
+  sprite.src = `./art/ddung/turn-${type}.webp`;
   const options = { duration, fill: "both" };
   const width = target.width * (type === "mouse" ? 1.2 : 1.05);
   sprite.style.width = `${width}px`;

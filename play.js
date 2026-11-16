@@ -3,18 +3,22 @@ import {
   $, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
-} from "./app.js?v=153";
+} from "./app.js?v=154";
 
 const PUZZLE_GOAL_IMAGES = {
-  "ddung-oak": "./art/ddung/goal-oak.png",
-  "ddung-dust-piece": "./art/ddung/goal-dust.png",
+  "ddung-oak": "./art/ddung/goal-oak.webp",
+  "ddung-dust-piece": "./art/ddung/goal-dust.webp",
 };
 
 const PUZZLE_PROGRESS_KEY = "ddung-puzzle-progress-v1";
 
 const puzzleParams = new URLSearchParams(location.search);
+const embedded = puzzleParams.get("embed") === "1";
+const requestId = puzzleParams.get("requestId");
 const puzzleEffects = createPuzzleEffects();
 const reportedAttempts = new WeakSet();
+let rules = { threeStars: 0.25, twoStars: 0.10, pointsPerGoalUnit: 0, pointsPerMoveLeft: 0 };
+let versions = { mapVersion: null, themeVersion: null };
 let linkedPuzzle;
 let resultOrigin;
 let puzzleMaps;
@@ -64,7 +68,12 @@ function renderLevelSelect() {
 
 function clearStarCount(state) {
   const remaining = state.movesLeft / state.cave.moveLimit;
-  return remaining >= 0.25 ? 3 : remaining >= 0.10 ? 2 : 1;
+  return remaining >= rules.threeStars ? 3 : remaining >= rules.twoStars ? 2 : 1;
+}
+
+function puzzleScore(state, won) {
+  const units = state.objectiveProgress.reduce((total, goal) => total + Math.min(goal.current, goal.target), 0);
+  return units * rules.pointsPerGoalUnit + (won ? state.movesLeft * rules.pointsPerMoveLeft : 0);
 }
 let puzzleIndex = 0;
 
@@ -131,6 +140,8 @@ function renderPuzzleGoals(state) {
 function renderPuzzlePlayer() {
   const state = playtestState;
   $("movesLeft").textContent = state.movesLeft;
+  $("scoreCard").hidden = !rules.pointsPerGoalUnit && !rules.pointsPerMoveLeft;
+  $("score").textContent = puzzleScore(state, state.status === "won");
   renderPuzzleGoals(state);
 
   const playing = state.status === "playing";
@@ -138,17 +149,18 @@ function renderPuzzlePlayer() {
   const hasNext = !linkedPuzzle && puzzleIndex + 1 < puzzleMaps.mapinfos.length;
 
   $("playtestFrameStatus").textContent = won
-    ? (hasNext ? "클리어!" : "준비된 레벨을 모두 클리어했어요!")
+    ? (linkedPuzzle || hasNext ? "클리어!" : "준비된 레벨을 모두 클리어했어요!")
     : state.status === "lost"
       ? "이동 횟수를 모두 사용했어요."
       : state.message;
-  $("restart").hidden = false;
+  $("restart").hidden = embedded;
   $("hint").hidden = !playing;
   $("next").hidden = !won || !hasNext;
   renderSimulationGrid(state.cave, playing);
-  if (!playing) reportPuzzleResult(state, won);
+  if (!playing) reportPuzzleResult(state, won ? "won" : "lost");
 
   const dialog = $("clearDialog");
+  if (embedded) return;
   if (won && !dialog.open) {
     const stars = clearStarCount(state);
     if (!linkedPuzzle) {
@@ -186,26 +198,79 @@ $("clearRestart").addEventListener("click", () => tryStartPuzzle(puzzleIndex));
 $("clearNext").addEventListener("click", () => tryStartPuzzle(puzzleIndex + 1));
 document.addEventListener("contextmenu", (event) => event.preventDefault());
 
+function sendToHost(type, payload = {}) {
+  const receiver = window.parent !== window ? window.parent : window.opener;
+  if (!receiver || !resultOrigin) return;
+  receiver.postMessage({ type: `windy-cave:puzzle-${type}`, version: 1, requestId, ...versions, ...payload }, resultOrigin);
+}
+
+if (embedded) {
+  $("levelSelectControl").hidden = true;
+  $("quit").hidden = false;
+  $("quit").addEventListener("click", () => cancelEmbeddedPuzzle());
+  window.addEventListener("message", (event) => {
+    const receiver = window.parent !== window ? window.parent : window.opener;
+    if (event.source !== receiver || event.origin !== resultOrigin || event.data?.requestId !== requestId ||
+        event.data?.version !== 1 || event.data?.type !== "windy-cave:puzzle-cancel") return;
+    cancelEmbeddedPuzzle();
+  });
+}
+
+let cancelled = false;
+function cancelEmbeddedPuzzle() {
+  if (cancelled) return;
+  cancelled = true;
+  if (playtestState?.status === "playing") {
+    playtestState.status = "cancelled";
+    reportPuzzleResult(playtestState, "cancelled");
+    renderSimulationGrid(playtestState.cave, false);
+    setPuzzlePlaytestState(null);
+  } else if (playtestState) {
+    reportPuzzleResult(playtestState, playtestState.status === "won" ? "won" : "lost");
+    setPuzzlePlaytestState(null);
+  } else {
+    sendToHost("result", { outcome: "cancelled", success: false, movesUsed: 0, stars: 0, score: 0 });
+  }
+  $("quit").disabled = true;
+  $("hint").hidden = true;
+  $("playtestFrameStatus").textContent = "퍼즐을 종료했어요.";
+}
+
 function puzzleArtworkUrl(path, base) {
   if (typeof path !== "string" || !path.trim()) throw new Error("이미지 경로가 비어 있습니다.");
   const url = new URL(path, base);
   if (url.origin !== location.origin || !["https:", "http:"].includes(url.protocol)) {
     throw new Error("테마 파일과 이미지는 게임과 같은 사이트에 올려 주세요.");
   }
+  const builtInSprites = new URL("./art/ddung/", location.href).pathname;
+  if (url.pathname.startsWith(builtInSprites) && url.pathname.endsWith(".png")) {
+    url.pathname = url.pathname.replace(/\.png$/, ".webp");
+  }
   return url.href;
 }
 
-function puzzleArtworkImages(entries, base) {
+function usableImage(url) {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => resolve(url);
+    image.onerror = () => resolve(null);
+    image.src = url;
+  });
+}
+
+async function puzzleArtworkImages(entries, base) {
   if (entries == null) return Object.create(null);
   if (typeof entries !== "object" || Array.isArray(entries)) throw new Error("이미지 설정은 객체여야 합니다.");
-  return Object.assign(Object.create(null), Object.fromEntries(
-    Object.entries(entries).map(([id, path]) => [id, puzzleArtworkUrl(path, base)]),
-  ));
+  const images = await Promise.all(Object.entries(entries).map(async ([id, path]) => (
+    [id, await usableImage(puzzleArtworkUrl(path, base))]
+  )));
+  return Object.assign(Object.create(null), Object.fromEntries(images.filter(([, url]) => url)));
 }
 
 async function loadPuzzleArtwork() {
   const path = puzzleParams.get("theme");
-  if (!path) return;
+  const expectedVersion = puzzleParams.get("themeVersion");
+  if (!path && !expectedVersion) return;
 
   try {
     const url = puzzleArtworkUrl(path, location.href);
@@ -214,48 +279,65 @@ async function loadPuzzleArtwork() {
     const theme = await response.json();
     if (!theme || typeof theme !== "object" || Array.isArray(theme)) throw new Error("테마 JSON 형식을 확인해 주세요.");
     const base = response.url || url;
-    const layers = Object.fromEntries(["block", "terrain", "gimmick", "item"].map(
-      (layer) => [layer, puzzleArtworkImages(theme[layer], base)],
-    ));
-    const background = theme.background == null ? null : puzzleArtworkUrl(theme.background, base);
-    setPuzzleArtwork({
-      layers,
-      specials: puzzleArtworkImages(theme.specials, base),
-      goals: puzzleArtworkImages(theme.goals, base),
-    });
+    const themeVersion = theme.version == null ? null : String(theme.version);
+    if (expectedVersion && expectedVersion !== themeVersion) throw new Error("요청한 테마 버전과 다릅니다.");
     const burst = theme.effects?.blockBurst;
+    const [layers, specials, goals, background, particle] = await Promise.all([
+      Promise.all(["block", "terrain", "gimmick", "item"].map(async (layer) => [layer, await puzzleArtworkImages(theme[layer], base)])),
+      puzzleArtworkImages(theme.specials, base),
+      puzzleArtworkImages(theme.goals, base),
+      theme.background == null ? null : usableImage(puzzleArtworkUrl(theme.background, base)),
+      burst?.particle ? usableImage(puzzleArtworkUrl(burst.particle, base)) : null,
+    ]);
     if (burst) {
       const effects = {};
-      if (burst.particle) effects.particle = puzzleArtworkUrl(burst.particle, base);
+      if (particle) effects.particle = particle;
       if (burst.sound) effects.sound = puzzleArtworkUrl(burst.sound, base);
       if (Number.isFinite(burst.volume)) effects.volume = Math.max(0, Math.min(1, burst.volume));
       puzzleEffects.setTheme(effects);
     }
+    setPuzzleArtwork({ layers: Object.fromEntries(layers), specials, goals });
+    versions.themeVersion = themeVersion;
     if (background) {
       document.body.classList.add("has-puzzle-background");
       document.body.style.backgroundImage = `linear-gradient(rgb(12 15 30 / 50%), rgb(12 15 30 / 75%)), url(${JSON.stringify(background)})`;
     }
   } catch (error) {
+    if (expectedVersion) throw error;
     console.warn("퍼즐 테마를 불러오지 못해 기본 이미지를 사용합니다.", error);
   }
 }
 
-function reportPuzzleResult(state, success) {
+function reportPuzzleResult(state, outcome) {
   if (!linkedPuzzle || !resultOrigin || reportedAttempts.has(state)) return;
-  const receiver = window.parent !== window ? window.parent : window.opener;
-  if (!receiver) return;
-
   reportedAttempts.add(state);
-  receiver.postMessage({
-    type: "windy-cave:puzzle-result",
-    version: 1,
-    requestId: puzzleParams.get("requestId"),
+  const success = outcome === "won";
+  sendToHost("result", {
+    outcome,
     levelId: linkedPuzzle.cave.id,
     level: linkedPuzzle.cave.number,
     success,
     movesUsed: state.cave.moveLimit - state.movesLeft,
     stars: success ? clearStarCount(state) : 0,
-  }, resultOrigin);
+    score: puzzleScore(state, success),
+  });
+}
+
+async function loadPuzzleRules() {
+  const path = puzzleParams.get("rules");
+  if (!path) return;
+  const response = await fetch(puzzleArtworkUrl(path, location.href));
+  if (!response.ok) throw new Error(`규칙 JSON을 읽을 수 없습니다 (HTTP ${response.status}).`);
+  const overrides = await response.json();
+  const configured = { ...rules, ...overrides };
+  const { threeStars, twoStars, pointsPerGoalUnit, pointsPerMoveLeft } = configured;
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides) ||
+      !Number.isFinite(twoStars) || !Number.isFinite(threeStars) ||
+      twoStars < 0 || threeStars > 1 || twoStars > threeStars ||
+      ![pointsPerGoalUnit, pointsPerMoveLeft].every((points) => Number.isSafeInteger(points) && points >= 0 && points <= 1000000)) {
+    throw new Error("별점 기준 또는 점수 설정을 확인해 주세요.");
+  }
+  rules = configured;
 }
 
 function readResultOrigin() {
@@ -269,15 +351,18 @@ function readResultOrigin() {
 }
 
 async function loadLinkedPuzzle(mapPath, levelKey) {
-  resultOrigin = readResultOrigin();
   const url = new URL(mapPath || "./play-maps.json?v=2", location.href);
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
     throw new Error("맵 JSON의 HTTP 또는 HTTPS 주소를 입력해 주세요.");
   }
 
-  const [response] = await Promise.all([fetch(url, { credentials: "omit" }), loadPuzzleArtwork()]);
+  const [response] = await Promise.all([fetch(url, { credentials: "omit" }), loadPuzzleArtwork(), loadPuzzleRules()]);
   if (!response.ok) throw new Error(`맵 JSON을 읽을 수 없습니다 (HTTP ${response.status}).`);
   const data = await response.json();
+  if (cancelled) return;
+  versions.mapVersion = data?.contentVersion == null && data?.version == null ? null : String(data.contentVersion ?? data.version);
+  const expectedVersion = puzzleParams.get("mapVersion");
+  if (expectedVersion && expectedVersion !== versions.mapVersion) throw new Error("요청한 맵 버전과 다릅니다.");
   let imported;
   if (Array.isArray(data?.mapinfos)) {
     const raw = data.mapinfos.find((entry) => !levelKey || String(entry.level) === levelKey || `ddung-level-${entry.level}` === levelKey);
@@ -299,25 +384,30 @@ async function loadLinkedPuzzle(mapPath, levelKey) {
   linkedPuzzle = { project: mapProject, cave, title: cave.name || `레벨 ${cave.number}` };
   $("levelSelectControl").hidden = true;
   beginPuzzle(mapProject, cave, linkedPuzzle.title);
+  if (playtestState.status === "playing") sendToHost("ready", { levelId: cave.id, level: cave.number });
 }
 
 async function loadPuzzleMaps() {
   try {
     const mapPath = puzzleParams.get("map");
     const levelKey = puzzleParams.get("level");
-    if (mapPath || levelKey) {
+    resultOrigin = readResultOrigin();
+    if (embedded && (!requestId || !resultOrigin)) throw new Error("실행 ID와 호출 게임 주소가 필요합니다.");
+    if (mapPath || levelKey || embedded) {
       await loadLinkedPuzzle(mapPath, levelKey);
       return;
     }
-    const [response] = await Promise.all([fetch("./play-maps.json?v=2"), loadPuzzleArtwork()]);
+    const [response] = await Promise.all([fetch("./play-maps.json?v=2"), loadPuzzleArtwork(), loadPuzzleRules()]);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     puzzleMaps = await response.json();
     if (puzzleMaps.mapinfos?.[0]?.level !== 1) throw new Error("레벨 1 누락");
     loadPuzzleProgress();
     startPuzzle(puzzleProgress.current - 1);
   } catch (error) {
+    if (cancelled) return;
+    sendToHost("error", { code: "load-failed", message: error.message });
     console.error(error);
-    $("playtestFrameStatus").textContent = puzzleParams.has("map") || puzzleParams.has("level")
+    $("playtestFrameStatus").textContent = embedded || puzzleParams.has("map") || puzzleParams.has("level")
       ? `퍼즐을 불러오지 못했어요. ${error.message}`
       : "퍼즐을 불러오지 못했어요. 페이지를 새로고침해 주세요.";
   }

@@ -66,8 +66,8 @@ Cave 하나를 퍼즐 레벨 하나로 편집하는 브라우저 기반 맵툴�
 | 설정 | 키와 값 |
 | --- | --- |
 | `background` | 배경 이미지 경로 |
-| `block`, `terrain`, `gimmick`, `item` | 에디터의 오브젝트 ID와 이미지 경로. 예를 들어 `"block": { "blue": "./blue.png" }` |
-| `specials` | 피스 타입 ID 또는 효과 ID와 이미지 경로. 예를 들어 `"specials": { "row": "./line.png", "fish": "./bee.png" }` |
+| `block`, `terrain`, `gimmick`, `item` | 에디터의 오브젝트 ID와 이미지 경로. 예를 들어 `"block": { "blue": "./blue.webp" }` |
+| `specials` | 피스 타입 ID 또는 효과 ID와 이미지 경로. 예를 들어 `"specials": { "row": "./line.webp", "fish": "./bee.webp" }` |
 | `goals` | 목표 오브젝트 ID와 아이콘 경로. 생략하면 해당 레이어의 테마 이미지 또는 기본 아이콘을 사용합니다. |
 
 필요한 항목만 지정하면 됩니다. 블록 ID와 맵의 설정은 그대로이며, 테마 링크에서도 같은 브라우저의 진행 기록을 사용합니다.
@@ -78,7 +78,7 @@ Cave 하나를 퍼즐 레벨 하나로 편집하는 브라우저 기반 맵툴�
 {
   "effects": {
     "blockBurst": {
-      "particle": "./spark.png",
+      "particle": "./spark.webp",
       "sound": "./pop.mp3",
       "volume": 0.3
     }
@@ -113,6 +113,23 @@ Cave 하나를 퍼즐 레벨 하나로 편집하는 브라우저 기반 맵툴�
 ```
 
 `resultOrigin`은 결과를 받을 게임의 오리진입니다. 호출한 iframe의 부모 창이나 팝업을 연 창에 한 판당 한 번 전송합니다. 실패하면 `success: false`, `stars: 0`입니다. 다시 시작해 끝낸 판은 별도의 결과를 보냅니다. 지정 레벨은 기본 캠페인의 진행 기록을 읽거나 저장하지 않습니다. 메시지는 브라우저에서 발생한 게임 결과이므로, 서버에서 지급하는 보상의 증빙이 필요하다면 호출 게임이 별도로 검증해야 합니다.
+
+### 다른 게임 화면 안에서 실행
+
+같은 HTTP 서버에서 [연동 데모](./host-demo.html)를 열면 맵 JSON, 레벨, 테마, 규칙을 지정해 한 판을 실행할 수 있습니다. 기존 호출 주소에 `embed=1`을 추가하고, 매번 새로운 `requestId`와 호출 게임의 `resultOrigin`을 전달합니다. iframe에는 `allow="autoplay"`를 지정합니다. 플레이어가 퍼즐을 처음 조작할 때 오디오가 활성화됩니다.
+
+| 메시지 (`version: 1`) | 동작 |
+| --- | --- |
+| `windy-cave:puzzle-ready` | 레벨 로드 완료 |
+| `windy-cave:puzzle-result` | `outcome`이 `won`, `lost`, `cancelled` 중 하나입니다. 시작된 판에는 `levelId`, `level`, `success`, `movesUsed`, `stars`, `score`가 포함됩니다. |
+| `windy-cave:puzzle-error` | 로드 실패 시 `code`와 `message`를 반환합니다. |
+| `windy-cave:puzzle-cancel` | 호출 게임에서 퍼즐로 보내는 종료 요청입니다. 같은 `requestId`와 `version`을 보내면 퍼즐이 결과를 반환합니다. |
+
+수신 시 퍼즐의 오리진, iframe 창, 현재 `requestId`를 확인하고, 첫 종료 응답을 소비한 뒤 iframe을 제거합니다. 예제는 클리어 시 별 한 개당 예제 코인 10개를 표시합니다.
+
+`mapVersion`은 맵의 `contentVersion` 또는 `version`, `themeVersion`은 테마의 `version`과 일치해야 합니다. 재현 가능한 배포에는 버전별로 다른 파일 경로를 사용하세요. 테마 버전을 지정하지 않으면 테마 로드 실패 시 기본 테마로 진행합니다. 개별 이미지나 효과음이 누락된 경우에는 해당 기본 효과를 사용합니다.
+
+`rules`에 [규칙 JSON](./host-rules.json)을 지정할 수 있습니다. `threeStars`와 `twoStars`는 클리어 시 필요한 남은 이동 비율입니다. 점수는 목표 달성 수에 `pointsPerGoalUnit`을 곱하고, 클리어한 경우에만 남은 이동 수에 `pointsPerMoveLeft`를 곱해 더합니다. 설정하지 않으면 기존 별점 기준을 사용하며 점수는 0입니다.
 
 ## 로컬 실행
 
