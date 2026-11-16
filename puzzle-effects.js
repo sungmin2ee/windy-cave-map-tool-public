@@ -1,10 +1,12 @@
-const DEFAULT_VOLUME = 0.22;
+const DEFAULT_VOLUME = 0.35;
 
 export function createPuzzleEffects() {
   let settings = { volume: DEFAULT_VOLUME };
   let context;
   let customSound;
   let muted = false;
+  let resumeRequest;
+  let popPending = false;
 
   function unlockAudio() {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -22,11 +24,22 @@ export function createPuzzleEffects() {
           .catch(() => {});
       }
     }
-    if (context.state !== "running") context.resume().catch(() => {});
+    if (context.state === "running" || resumeRequest) return;
+    resumeRequest = context.resume().then(() => {
+      if (popPending) playBurstSound();
+    }).catch(() => {}).finally(() => {
+      popPending = false;
+      resumeRequest = null;
+    });
   }
 
   function playBurstSound() {
-    if (muted || settings.volume === 0 || context?.state !== "running") return;
+    if (muted || settings.volume === 0 || !context) return;
+    if (context.state !== "running") {
+      popPending = Boolean(resumeRequest);
+      return;
+    }
+    popPending = false;
     const time = context.currentTime;
     const gain = context.createGain();
     gain.connect(context.destination);
@@ -42,11 +55,11 @@ export function createPuzzleEffects() {
     }
 
     const pop = context.createOscillator();
-    pop.type = "sine";
+    pop.type = "triangle";
     pop.frequency.setValueAtTime(660, time);
     pop.frequency.exponentialRampToValueAtTime(190, time + 0.09);
     gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(settings.volume * 0.4, time + 0.012);
+    gain.gain.linearRampToValueAtTime(settings.volume * 0.75, time + 0.008);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
     pop.connect(gain);
     pop.onended = () => gain.disconnect();
@@ -92,7 +105,15 @@ export function createPuzzleEffects() {
 
   return {
     setTheme(theme) { settings = { ...settings, ...theme }; },
-    setMuted(value) { muted = value; if (!muted) unlockAudio(); },
+    setMuted(value) {
+      muted = value;
+      if (muted) {
+        popPending = false;
+      } else {
+        unlockAudio();
+        playBurstSound();
+      }
+    },
     unlockAudio,
     showBurst,
   };

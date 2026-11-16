@@ -1,4 +1,4 @@
-import { createPuzzleEffects } from "./puzzle-effects.js?v=1";
+import { createPuzzleEffects } from "./puzzle-effects.js?v=2";
 import {
   $, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
@@ -323,8 +323,11 @@ async function loadPuzzleMaps() {
   }
 }
 
-document.addEventListener("pointerdown", puzzleEffects.unlockAudio);
-document.addEventListener("keydown", puzzleEffects.unlockAudio);
+document.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "mouse") puzzleEffects.unlockAudio();
+}, { capture: true });
+document.addEventListener("pointerup", puzzleEffects.unlockAudio, { capture: true });
+document.addEventListener("keydown", puzzleEffects.unlockAudio, { capture: true });
 $("soundToggle").addEventListener("click", (event) => {
   const button = event.currentTarget;
   const enabled = button.getAttribute("aria-pressed") !== "true";
