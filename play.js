@@ -1,4 +1,8 @@
-"use strict";
+import {
+  $, activeCave, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
+  renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
+  setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
+} from "./app.js?v=151";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.png",
@@ -64,7 +68,7 @@ function startPuzzle(index) {
   }
   const level = puzzleMaps.mapinfos[index];
   const imported = adaptImportedJson({ version: puzzleMaps.version, mapinfos: [level] });
-  project = imported.project;
+  setPuzzleProject(imported.project);
   const cave = activeCave();
   const validation = validateCave(cave);
   if (validation.errors.length || validation.unsupported.length || imported.unknownTokens.length) {
@@ -74,7 +78,7 @@ function startPuzzle(index) {
   const state = createPlayState(cave, crypto.randomUUID(), true);
   $("clearDialog").close();
   puzzleIndex = index;
-  playtestState = state;
+  setPuzzlePlaytestState(state);
   playtestState.validation = validation;
   $("levelTitle").textContent = `레벨 ${level.level}`;
   puzzleProgress.current = level.level;
@@ -195,11 +199,11 @@ async function loadPuzzleArtwork() {
       (layer) => [layer, puzzleArtworkImages(theme[layer], base)],
     ));
     const background = theme.background == null ? null : puzzleArtworkUrl(theme.background, base);
-    puzzleArtwork = {
+    setPuzzleArtwork({
       layers,
       specials: puzzleArtworkImages(theme.specials, base),
       goals: puzzleArtworkImages(theme.goals, base),
-    };
+    });
     if (background) {
       document.body.classList.add("has-puzzle-background");
       document.body.style.backgroundImage = `linear-gradient(rgb(12 15 30 / 50%), rgb(12 15 30 / 75%)), url(${JSON.stringify(background)})`;
@@ -223,4 +227,5 @@ async function loadPuzzleMaps() {
   }
 }
 
+setPuzzleView(renderPuzzlePlayer);
 loadPuzzleMaps();
