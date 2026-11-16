@@ -3958,6 +3958,7 @@ function adaptDdungMapInfo(source, index, format, unknownTokens, tileReporter) {
   const gravity = ({ 0: "up", 1: "down", 2: "left", 3: "right" })[Number(source.GravityType)] || "down";
   const cave = normalizeCave({
     id: `ddung-level-${source.level ?? index + 1}`,
+    number: Number(source.level ?? index + 1),
     name: `DDUNG Level ${String(source.level ?? index + 1).padStart(4, "0")}`,
     width: size, height: size, gravity, layers,
     usableBlocks: usableBlocks.length ? usableBlocks : Object.keys(COLORS),
