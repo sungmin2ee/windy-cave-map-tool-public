@@ -230,3 +230,9 @@ body[data-puzzle-player] {
 
 #simulationGrid .ddung-board-gap { visibility: hidden; }
 #simulationGrid .cell-spawner-badge { display: none; }
+
+body[data-puzzle-player].has-puzzle-background {
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}

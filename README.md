@@ -59,6 +59,19 @@ Cave 하나를 퍼즐 레벨 하나로 편집하는 브라우저 기반 맵툴�
 - **패치 다운로드**를 누르면 변경분 JSON이 저장됩니다. **같은 기준으로 패치 미리보기**로 다시 열면 마지막으로 보던 Cave 상세나 검증 오류에서 편집하러 이동한 Cave가 열립니다.
 - 맵툴에서 패치 JSON을 가져오려면 현재 콘텐츠 버전이 패치의 `baseContentVersion`과 정확히 일치해야 합니다. 적용 후에는 `contentVersion`으로 갱신됩니다. `CLIENT`는 맵툴 코드 버전, `SCHEMA`는 JSON 구조 버전입니다.
 
+## 플레이 화면 이미지 교체
+
+테마 폴더에 이미지와 JSON을 추가한 뒤, 같은 GitHub Pages에서 `play.html?theme=themes/ocon/theme.json` 링크를 열면 적용됩니다. 이미지 경로는 테마 JSON 파일이 있는 폴더를 기준으로 해석합니다. [동작 예시](https://sungmin2ee.github.io/windy-cave-map-tool-public/play.html?theme=themes/example.json)에서는 기존 이미지로 파랑과 초록 블록의 표시를 바꿉니다.
+
+| 설정 | 키와 값 |
+| --- | --- |
+| `background` | 배경 이미지 경로 |
+| `block`, `terrain`, `gimmick`, `item` | 에디터의 오브젝트 ID와 이미지 경로. 예를 들어 `"block": { "blue": "./blue.png" }` |
+| `specials` | 피스 타입 ID 또는 효과 ID와 이미지 경로. 예를 들어 `"specials": { "row": "./line.png", "fish": "./bee.png" }` |
+| `goals` | 목표 오브젝트 ID와 아이콘 경로. 생략하면 해당 레이어의 테마 이미지 또는 기본 아이콘을 사용합니다. |
+
+필요한 항목만 지정하면 됩니다. 블록 ID와 맵의 설정은 그대로이며, 테마 링크에서도 같은 브라우저의 진행 기록을 사용합니다.
+
 ## 로컬 실행
 
 저장소 루트에서 정적 HTTP 서버를 실행합니다.

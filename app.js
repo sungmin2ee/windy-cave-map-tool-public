@@ -251,6 +251,7 @@ let redoStack = [];
 let isPainting = false;
 let strokeSnapshotTaken = false;
 let playtestState = null;
+let puzzleArtwork = null;
 let selectedTerrainRule = "ice";
 let caveSearchQuery = "";
 
@@ -1521,6 +1522,7 @@ function applyCellVisual(cell, cave, index, damage = null) {
     if (layer === "gimmick" && asset.image === "./art/ddung/warp.webp") {
       visual.dataset.warpEnd = assetId === "teleport-a" ? "A" : "B";
     }
+    const artwork = puzzleArtwork?.layers[layer]?.[assetId];
     let usesSpecialImage = false;
     if (layer === "block") {
       visual.style.background = blockColor(assetId);
@@ -1533,13 +1535,22 @@ function applyCellVisual(cell, cave, index, damage = null) {
         badge.title = `특수 피스 · ${piece.name || piece.type}`;
         cell.classList.add("has-initial-piece");
         cell.appendChild(badge);
-        usesSpecialImage = showDdungSpecialImage(visual, cave, piece, assetId, asset.image, badge);
+        const specials = puzzleArtwork?.specials;
+        const specialArtwork = specials?.[piece.type] || specials?.[specialEffect(cave, piece)];
+        if (specialArtwork) {
+          showObjectImage(visual, specialArtwork);
+          usesSpecialImage = true;
+        } else {
+          usesSpecialImage = showDdungSpecialImage(visual, cave, piece, assetId, artwork || asset.image, badge);
+        }
       }
     }
     if (layer === "gimmick" || layer === "item" || (layer === "terrain" && !asset.className)) visual.textContent = asset.visual;
     if (!usesSpecialImage) {
       const customImage = project.assetDefinitions?.[layer]?.find((definition) => definition.id === assetId)?.image;
-      if (layer === "gimmick" && assetId === "ddung-octo" && !customImage) {
+      if (artwork) {
+        showObjectImage(visual, artwork);
+      } else if (layer === "gimmick" && assetId === "ddung-octo" && !customImage) {
         const hp = ddungGimmickDurability(cave, index) - (damage?.gimmickHits[index] || 0);
         if (hp <= 2) showObjectImage(visual, asset.image);
         if (hp > 0) showObjectImage(visual, `./art/ddung/frost-${hp}.png`);

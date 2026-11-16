@@ -96,7 +96,8 @@ function renderPuzzleGoals(state) {
     icon.setAttribute("aria-hidden", "true");
     icon.textContent = asset?.visual || "◆";
     if (asset?.color) icon.style.color = asset.color;
-    showObjectImage(icon, PUZZLE_GOAL_IMAGES[objective.targetId] || asset?.image);
+    const artwork = puzzleArtwork?.goals[objective.targetId] || puzzleArtwork?.layers[objective.layer]?.[objective.targetId];
+    showObjectImage(icon, artwork || PUZZLE_GOAL_IMAGES[objective.targetId] || asset?.image);
 
     const count = document.createElement("strong");
     count.textContent = `${Math.min(current, target)} / ${target}`;
@@ -162,9 +163,55 @@ $("clearRestart").addEventListener("click", () => tryStartPuzzle(puzzleIndex));
 $("clearNext").addEventListener("click", () => tryStartPuzzle(puzzleIndex + 1));
 document.addEventListener("contextmenu", (event) => event.preventDefault());
 
+function puzzleArtworkUrl(path, base) {
+  if (typeof path !== "string" || !path.trim()) throw new Error("이미지 경로가 비어 있습니다.");
+  const url = new URL(path, base);
+  if (url.origin !== location.origin || !["https:", "http:"].includes(url.protocol)) {
+    throw new Error("테마 파일과 이미지는 게임과 같은 사이트에 올려 주세요.");
+  }
+  return url.href;
+}
+
+function puzzleArtworkImages(entries, base) {
+  if (entries == null) return Object.create(null);
+  if (typeof entries !== "object" || Array.isArray(entries)) throw new Error("이미지 설정은 객체여야 합니다.");
+  return Object.assign(Object.create(null), Object.fromEntries(
+    Object.entries(entries).map(([id, path]) => [id, puzzleArtworkUrl(path, base)]),
+  ));
+}
+
+async function loadPuzzleArtwork() {
+  const path = new URLSearchParams(location.search).get("theme");
+  if (!path) return;
+
+  try {
+    const url = puzzleArtworkUrl(path, location.href);
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const theme = await response.json();
+    if (!theme || typeof theme !== "object" || Array.isArray(theme)) throw new Error("테마 JSON 형식을 확인해 주세요.");
+    const base = response.url || url;
+    const layers = Object.fromEntries(["block", "terrain", "gimmick", "item"].map(
+      (layer) => [layer, puzzleArtworkImages(theme[layer], base)],
+    ));
+    const background = theme.background == null ? null : puzzleArtworkUrl(theme.background, base);
+    puzzleArtwork = {
+      layers,
+      specials: puzzleArtworkImages(theme.specials, base),
+      goals: puzzleArtworkImages(theme.goals, base),
+    };
+    if (background) {
+      document.body.classList.add("has-puzzle-background");
+      document.body.style.backgroundImage = `linear-gradient(rgb(12 15 30 / 50%), rgb(12 15 30 / 75%)), url(${JSON.stringify(background)})`;
+    }
+  } catch (error) {
+    console.warn("퍼즐 테마를 불러오지 못해 기본 이미지를 사용합니다.", error);
+  }
+}
+
 async function loadPuzzleMaps() {
   try {
-    const response = await fetch("./play-maps.json?v=2");
+    const [response] = await Promise.all([fetch("./play-maps.json?v=2"), loadPuzzleArtwork()]);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     puzzleMaps = await response.json();
     if (puzzleMaps.mapinfos?.[0]?.level !== 1) throw new Error("레벨 1 누락");
