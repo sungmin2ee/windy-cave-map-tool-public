@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>퍼즐 연동 데모</title>
-  <link rel="stylesheet" href="./host-demo.css">
-  <script type="module" src="./host-demo.js?v=2"></script>
+  <link rel="stylesheet" href="./host-demo.css?v=2">
+  <script type="module" src="./host-demo.js?v=3"></script>
 </head>
 <body>
   <main>
@@ -22,6 +22,10 @@
         <button id="start">퍼즐 시작</button>
         <button data-rules="./releases/web-demo/v1/score-rules-v1.json">500점 도전</button>
       </form>
+      <div id="previewControls" hidden>
+        <p id="previewLevelName"></p>
+        <button id="previewStart" type="button" disabled>이 레벨 다시 시작</button>
+      </div>
       <p id="status" role="status"></p>
       <p>예제 코인 <strong id="coins">0</strong></p>
       <pre id="result" hidden></pre>

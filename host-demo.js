@@ -1,6 +1,8 @@
 const get = (id) => document.getElementById(id);
 const player = new URL("./play.html", location.href);
 const labels = { won: "클리어", lost: "실패", cancelled: "중간 종료" };
+const preview = new URLSearchParams(location.search).get("preview");
+const startButton = get(preview ? "previewStart" : "start");
 let active = null;
 let coins = 0;
 
@@ -19,9 +21,9 @@ function finish(result) {
   get("status").textContent = labels[result.outcome] ?? result.message;
   get("result").textContent = JSON.stringify(result, null, 2);
   get("result").hidden = false;
-  get("start").disabled = history.state?.puzzleRun === session.id;
-  if (get("start").disabled) history.back();
-  else get("start").focus();
+  startButton.disabled = history.state?.puzzleRun === session.id;
+  if (startButton.disabled) history.back();
+  else startButton.focus();
 }
 
 function cancel() {
@@ -34,14 +36,20 @@ function cancel() {
 
 get("launch").addEventListener("submit", (event) => {
   event.preventDefault();
-  if (active || get("start").disabled) return;
-  const id = crypto.randomUUID();
-  const url = new URL(player);
+  const params = new URLSearchParams();
   for (const [key, value] of new FormData(event.currentTarget)) {
-    if (value.trim()) url.searchParams.set(key, value.trim());
+    if (value.trim()) params.set(key, value.trim());
   }
   const presetRules = event.submitter?.dataset.rules;
-  if (presetRules) url.searchParams.set("rules", presetRules);
+  if (presetRules) params.set("rules", presetRules);
+  launchPuzzle(params);
+});
+
+function launchPuzzle(params) {
+  if (active || startButton.disabled) return;
+  const id = crypto.randomUUID();
+  const url = new URL(player);
+  url.search = params.toString();
   url.searchParams.set("embed", "1");
   url.searchParams.set("requestId", id);
   url.searchParams.set("resultOrigin", location.origin);
@@ -66,15 +74,55 @@ get("launch").addEventListener("submit", (event) => {
   get("session").hidden = false;
   get("frameSlot").replaceChildren(frame);
   get("back").focus();
-});
+}
+
+if (preview) {
+  get("launch").hidden = true;
+  get("previewControls").hidden = false;
+  const editor = window.opener;
+  const unavailable = "편집 중인 레벨을 받지 못했어요. 맵툴에서 버튼을 다시 눌러 주세요.";
+  if (!editor) {
+    get("status").textContent = unavailable;
+  } else {
+    get("status").textContent = "맵툴에서 레벨을 받는 중이에요.";
+    const timeout = setTimeout(() => {
+      window.removeEventListener("message", receiveLevel);
+      get("status").textContent = unavailable;
+    }, 10000);
+    function receiveLevel(event) {
+      const data = event.data;
+      if (event.origin !== location.origin || event.source !== editor ||
+          data?.type !== "windy-cave:preview-map" || data.preview !== preview) return;
+      clearTimeout(timeout);
+      window.removeEventListener("message", receiveLevel);
+      window.opener = null;
+      const { project } = data;
+      const cave = project?.caves?.[0];
+      if (!cave?.id || cave.id !== project.activeCaveId) {
+        get("status").textContent = unavailable;
+        return;
+      }
+      const map = URL.createObjectURL(new Blob([JSON.stringify(project)], { type: "application/json" }));
+      const params = new URLSearchParams({ map, level: cave.id, previewMap: "1" });
+      get("previewLevelName").textContent = cave.name;
+      startButton.disabled = false;
+      startButton.addEventListener("click", () => launchPuzzle(params));
+      launchPuzzle(params);
+    }
+    window.addEventListener("message", receiveLevel);
+    editor.postMessage({ type: "windy-cave:preview-ready", preview }, location.origin);
+  }
+}
 
 get("back").addEventListener("click", cancel);
 window.addEventListener("popstate", () => {
   if (active && history.state?.puzzleRun !== active.id) cancel();
   if (!active) {
     if (history.state?.puzzleRun) history.replaceState(null, "");
-    get("start").disabled = false;
-    get("start").focus();
+    if (!preview || get("previewLevelName").textContent) {
+      startButton.disabled = false;
+      startButton.focus();
+    }
   }
 });
 if (history.state?.puzzleRun) history.replaceState(null, "");

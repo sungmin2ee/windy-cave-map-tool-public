@@ -3,7 +3,7 @@ import {
   $, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
-} from "./app.js?v=157";
+} from "./app.js?v=158";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.webp",
@@ -367,7 +367,9 @@ function readResultOrigin() {
 
 async function loadLinkedPuzzle(mapPath, levelKey) {
   const url = new URL(mapPath || "./play-maps.json?v=2", location.href);
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+  const localPreview = embedded && puzzleParams.get("previewMap") === "1" &&
+    url.protocol === "blob:" && url.origin === location.origin && resultOrigin === location.origin;
+  if (!localPreview && (!["http:", "https:"].includes(url.protocol) || url.username || url.password)) {
     throw new Error("맵 JSON의 HTTP 또는 HTTPS 주소를 입력해 주세요.");
   }
 

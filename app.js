@@ -3379,6 +3379,29 @@ function exportProject() {
   toast("프로젝트 JSON을 내보냈습니다.");
 }
 
+function openLevelDemo() {
+  const cave = activeCave();
+  const preview = crypto.randomUUID();
+  const payload = structuredClone(buildProjectExport({ ...project, caves: [cave], activeCaveId: cave.id }));
+  const url = new URL("./host-demo.html", location.href);
+  url.searchParams.set("preview", preview);
+  const tab = window.open(url, "_blank");
+  if (!tab) {
+    toast("브라우저에서 팝업을 허용한 뒤 다시 시도하세요.");
+    return;
+  }
+
+  const timeout = setTimeout(() => window.removeEventListener("message", passLevel), 15000);
+  function passLevel(event) {
+    if (event.origin !== location.origin || event.source !== tab ||
+        event.data?.type !== "windy-cave:preview-ready" || event.data.preview !== preview) return;
+    clearTimeout(timeout);
+    window.removeEventListener("message", passLevel);
+    tab.postMessage({ type: "windy-cave:preview-map", preview, project: payload }, location.origin);
+  }
+  window.addEventListener("message", passLevel);
+}
+
 function describePatchChanges(previous, cave) {
   const groups = [
     ["보드 배치", ["layers", "excludedCells", "width", "height", "initialPieceTypes", "initialPieceDefinitions", "specialMatches"]],
@@ -4393,6 +4416,7 @@ function bindInputs() {
   });
   $("validateButton").addEventListener("click", () => showSimulation(false));
   $("playButton").addEventListener("click", () => showSimulation(true));
+  $("previewLevelButton").addEventListener("click", openLevelDemo);
   $("closeSimulationButton").addEventListener("click", () => $("simulationDialog").close());
   $("closeSimulationFooterButton").addEventListener("click", () => $("simulationDialog").close());
   $("playtestResetButton").addEventListener("click", resetPlaytest);
