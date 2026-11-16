@@ -1,8 +1,9 @@
+import { createPuzzleEffects } from "./puzzle-effects.js?v=1";
 import {
   $, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
-} from "./app.js?v=152";
+} from "./app.js?v=153";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.png",
@@ -12,6 +13,7 @@ const PUZZLE_GOAL_IMAGES = {
 const PUZZLE_PROGRESS_KEY = "ddung-puzzle-progress-v1";
 
 const puzzleParams = new URLSearchParams(location.search);
+const puzzleEffects = createPuzzleEffects();
 const reportedAttempts = new WeakSet();
 let linkedPuzzle;
 let resultOrigin;
@@ -221,6 +223,14 @@ async function loadPuzzleArtwork() {
       specials: puzzleArtworkImages(theme.specials, base),
       goals: puzzleArtworkImages(theme.goals, base),
     });
+    const burst = theme.effects?.blockBurst;
+    if (burst) {
+      const effects = {};
+      if (burst.particle) effects.particle = puzzleArtworkUrl(burst.particle, base);
+      if (burst.sound) effects.sound = puzzleArtworkUrl(burst.sound, base);
+      if (Number.isFinite(burst.volume)) effects.volume = Math.max(0, Math.min(1, burst.volume));
+      puzzleEffects.setTheme(effects);
+    }
     if (background) {
       document.body.classList.add("has-puzzle-background");
       document.body.style.backgroundImage = `linear-gradient(rgb(12 15 30 / 50%), rgb(12 15 30 / 75%)), url(${JSON.stringify(background)})`;
@@ -313,5 +323,15 @@ async function loadPuzzleMaps() {
   }
 }
 
-setPuzzleView(renderPuzzlePlayer);
+document.addEventListener("pointerdown", puzzleEffects.unlockAudio);
+document.addEventListener("keydown", puzzleEffects.unlockAudio);
+$("soundToggle").addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const enabled = button.getAttribute("aria-pressed") !== "true";
+  button.setAttribute("aria-pressed", String(enabled));
+  button.textContent = enabled ? "사운드 켜짐" : "사운드 꺼짐";
+  puzzleEffects.setMuted(!enabled);
+});
+
+setPuzzleView(renderPuzzlePlayer, puzzleEffects.showBurst);
 loadPuzzleMaps();

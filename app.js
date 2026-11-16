@@ -1,4 +1,4 @@
-import { createGameEngine } from "./game-engine.js?v=1";
+import { createGameEngine } from "./game-engine.js?v=2";
 
 const {
   SPAWNER_ID,
@@ -272,6 +272,7 @@ let strokeSnapshotTaken = false;
 let playtestState = null;
 let puzzleArtwork = null;
 let puzzleView = null;
+let puzzleBurst = null;
 let selectedTerrainRule = "ice";
 let caveSearchQuery = "";
 
@@ -2972,18 +2973,19 @@ async function showPlaytestFrames(state, frames) {
       ], { duration: delay, easing: "ease-out" }));
     }
     if (frame.turnActor) animateDdungTurnActor(grid, frame.turnActor, delay);
+    if (frame.burst?.length) puzzleBurst?.(grid, frame.burst.map(({ index, block }) => ({ index, color: blockColor(block) })));
     await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }
 
 async function animatePlaytestTurn(state, action) {
   const frames = [];
-  const capture = (label, cells, kind, delay = 360, motions = [], turnActor = null) => {
+  const capture = (label, cells, kind, delay = 360, motions = [], turnActor = null, burst = null) => {
     const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
     frames.push({
       cave: { ...state.cave, layers, playtestPieces: [...state.cave.playtestPieces] },
       terrainHits: [...state.terrainHits], gimmickHits: [...state.gimmickHits],
-      label, cells, kind, delay, motions, turnActor,
+      label, cells, kind, delay, motions, turnActor, burst,
     });
   };
   state.animating = true;
@@ -4865,4 +4867,7 @@ export {
 export function setPuzzleProject(value) { project = value; }
 export function setPuzzlePlaytestState(value) { playtestState = value; }
 export function setPuzzleArtwork(value) { puzzleArtwork = value; }
-export function setPuzzleView(render) { puzzleView = render; }
+export function setPuzzleView(render, burst) {
+  puzzleView = render;
+  puzzleBurst = burst;
+}

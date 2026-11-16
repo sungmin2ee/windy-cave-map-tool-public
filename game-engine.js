@@ -905,7 +905,7 @@ export function createGameEngine(getProject) {
       const triggered = [...expanded.hits].some((index) => !isBarrier(state.cave, index) && specialEffect(state.cave, state.cave.playtestPieces[index]));
       matches = expanded.hits;
       const highlighted = new Set([...matches, ...expanded.targetedTerrain]);
-      captureFrame?.(comboPending?.label ?? (triggered ? "특수 피스 폭발" : "매치"), [...highlighted], "match");
+
       // A blast can break an obstacle without clearing the piece it was protecting.
       const clearableCells = [...matches].filter((index) => !isBarrier(state.cave, index) &&
         !isDdungTreasure(state.cave.layers.block[index]));
@@ -918,6 +918,8 @@ export function createGameEngine(getProject) {
         }
       }
       const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
+      const burst = captureFrame && [...removedBlocks].map((index) => ({ index, block: state.cave.layers.block[index] }));
+      captureFrame?.(comboPending?.label ?? (triggered ? "특수 피스 폭발" : "매치"), [...highlighted], "match", 360, [], null, burst);
       const splashBlocks = expanded.directOnly ? new Set() : removedBlocks;
       const terrainResult = damageTerrainFromMatches(
         state, matches, expanded.targetedTerrain, splashBlocks, expanded.bombPanelIndex, heatherAttacks, expanded.specialHits);
