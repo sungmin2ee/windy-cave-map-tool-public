@@ -227,3 +227,6 @@ body[data-puzzle-player] {
 .puzzle-level label { display: block; margin-top: 8px; font-size: .8rem; color: #d9d3ec; }
 .puzzle-level select { width: auto; min-width: 108px; margin-top: 3px; }
 .puzzle-stars { color: #ffd166; font-size: 1.7rem; letter-spacing: .12em; }
+
+#simulationGrid .ddung-board-gap { visibility: hidden; }
+#simulationGrid .cell-spawner-badge { display: none; }

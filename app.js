@@ -2581,6 +2581,7 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
     cell.className = `map-cell${canActivate || canSwap ? " playable" : ""}${selected ? " selected" : ""}`;
     cell.type = interactive ? "button" : undefined;
     applyCellVisual(cell, cave, index, damage);
+    if (isDdungSource(cave.externalSource) && cave.layers.terrain[index] === "pit") cell.classList.add("ddung-board-gap");
     if (interactive && [playtestState.hint?.first, playtestState.hint?.second].includes(index)) cell.classList.add("hinted");
     const targets = remainingTargets.filter(({ objective }) =>
       matchesObjectiveAsset(objective, cave.layers[objective.layer][index]) &&
@@ -6273,7 +6274,12 @@ function initialPieceAt(cave, index) {
     const declared = cave.initialPieceDefinitions?.find((entry) => entry.id === type);
     return { type, symbol: declared?.symbol || "✦", name: declared?.name };
   }
-  const original = ddungInitialPiece(ddungCellSource(cave, index)?.tile);
+  const sourceTile = ddungCellSource(cave, index)?.tile;
+  // DDUNG's Normal_BEE marker fixes the piece type and rolls its color at setup.
+  if (sourceTile === "⑴" && cave.layers.block[index]) {
+    return { type: 8, color: cave.layers.block[index], symbol: DDUNG_PIECE_ICONS[8], name: "벌" };
+  }
+  const original = ddungInitialPiece(sourceTile);
   const symbol = DDUNG_PIECE_ICONS[original?.type];
   return symbol ? { ...original, symbol, ...(original.type === 8 ? { name: "벌" } : {}) } : null;
 }
