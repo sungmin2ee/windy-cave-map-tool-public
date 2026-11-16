@@ -1,4 +1,4 @@
-import { createPuzzleEffects } from "./puzzle-effects.js?v=2";
+import { createPuzzleEffects } from "./puzzle-effects.js?v=3";
 import {
   $, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,

@@ -1,4 +1,4 @@
-const DEFAULT_VOLUME = 0.35;
+const DEFAULT_VOLUME = 0.45;
 
 export function createPuzzleEffects() {
   let settings = { volume: DEFAULT_VOLUME };
@@ -56,15 +56,16 @@ export function createPuzzleEffects() {
 
     const pop = context.createOscillator();
     pop.type = "triangle";
-    pop.frequency.setValueAtTime(660, time);
-    pop.frequency.exponentialRampToValueAtTime(190, time + 0.09);
+    pop.frequency.setValueAtTime(880, time);
+    pop.frequency.exponentialRampToValueAtTime(300, time + 0.18);
     gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(settings.volume * 0.75, time + 0.008);
-    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
+    gain.gain.linearRampToValueAtTime(settings.volume * 0.8, time + 0.012);
+    gain.gain.exponentialRampToValueAtTime(settings.volume * 0.22, time + 0.09);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.23);
     pop.connect(gain);
     pop.onended = () => gain.disconnect();
     pop.start(time);
-    pop.stop(time + 0.13);
+    pop.stop(time + 0.24);
   }
 
   function showBurst(grid, cells) {
