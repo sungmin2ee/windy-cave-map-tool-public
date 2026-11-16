@@ -3,7 +3,7 @@ import {
   $, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
-} from "./app.js?v=155";
+} from "./app.js?v=156";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.webp",
@@ -17,7 +17,10 @@ const embedded = puzzleParams.get("embed") === "1";
 const requestId = puzzleParams.get("requestId");
 const puzzleEffects = createPuzzleEffects();
 const reportedAttempts = new WeakSet();
-let rules = { threeStars: 0.25, twoStars: 0.10, pointsPerGoalUnit: 0, pointsPerMoveLeft: 0 };
+let rules = {
+  threeStars: 0.25, twoStars: 0.10, pointsPerGoalUnit: 0, pointsPerMoveLeft: 0,
+  scoreTarget: null, pointsPerBlock: 100,
+};
 let versions = { mapVersion: null, themeVersion: null };
 let linkedPuzzle;
 let resultOrigin;
@@ -72,8 +75,10 @@ function clearStarCount(state) {
 }
 
 function puzzleScore(state, won) {
-  const units = state.objectiveProgress.reduce((total, goal) => total + Math.min(goal.current, goal.target), 0);
-  return units * rules.pointsPerGoalUnit + (won ? state.movesLeft * rules.pointsPerMoveLeft : 0);
+  const earned = state.scoreTarget === null
+    ? state.objectiveProgress.reduce((total, goal) => total + Math.min(goal.current, goal.target), 0) * rules.pointsPerGoalUnit
+    : state.blocksRemoved * state.pointsPerBlock;
+  return earned + (won ? state.movesLeft * rules.pointsPerMoveLeft : 0);
 }
 let puzzleIndex = 0;
 
@@ -99,7 +104,7 @@ function beginPuzzle(mapProject, cave, title) {
     throw new Error("이 레벨을 플레이할 수 없습니다. 맵툴의 검증 결과를 확인해 주세요.");
   }
 
-  const state = createPlayState(cave, crypto.randomUUID(), true);
+  const state = createPlayState(cave, crypto.randomUUID(), true, rules);
   $("clearDialog").close();
   setPuzzlePlaytestState(state);
   state.validation = validation;
@@ -140,9 +145,12 @@ function renderPuzzleGoals(state) {
 function renderPuzzlePlayer() {
   const state = playtestState;
   $("movesLeft").textContent = state.movesLeft;
-  $("scoreCard").hidden = !rules.pointsPerGoalUnit && !rules.pointsPerMoveLeft;
+  const scoreMode = state.scoreTarget !== null;
+  $("scoreCard").hidden = !scoreMode && !rules.pointsPerGoalUnit && !rules.pointsPerMoveLeft;
   $("score").textContent = puzzleScore(state, state.status === "won");
-  renderPuzzleGoals(state);
+  $("scoreTarget").textContent = scoreMode ? ` / ${state.scoreTarget}` : "";
+  $("goalCard").hidden = scoreMode;
+  if (!scoreMode) renderPuzzleGoals(state);
 
   const playing = state.status === "playing";
   const won = state.status === "won";
@@ -171,7 +179,9 @@ function renderPuzzlePlayer() {
     }
     $("clearStars").textContent = "★".repeat(stars) + "☆".repeat(3 - stars);
     $("clearStars").setAttribute("aria-label", `별 ${stars}개`);
-    $("clearMessage").textContent = linkedPuzzle || hasNext
+    $("clearMessage").textContent = scoreMode
+      ? `목표 점수 ${state.scoreTarget}점을 달성했어요.`
+      : linkedPuzzle || hasNext
       ? `${$("levelTitle").textContent}의 목표를 달성했어요.`
       : "준비된 레벨을 모두 클리어했어요!";
     $("clearError").textContent = "";
@@ -320,6 +330,7 @@ function reportPuzzleResult(state, outcome) {
     movesUsed: state.cave.moveLimit - state.movesLeft,
     stars: success ? clearStarCount(state) : 0,
     score: puzzleScore(state, success),
+    ...(state.scoreTarget === null ? {} : { scoreTarget: state.scoreTarget }),
   });
 }
 
@@ -330,11 +341,12 @@ async function loadPuzzleRules() {
   if (!response.ok) throw new Error(`규칙 JSON을 읽을 수 없습니다 (HTTP ${response.status}).`);
   const overrides = await response.json();
   const configured = { ...rules, ...overrides };
-  const { threeStars, twoStars, pointsPerGoalUnit, pointsPerMoveLeft } = configured;
+  const { threeStars, twoStars, pointsPerGoalUnit, pointsPerMoveLeft, scoreTarget, pointsPerBlock } = configured;
   if (!overrides || typeof overrides !== "object" || Array.isArray(overrides) ||
       !Number.isFinite(twoStars) || !Number.isFinite(threeStars) ||
       twoStars < 0 || threeStars > 1 || twoStars > threeStars ||
-      ![pointsPerGoalUnit, pointsPerMoveLeft].every((points) => Number.isSafeInteger(points) && points >= 0 && points <= 1000000)) {
+      ![pointsPerGoalUnit, pointsPerMoveLeft, pointsPerBlock].every((points) => Number.isSafeInteger(points) && points >= 0 && points <= 1000000) ||
+      (scoreTarget !== null && (!Number.isSafeInteger(scoreTarget) || scoreTarget <= 0 || !pointsPerBlock))) {
     throw new Error("별점 기준 또는 점수 설정을 확인해 주세요.");
   }
   rules = configured;

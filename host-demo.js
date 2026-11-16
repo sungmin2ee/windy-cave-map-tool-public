@@ -40,6 +40,8 @@ get("launch").addEventListener("submit", (event) => {
   for (const [key, value] of new FormData(event.currentTarget)) {
     if (value.trim()) url.searchParams.set(key, value.trim());
   }
+  const presetRules = event.submitter?.dataset.rules;
+  if (presetRules) url.searchParams.set("rules", presetRules);
   url.searchParams.set("embed", "1");
   url.searchParams.set("requestId", id);
   url.searchParams.set("resultOrigin", location.origin);

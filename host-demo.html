@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>퍼즐 연동 데모</title>
   <link rel="stylesheet" href="./host-demo.css">
-  <script type="module" src="./host-demo.js"></script>
+  <script type="module" src="./host-demo.js?v=2"></script>
 </head>
 <body>
   <main>
@@ -20,6 +20,7 @@
         <label>테마 버전 <input name="themeVersion" value="1"></label>
         <label>규칙 JSON <input name="rules" value="./releases/web-demo/v1/rules-v1.json"></label>
         <button id="start">퍼즐 시작</button>
+        <button data-rules="./releases/web-demo/v1/score-rules-v1.json">500점 도전</button>
       </form>
       <p id="status" role="status"></p>
       <p>예제 코인 <strong id="coins">0</strong></p>

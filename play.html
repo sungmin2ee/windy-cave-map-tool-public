@@ -7,7 +7,7 @@
   <title>DDUNG 퍼즐</title>
   <link rel="stylesheet" href="./styles.css?v=25">
   <link rel="stylesheet" href="./play.css?v=11">
-  <script type="module" src="./play.js?v=15"></script>
+  <script type="module" src="./play.js?v=16"></script>
 </head>
 <body data-puzzle-player>
   <main class="puzzle-shell">
@@ -22,8 +22,8 @@
       </div>
       <div class="puzzle-hud">
         <div class="puzzle-hud-card puzzle-moves">남은 이동<strong id="movesLeft">—</strong></div>
-        <div class="puzzle-hud-card puzzle-moves" id="scoreCard" hidden>점수<strong id="score">0</strong></div>
-        <section class="puzzle-hud-card" aria-labelledby="goalTitle">
+        <div class="puzzle-hud-card puzzle-moves" id="scoreCard" hidden>점수<strong><span id="score">0</span><span id="scoreTarget"></span></strong></div>
+        <section class="puzzle-hud-card" id="goalCard" aria-labelledby="goalTitle">
           <div id="goalTitle">목표</div>
           <ul id="goals" class="puzzle-goals"></ul>
         </section>

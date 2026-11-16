@@ -269,7 +269,8 @@ export function createGameEngine(getProject) {
     });
   }
 
-  function allObjectivesComplete(state) {
+  function clearConditionMet(state) {
+    if (state.scoreTarget !== null) return state.blocksRemoved * state.pointsPerBlock >= state.scoreTarget;
     return !state.goalLimitations.some(Boolean) && state.objectiveProgress.length > 0 &&
       state.objectiveProgress.every((progress, index) => {
         const objective = state.cave.objectives[index];
@@ -1095,6 +1096,7 @@ export function createGameEngine(getProject) {
       });
     }
     applyHeatherCounterattacks(state, heatherAttacks, captureFrame);
+    state.blocksRemoved += removed;
     return { cascade, removed, terrainDamaged, terrainBroken, flowMoves, capped: matches.size > 0 };
   }
 
@@ -1715,7 +1717,7 @@ export function createGameEngine(getProject) {
       const explosion = bombPanelHits(state, first, state.beeRandom);
       resolveMatches(state, captureFrame, [first], [], explosion);
       state.message = explosion.label;
-      if (allObjectivesComplete(state)) state.status = "won";
+      if (clearConditionMet(state)) state.status = "won";
       else ensurePlayableBoard(state, captureFrame);
       return;
     }
@@ -1768,17 +1770,17 @@ export function createGameEngine(getProject) {
       }
     }
     state.turnPanelsHit.clear();
-    if (allObjectivesComplete(state)) state.status = "won";
+    if (clearConditionMet(state)) state.status = "won";
     else if (!state.movesLeft) state.status = "lost";
     else {
       spreadDdungChocolate(state, captureFrame);
       runDdungTurnEvent(state, captureFrame);
-      if (allObjectivesComplete(state)) state.status = "won";
+      if (clearConditionMet(state)) state.status = "won";
       else ensurePlayableBoard(state, captureFrame);
     }
   }
 
-  function createPlayState(cave, seedSuffix, manual = false) {
+  function createPlayState(cave, seedSuffix, manual = false, { scoreTarget = null, pointsPerBlock = 0 } = {}) {
     const copy = deepCopy(cave);
     copy.layers.block.forEach((id, index) => {
       const item = copy.layers.item[index];
@@ -1797,6 +1799,9 @@ export function createGameEngine(getProject) {
     const state = {
       cave: copy,
       movesLeft: copy.moveLimit,
+      blocksRemoved: 0,
+      scoreTarget,
+      pointsPerBlock,
       paused: manual,
       selectedIndex: null,
       status: "playing",
@@ -1843,7 +1848,7 @@ export function createGameEngine(getProject) {
       collectDdungTreasure(state);
       refillBlocks(state);
     }
-    if (allObjectivesComplete(state)) state.status = "won";
+    if (clearConditionMet(state)) state.status = "won";
     else ensurePlayableBoard(state);
     return state;
   }
