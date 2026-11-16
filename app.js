@@ -2732,7 +2732,7 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
 
 function blockMatchKey(cave, index) {
   const color = cave.layers.block[index];
-  return isDdungSource(cave.externalSource) && cave.playtestPieces?.[index]?.type === "6"
+  return isDdungSource(cave.externalSource) && String(cave.playtestPieces?.[index]?.type) === "6"
     ? `seal:${color}` : color;
 }
 
@@ -3492,7 +3492,7 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
       !isDdungTreasure(state.cave.layers.block[index]));
     if (isDdungSource(state.cave.externalSource)) {
       for (const index of clearableCells) {
-        if (state.cave.playtestPieces[index]?.type === "6") {
+        if (String(state.cave.playtestPieces[index]?.type) === "6") {
           // Keep the unsealed block through this cascade, including any gravity movement.
           created.set(index, { unsealed: true });
         }
@@ -5610,7 +5610,8 @@ function applyDdungTile(layers, index, character, unknownTokens) {
   for (const [color, characters] of Object.entries(DDUNG_BLOCK_CHARACTERS)) {
     if (characters.includes(character)) { layers.block[index] = color; return; }
   }
-  if (".ㄱㄲㄳ⑴ㄴy".includes(character)) return;
+  if (character === "ㄴ") { layers.block[index] = "yellow"; return; }
+  if (".ㄱㄲㄳ⑴y".includes(character)) return;
   if ("⒜⒝⒞⒟⒠⒡⒢⒣⒤⒥".includes(character)) {
     layers.terrain[index] = "ddung-frost";
     if ("⒡⒢⒣⒤⒥".includes(character)) layers.block[index] = "ddung-dust-piece";
@@ -5709,10 +5710,17 @@ function adaptDdungMapInfo(source, index, format, unknownTokens, tileReporter) {
     const cellIndex = ddungGridIndex(size, Number(group[2]), Number(group[3]));
     if (cellIndex >= 0) addMarker(cellIndex, "switch");
   });
+  const frozenRolls = new Set();
   ddungPositionGroups(source.watercolors, 4).forEach((group) => {
     const cellIndex = ddungGridIndex(size, Number(group[0]), Number(group[1]));
-    const color = DDUNG_COLOR_IDS[Number(group[2]) - 1];
-    if (cellIndex >= 0 && color && layers.block[cellIndex] !== "ddung-dust-piece") layers.block[cellIndex] = color;
+    if (cellIndex < 0 || layers.block[cellIndex] === "ddung-dust-piece") return;
+    const tile = tiles[(size - 1 - Math.floor(cellIndex / size)) * size + cellIndex % size];
+    const piece = ddungInitialPiece(tile, Number(group[2]), Number(group[3]));
+    if (piece?.color) layers.block[cellIndex] = piece.color;
+    else if (piece?.type && ["ddung-ice", "ddung-frost"].includes(layers.terrain[cellIndex])) {
+      // The original board keeps the rolled piece under the frozen panel.
+      frozenRolls.add(cellIndex);
+    }
   });
   const usableBlocks = [...new Set(String(source.colors || "").split(",")
     .map((value) => value.trim())
@@ -5754,7 +5762,8 @@ function adaptDdungMapInfo(source, index, format, unknownTokens, tileReporter) {
   }, index);
   const random = seededRandom(`${cave.randomSeed}|import`);
   for (let cellIndex = 0; cellIndex < cave.layers.block.length; cellIndex += 1) {
-    if (cave.layers.block[cellIndex] || isBarrier(cave, cellIndex)) continue;
+    const needsRoll = frozenRolls.has(cellIndex);
+    if (!needsRoll && (cave.layers.block[cellIndex] || isBarrier(cave, cellIndex))) continue;
     const colors = cave.usableBlocks.filter((color) => blockWeight(cave, color) > 0);
     const candidates = colors.filter((color) => !wouldCreateMatch(cave.layers.block, cellIndex, color, cave));
     cave.layers.block[cellIndex] = chooseBlockColor(cave, candidates.length ? candidates : colors, random);
@@ -6256,14 +6265,20 @@ function ddungCellSource(cave, index) {
 }
 
 // Display symbols distinguish original piece types without assigning gameplay effects.
-const DDUNG_PIECE_ICONS = Object.freeze({ 1: "◆", 2: "▲", 3: "■", 6: "✚", 8: "🐝" });
+const DDUNG_PIECE_ICONS = Object.freeze({ 1: "◆", 2: "▲", 3: "■", 5: "✦", 6: "✚", 8: "🐝" });
 
-function ddungInitialPiece(tile) {
+function ddungInitialPiece(tile, waterColor, waterType) {
   if (!tile) return null;
+  const randomTypes = { "ㄱ": 1, "ㄲ": 2, "ㄳ": 3, "ㄴ": 5, "⑴": 8 };
+  if (Object.hasOwn(randomTypes, tile)) return { type: randomTypes[tile], color: tile === "ㄴ" ? "yellow" : undefined };
   for (const [color, tokens] of Object.entries(DDUNG_BLOCK_CHARACTERS)) {
     const variant = tokens.indexOf(tile);
     if (variant >= 0) return { color, type: variant === 5 ? 8 : variant === 4 ? 6 : variant };
   }
+  if (waterColor === 7) return { type: ({ 1: 1, 2: 2, 3: 3, 5: 8 })[waterType] || 0,
+    color: waterType === 6 ? "yellow" : undefined };
+  const color = DDUNG_COLOR_IDS[waterColor - 1];
+  if (color) return { color, type: ({ 1: 1, 2: 2, 3: 3, 4: 6, 5: 8 })[waterType] || 0 };
   return null;
 }
 
@@ -6274,14 +6289,13 @@ function initialPieceAt(cave, index) {
     const declared = cave.initialPieceDefinitions?.find((entry) => entry.id === type);
     return { type, symbol: declared?.symbol || "✦", name: declared?.name };
   }
-  const sourceTile = ddungCellSource(cave, index)?.tile;
-  // DDUNG's Normal_BEE marker fixes the piece type and rolls its color at setup.
-  if (sourceTile === "⑴" && cave.layers.block[index]) {
-    return { type: 8, color: cave.layers.block[index], symbol: DDUNG_PIECE_ICONS[8], name: "벌" };
-  }
-  const original = ddungInitialPiece(sourceTile);
+  const source = ddungCellSource(cave, index);
+  if (!source || !cave.layers.block[index]) return null;
+  const water = ddungPositionGroups(source.raw.watercolors, 4).find((group) =>
+    Number(group[0]) === source.x && Number(group[1]) === Math.floor(index / cave.width));
+  const original = ddungInitialPiece(source.tile, Number(water?.[2]), Number(water?.[3]));
   const symbol = DDUNG_PIECE_ICONS[original?.type];
-  return symbol ? { ...original, symbol, ...(original.type === 8 ? { name: "벌" } : {}) } : null;
+  return symbol ? { ...original, color: original.color || cave.layers.block[index], symbol, ...(original.type === 8 ? { name: "벌" } : {}) } : null;
 }
 
 function describeCellProperties(cave, index) {
