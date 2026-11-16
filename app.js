@@ -114,7 +114,7 @@ const ASSETS = {
     { id: "arrow-up", name: "Arrow Up", visual: "↑" },
     { id: "arrow-down", name: "Arrow Down", visual: "↓" },
     { id: SPAWNER_ID, name: "Spawner", visual: "✦" },
-    { id: "exit", name: "Exit", visual: "⇥" },
+    { id: "exit", name: "Exit", visual: "⇥", className: "cell-exit" },
     { id: "ddung-box", name: "DDUNG Box", visual: "□" },
     { id: "ddung-mouse-panel", name: "DDUNG Mouse Panel", visual: "◉" },
     { id: "ddung-dungs", name: "DDUNG Dungs", visual: "♟" },
@@ -723,7 +723,8 @@ function getAsset(layer, id, cave = activeCave()) {
     (id === "switch" || id.startsWith("ddung-") || isDdungSource(cave?.externalSource)) ? DDUNG_GIMMICK_ART[baseId] : null);
   const iceArt = id === "ddung-octo" ? "./art/ddung/ice-bag.png" :
     id === "ddung-frost" ? "./art/ddung/frost-3.png" : null;
-  const image = definition?.image || iceArt || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
+  const exitArt = layer === "gimmick" && id === "exit" ? "./art/ddung/exit.png" : null;
+  const image = definition?.image || exitArt || iceArt || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
     itemArt ? `./art/ddung/item-${id === "ddung-bomb-panel" ? "bomb" : id}.webp` : original ? `./art/ddung/${id}.png` : null);
   return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer],
     ...known, id, name: definition?.name || known?.name || id, image, panelMark: panel && "AQZY1234r".includes(panel[0]) ? panel[2] : null };
@@ -1523,11 +1524,20 @@ function applyCellVisual(cell, cave, index, damage = null) {
     cell.appendChild(visual);
   }
   const markers = ddungMarkersAt(cave, index);
-  if (markers.length) {
+  const otherMarkers = markers.filter((id) => id !== "exit");
+  if (markers.includes("exit")) {
+    const exit = document.createElement("span");
+    exit.className = "cell-gimmick cell-exit";
+    exit.title = getAsset("gimmick", "exit", cave).name;
+    exit.textContent = "⇥";
+    showObjectImage(exit, puzzleArtwork?.layers.gimmick?.exit || getAsset("gimmick", "exit", cave).image);
+    cell.appendChild(exit);
+  }
+  if (otherMarkers.length) {
     const badge = document.createElement("span");
     badge.className = "ddung-overlapping-markers";
-    badge.textContent = markers.map((id) => ({ "teleport-a": "A", "teleport-b": "B" })[id] || getAsset("gimmick", id, cave)?.visual || "·").join(" ");
-    badge.title = markers.map((id) => getAsset("gimmick", id, cave)?.name || id).join(" · ");
+    badge.textContent = otherMarkers.map((id) => ({ "teleport-a": "A", "teleport-b": "B" })[id] || getAsset("gimmick", id, cave)?.visual || "·").join(" ");
+    badge.title = otherMarkers.map((id) => getAsset("gimmick", id, cave)?.name || id).join(" · ");
     cell.appendChild(badge);
   }
 }

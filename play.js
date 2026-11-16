@@ -2,7 +2,7 @@ import {
   $, activeCave, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
-} from "./app.js?v=151";
+} from "./app.js?v=152";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.png",
