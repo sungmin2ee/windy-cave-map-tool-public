@@ -164,7 +164,7 @@ document.addEventListener("contextmenu", (event) => event.preventDefault());
 
 async function loadPuzzleMaps() {
   try {
-    const response = await fetch("./play-maps.json");
+    const response = await fetch("./play-maps.json?v=2");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     puzzleMaps = await response.json();
     if (puzzleMaps.mapinfos?.[0]?.level !== 1) throw new Error("레벨 1 누락");
