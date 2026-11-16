@@ -13,8 +13,10 @@ function startPuzzle(index) {
     throw new Error("이 레벨을 불러올 수 없습니다.");
   }
 
+  const state = createPlayState(cave, crypto.randomUUID(), true);
+  $("clearDialog").close();
   puzzleIndex = index;
-  playtestState = createPlayState(cave, crypto.randomUUID(), true);
+  playtestState = state;
   playtestState.validation = validation;
   $("levelTitle").textContent = `레벨 ${level.level}`;
   renderPlaytest();
@@ -38,19 +40,34 @@ function renderPuzzlePlayer() {
   $("hint").hidden = !playing;
   $("next").hidden = !won || !hasNext;
   renderSimulationGrid(state.cave, playing);
+
+  const dialog = $("clearDialog");
+  if (won && !dialog.open) {
+    $("clearMessage").textContent = hasNext
+      ? `${$("levelTitle").textContent}의 목표를 달성했어요.`
+      : "준비된 레벨을 모두 클리어했어요!";
+    $("clearError").textContent = "";
+    $("clearNext").hidden = !hasNext;
+    dialog.showModal();
+    $(hasNext ? "clearNext" : "clearRestart").focus();
+  }
 }
 
 function tryStartPuzzle(index) {
   try {
     startPuzzle(index);
   } catch (error) {
-    $("playtestFrameStatus").textContent = error.message;
+    $($("clearDialog").open ? "clearError" : "playtestFrameStatus").textContent = error.message;
   }
 }
 
 $("restart").addEventListener("click", () => tryStartPuzzle(puzzleIndex));
 $("hint").addEventListener("click", showPlaytestHint);
 $("next").addEventListener("click", () => tryStartPuzzle(puzzleIndex + 1));
+
+$("clearRestart").addEventListener("click", () => tryStartPuzzle(puzzleIndex));
+$("clearNext").addEventListener("click", () => tryStartPuzzle(puzzleIndex + 1));
+document.addEventListener("contextmenu", (event) => event.preventDefault());
 
 async function loadPuzzleMaps() {
   try {
