@@ -169,6 +169,12 @@ body[data-puzzle-player] {
 .puzzle-moves { text-align: center; min-width: 76px; }
 .puzzle-moves strong { display: block; font-size: 1.65rem; }
 #simulationDialog.puzzle-stage { width: 100%; min-width: 0; max-height: none; margin: 16px 0 0; padding: 14px; border: 1px solid #424969; border-radius: 18px; background: #171d34; color: inherit; }
+.puzzle-stage .simulation-grid,
+.puzzle-stage .simulation-grid * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
 .puzzle-stage .simulation-grid {
   --cell-size: min(calc(100% / var(--board-columns) - 3px), clamp(26px, calc(57dvh / var(--board-rows) - 3px), 65px));
   max-height: none;
