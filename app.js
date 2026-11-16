@@ -766,7 +766,7 @@ function ddungGoalLimitation(cave, objective) {
   if (type >= 1 && type <= 6) {
     const specialColors = cave.externalSource.specialColors;
     if (!Array.isArray(specialColors)) return "원본 JSON을 다시 가져와 특수 블록 목표 여부를 확인하세요.";
-    return specialColors.includes(objective.targetId) ? "특수 블록 목표" : null;
+    return null;
   }
   if (type === 11 || type === 12) return null;
   if (type === 9 && objective.targetId !== "ddung-dust-piece") return "먼지 목표를 판정하려면 원본 JSON을 다시 가져오세요.";
@@ -1526,7 +1526,7 @@ function applyCellVisual(cell, cave, index, damage = null) {
       visual.style.background = blockColor(assetId);
       if (assetId === "ddung-dust-piece") visual.textContent = asset.visual;
       const piece = cave.playtestPieces ? cave.playtestPieces[index] : initialPieceAt(cave, index);
-      if (piece && (!piece.color || piece.color === assetId)) {
+      if (piece && !piece.unsealed && (!piece.color || piece.color === assetId)) {
         const badge = document.createElement("span");
         badge.className = "initial-piece-badge";
         badge.textContent = piece.symbol;
@@ -2729,10 +2729,16 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
   if (!dialogAlreadyOpen) $("simulationDialog").showModal();
 }
 
+function blockMatchKey(cave, index) {
+  const color = cave.layers.block[index];
+  return isDdungSource(cave.externalSource) && cave.playtestPieces?.[index]?.type === "6"
+    ? `seal:${color}` : color;
+}
+
 function findMatches(cave, runs, protectedCells) {
   const matches = new Set();
   const blocks = cave.layers.block.map((color, index) =>
-    color && color !== "ddung-dust-piece" && !isDdungTreasure(color) && !protectedCells?.has(index) && !isBarrier(cave, index) ? color : null);
+    color && color !== "ddung-dust-piece" && !isDdungTreasure(color) && !protectedCells?.has(index) && !isBarrier(cave, index) ? blockMatchKey(cave, index) : null);
   for (let y = 0; y < cave.height; y += 1) {
     let start = 0;
     for (let x = 1; x <= cave.width; x += 1) {
@@ -3253,6 +3259,14 @@ function collectDdungTreasure(state) {
   return collected;
 }
 
+function spawnPlaytestBlock(state, index, color) {
+  const { cave } = state;
+  cave.layers.block[index] = color;
+  if (state.sealRandom && cave.externalSource.specialColors.includes(color) && state.sealRandom() < 0.5) {
+    cave.playtestPieces[index] = { type: "6", color, name: "봉인 블록", symbol: "✚" };
+  }
+}
+
 function refillBlocks(state, origins, trackMove) {
   const { cave } = state;
   const colors = cave.usableBlocks;
@@ -3271,7 +3285,7 @@ function refillBlocks(state, origins, trackMove) {
   if (!sources) {
     cave.layers.block.forEach((block, index) => {
       if (block || isBarrier(cave, index)) return;
-      cave.layers.block[index] = chooseRefillColor(state, colors);
+      spawnPlaytestBlock(state, index, chooseRefillColor(state, colors));
       if (cave.layers.block[index]) origins?.set(index, { from: index, spawned: true });
     });
     return;
@@ -3283,7 +3297,7 @@ function refillBlocks(state, origins, trackMove) {
       if (cave.layers.block[index] || isBarrier(cave, index)) continue;
       const block = chooseDdungTreasure(state) ?? chooseRefillColor(state, colors);
       if (!block) continue;
-      cave.layers.block[index] = block;
+      spawnPlaytestBlock(state, index, block);
       origins?.set(index, { from: index, spawned: true });
       spawned = true;
     }
@@ -3475,6 +3489,14 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     // A blast can break an obstacle without clearing the piece it was protecting.
     const clearableCells = [...matches].filter((index) => !isBarrier(state.cave, index) &&
       !isDdungTreasure(state.cave.layers.block[index]));
+    if (isDdungSource(state.cave.externalSource)) {
+      for (const index of clearableCells) {
+        if (state.cave.playtestPieces[index]?.type === "6") {
+          // Keep the unsealed block through this cascade, including any gravity movement.
+          created.set(index, { unsealed: true });
+        }
+      }
+    }
     const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
     const splashBlocks = expanded.directOnly ? new Set() : removedBlocks;
     const terrainResult = damageTerrainFromMatches(
@@ -3593,7 +3615,8 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
     });
     if (convertedBoxes.length) captureFrame?.("철 상자 → 일반 상자", convertedBoxes, "match");
     for (const piece of created.values()) newPieces.add(piece);
-    captureFrame?.(created.size ? "특수 피스 생성" : "블록 제거", created.size ? [...created.keys()] : [...matches], "match");
+    const newSpecialCells = [...created].filter(([, piece]) => !piece.unsealed).map(([index]) => index);
+    captureFrame?.(newSpecialCells.length ? "특수 피스 생성" : "매치 결과", newSpecialCells.length ? newSpecialCells : [...matches], "match");
     comboPending = null;
     if (gimmickAttack.size && cascade < 19) {
       captureFrame?.("기믹 발동", [...gimmickAttack], "match");
@@ -3644,6 +3667,11 @@ function resolveMatches(state, captureFrame, activation = [], preferred = [], co
       matches = findMatches(state.cave, runs, protectedCells);
     }
   }
+  if (isDdungSource(state.cave.externalSource)) {
+    state.cave.playtestPieces.forEach((piece, index) => {
+      if (piece?.unsealed) state.cave.playtestPieces[index] = null;
+    });
+  }
   applyHeatherCounterattacks(state, heatherAttacks, captureFrame);
   return { cascade, removed, terrainDamaged, terrainBroken, flowMoves, capped: matches.size > 0 };
 }
@@ -3679,7 +3707,8 @@ function remainingObjectiveCount(state, objective, index) {
 function scoreAutoMove(state, { hits, targetedTerrain, bombPanelIndex, specialHits }, goals, created = new Map()) {
   const { cave } = state;
   const clearableCells = [...hits].filter((index) => !isBarrier(cave, index) && !isDdungTreasure(cave.layers.block[index]));
-  const removedBlocks = new Set(clearableCells.filter((index) => cave.layers.block[index] && !created.has(index)));
+  const removedBlocks = new Set(clearableCells.filter((index) => cave.layers.block[index] && !created.has(index) &&
+    blockMatchKey(cave, index) === cave.layers.block[index]));
   const terrain = goals.some(({ objective }) => objective.layer === "terrain")
     ? [...terrainHitResults(state, hits, targetedTerrain, removedBlocks, bombPanelIndex, specialHits)] : [];
   const gimmicks = goals.some(({ objective }) => objective.layer === "gimmick")
@@ -3711,7 +3740,12 @@ function scoreAutoMove(state, { hits, targetedTerrain, bombPanelIndex, specialHi
       }
     } else if (layer === "block" || layer === "item") {
       const cells = layer === "block" ? [...removedBlocks] : clearableCells;
-      progress += Math.min(remaining, cells.filter((index) => matchesId(cave.layers[layer][index])).length);
+      const count = cells.filter((index) => matchesId(cave.layers[layer][index])).length;
+      progress += Math.min(remaining, count);
+      if (layer === "block" && count < remaining) {
+        damage += clearableCells.filter((index) => matchesId(cave.layers.block[index]) &&
+          blockMatchKey(cave, index) !== cave.layers.block[index]).length;
+      }
     }
   }
   return { progress, damage, hitCount: new Set([...hits, ...targetedTerrain]).size };
@@ -3734,7 +3768,7 @@ function listPossibleSwaps(state, firstOnly = false, goals = []) {
         candidates.push({ ...action, score: scoreAutoMove(state, specialComboHits(state, first, second, state.beeRandom.copy()), goals) });
         continue;
       }
-      if (!blocks[second] || blocks[first] === blocks[second] || isSwapBlocked(cave, second)) continue;
+      if (!blocks[second] || blockMatchKey(cave, first) === blockMatchKey(cave, second) || isSwapBlocked(cave, second)) continue;
       swapPlaytestBlocks(cave, first, second);
       const runs = firstOnly ? undefined : [];
       const matches = findMatches(cave, runs);
@@ -3813,7 +3847,7 @@ const DEFAULT_SPECIAL_EFFECTS = Object.freeze({ horizontal: "row", vertical: "co
 const DDUNG_SPECIAL_EFFECTS = Object.freeze({ 1: "row", 2: "column", 3: "area", 5: "color", 8: "fish" });
 
 function specialEffect(cave, piece) {
-  if (!piece) return null;
+  if (!piece || piece.unsealed) return null;
   const id = String(piece.type);
   const declared = projectSpecialDefinition(cave, id);
   if (declared?.effect === "none") return null;
@@ -4359,6 +4393,8 @@ function createPlayState(cave, seedSuffix, manual = false) {
     random: seededRandom(`${copy.randomSeed}|${seedSuffix}`),
     shuffleRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|shuffle`),
     shuffleCount: 0,
+    sealRandom: isDdungSource(copy.externalSource) && copy.externalSource.specialColors?.length
+      ? seededRandom(`${copy.randomSeed}|${seedSuffix}|seals`) : null,
     beeRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|bee`),
     treasureRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|treasure`),
     gimmickRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|gimmick`),
@@ -4379,6 +4415,11 @@ function createPlayState(cave, seedSuffix, manual = false) {
     goalLimitations: copy.objectives.map((objective) => ddungGoalLimitation(copy, objective)),
     flowTurn: 0,
   };
+  if (state.sealRandom) {
+    copy.layers.block.forEach((color, index) => {
+      if (color && !copy.playtestPieces[index] && !isBarrier(copy, index)) spawnPlaytestBlock(state, index, color);
+    });
+  }
   if ((isDdungSource(copy.externalSource) || (copy.layers.gimmick.includes(SPAWNER_ID) || copy.generatedSpawnerOverlaps?.length)) &&
       copy.layers.block.some((block, index) => !block && !isBarrier(copy, index))) {
     applyGravity(copy, state);
