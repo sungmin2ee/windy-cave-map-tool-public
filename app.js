@@ -5574,7 +5574,7 @@ function applyDdungTile(layers, index, character, unknownTokens) {
     if ("⒡⒢⒣⒤⒥".includes(character)) layers.block[index] = "ddung-dust-piece";
     return;
   }
-  const dustTerrain = { D: "floor", C: "ddung-frost", V: "ddung-web", E: "ddung-ice", 6: "ddung-water", 7: "ddung-stone", 8: "ddung-stone-thick" };
+  const dustTerrain = { D: "floor", C: "ddung-frost", V: "ddung-web", E: "ddung-ice", 6: "ddung-water", "⒫": "ddung-water", "⒬": "ddung-water", "⒭": "ddung-water", "⒮": "ddung-water", "⒯": "ddung-water", 7: "ddung-stone", 8: "ddung-stone-thick" };
   if (Object.hasOwn(dustTerrain, character)) {
     layers.terrain[index] = dustTerrain[character];
     layers.block[index] = "ddung-dust-piece";
@@ -5582,7 +5582,7 @@ function applyDdungTile(layers, index, character, unknownTokens) {
   }
   const terrainCharacters = [
     ["ddung-web", "W"], ["ddung-frost", "I"], ["ddung-oak", "!@#$"],
-    ["ddung-stone", "F"], ["ddung-stone-thick", "G"], ["ddung-water", "U⒦⒧⒨⒩⒪⒫⒬⒭⒮⒯"],
+    ["ddung-stone", "F"], ["ddung-stone-thick", "G"], ["ddung-water", "U⒦⒧⒨⒩⒪"],
     ["ddung-ice", "N"], ["ddung-heather-small", "s"], ["ddung-heather-large", "tuvw"],
     ["ddung-jelly", "①②③④⑤⑥⑦⑧⑨⑩ⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ"],
   ];

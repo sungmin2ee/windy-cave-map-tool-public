@@ -217,3 +217,7 @@ body[data-puzzle-player] {
 .puzzle-goal { display: grid; justify-items: center; min-width: 44px; white-space: nowrap; }
 .puzzle-goal-icon { position: relative; display: grid; place-items: center; width: 28px; height: 28px; font-size: 18px; }
 .puzzle-goal-icon.has-object-image { color: transparent !important; }
+
+.puzzle-level label { display: block; margin-top: 8px; font-size: .8rem; color: #d9d3ec; }
+.puzzle-level select { width: auto; min-width: 108px; margin-top: 3px; }
+.puzzle-stars { color: #ffd166; font-size: 1.7rem; letter-spacing: .12em; }

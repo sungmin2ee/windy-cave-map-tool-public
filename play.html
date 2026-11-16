@@ -6,14 +6,19 @@
   <meta name="theme-color" content="#171d34">
   <title>DDUNG 퍼즐</title>
   <link rel="stylesheet" href="./styles.css?v=24">
-  <link rel="stylesheet" href="./play.css?v=6">
-  <script src="./app.js?v=145" defer></script>
-  <script src="./play.js?v=4" defer></script>
+  <link rel="stylesheet" href="./play.css?v=7">
+  <script src="./app.js?v=146" defer></script>
+  <script src="./play.js?v=5" defer></script>
 </head>
 <body data-puzzle-player>
   <main class="puzzle-shell">
     <header class="puzzle-heading">
-      <div><p>DDUNG 퍼즐</p><h1 id="levelTitle">레벨 1</h1></div>
+      <div class="puzzle-level">
+        <p>DDUNG 퍼즐</p>
+        <h1 id="levelTitle">레벨 1</h1>
+        <label for="levelSelect">레벨 선택</label>
+        <select id="levelSelect" class="field" disabled></select>
+      </div>
       <div class="puzzle-hud">
         <div class="puzzle-hud-card puzzle-moves">남은 이동<strong id="movesLeft">—</strong></div>
         <section class="puzzle-hud-card" aria-labelledby="goalTitle">
@@ -37,6 +42,7 @@
   <dialog id="clearDialog" class="puzzle-clear" aria-labelledby="clearTitle">
     <h2 id="clearTitle">클리어!</h2>
     <p id="clearMessage"></p>
+    <p id="clearStars" class="puzzle-stars"></p>
     <p id="clearError" role="alert"></p>
     <div class="puzzle-actions">
       <button type="button" class="button" id="clearRestart">다시 시작</button>
