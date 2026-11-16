@@ -1,0 +1,19 @@
+{
+  "version": "1",
+  "block": {
+    "blue": "./green.webp",
+    "green": "./blue.webp",
+    "purple": "./orange.webp",
+    "orange": "./purple.webp"
+  },
+  "goals": {
+    "ddung-water": "./water-goal.webp"
+  },
+  "effects": {
+    "blockBurst": {
+      "particle": "./spark.webp",
+      "sound": "./pop.wav",
+      "volume": 0.65
+    }
+  }
+}
