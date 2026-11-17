@@ -1,4 +1,4 @@
-import { createGameEngine } from "./game-engine.js?v=4";
+import { createGameEngine } from "./game-engine.js?v=5";
 
 const {
   SPAWNER_ID,
@@ -1433,8 +1433,8 @@ const DDUNG_SPECIAL_ART_ROWS = Object.freeze({
 });
 const DDUNG_SPECIAL_ART_COLORS = ["red", "blue", "green", "purple", "orange", "yellow"];
 
-function showDdungSpecialImage(element, cave, piece, color, fallbackImage, badge) {
-  if (!isDdungSource(cave.externalSource) || !Object.hasOwn(DDUNG_SPECIAL_ART_ROWS, piece.type)) return false;
+function showDdungSpecialImage(element, piece, color, fallbackImage, badge) {
+  if (!Object.hasOwn(DDUNG_SPECIAL_ART_ROWS, piece.type)) return false;
   const row = DDUNG_SPECIAL_ART_ROWS[piece.type];
   const column = row === 5 ? 0 : DDUNG_SPECIAL_ART_COLORS.indexOf(color);
   if (column < 0) return false;
@@ -1509,7 +1509,8 @@ function applyCellVisual(cell, cave, index, damage = null) {
           showObjectImage(visual, specialArtwork);
           usesSpecialImage = true;
         } else {
-          usesSpecialImage = showDdungSpecialImage(visual, cave, piece, assetId, artwork || asset.image, badge);
+          usesSpecialImage = isDdungSource(cave.externalSource) &&
+            showDdungSpecialImage(visual, piece, assetId, artwork || asset.image, badge);
         }
       }
     }
@@ -2899,6 +2900,36 @@ function startBatchReplay(cave, validation, example) {
   runAnimatedPlaytest(playtestState);
 }
 
+function animateBeeFlights(grid, cave, flights, duration) {
+  const board = grid.getBoundingClientRect();
+  for (const { from, to } of flights) {
+    const start = grid.children[from].getBoundingClientRect();
+    const end = grid.children[to].getBoundingClientRect();
+    const size = start.width * 0.86;
+    const x = end.left + end.width / 2 - start.left - start.width / 2;
+    const y = end.top + end.height / 2 - start.top - start.height / 2;
+    const lift = Math.min(start.height, Math.hypot(x, y) * 0.28);
+    const sprite = document.createElement("span");
+    const fallback = document.createElement("span");
+    sprite.className = "playtest-turn-actor playtest-bee-flight";
+    sprite.setAttribute("aria-hidden", "true");
+    sprite.style.left = `${start.left - board.left - grid.clientLeft + (start.width - size) / 2}px`;
+    sprite.style.top = `${start.top - board.top - grid.clientTop + (start.height - size) / 2}px`;
+    sprite.style.width = sprite.style.height = `${size}px`;
+    sprite.style.fontSize = `${size * 0.8}px`;
+    sprite.style.lineHeight = "1";
+    fallback.textContent = "🐝";
+    sprite.append(fallback);
+    showDdungSpecialImage(sprite, { type: "bee" }, cave.layers.block[from], null, fallback);
+    grid.append(sprite);
+    sprite.animate([
+      { transform: "translate(0, 0) scale(0.8)" },
+      { transform: `translate(${x * 0.5}px, ${y * 0.5 - lift}px) scale(1.14)`, offset: 0.5 },
+      { transform: `translate(${x}px, ${y}px) scale(0.8)` },
+    ], { duration, fill: "both", easing: "ease-in-out" });
+  }
+}
+
 function animateDdungTurnActor(grid, { type, index }, duration) {
   const cell = grid.children[index];
   if (!cell) return;
@@ -2985,7 +3016,8 @@ async function showPlaytestFrames(state, frames) {
         { transform: "translate(0, 0)", opacity: 1 },
       ], { duration: delay, easing: "ease-out" }));
     }
-    if (frame.turnActor) animateDdungTurnActor(grid, frame.turnActor, delay);
+    if (frame.turnActor?.type === "bee") animateBeeFlights(grid, frame.cave, frame.turnActor.flights, delay);
+    else if (frame.turnActor) animateDdungTurnActor(grid, frame.turnActor, delay);
     if (frame.burst?.length) puzzleBurst?.(grid, frame.burst.map(({ index, block }) => ({ index, color: blockColor(block) })));
     await new Promise((resolve) => setTimeout(resolve, delay));
   }

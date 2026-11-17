@@ -920,6 +920,9 @@ export function createGameEngine(getProject) {
       }
       const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
       const burst = captureFrame && [...removedBlocks].map((index) => ({ index, block: state.cave.layers.block[index] }));
+      if (expanded.beeFlights?.length) {
+        captureFrame?.("벌 출격", [], "swap", 690, [], { type: "bee", flights: expanded.beeFlights });
+      }
       captureFrame?.(comboPending?.label ?? (triggered ? "특수 피스 폭발" : "매치"), [...highlighted], "match", 360, [], null, burst);
       const splashBlocks = expanded.directOnly ? new Set() : removedBlocks;
       const terrainResult = damageTerrainFromMatches(
@@ -1268,7 +1271,7 @@ export function createGameEngine(getProject) {
     return effect === "script" ? SCRIPT_EFFECT_LABEL : SPECIAL_EFFECTS[effect];
   }
 
-  const DEFAULT_SPECIAL_EFFECTS = Object.freeze({ horizontal: "row", vertical: "column", bomb: "area", rainbow: "color", bee: "target" });
+  const DEFAULT_SPECIAL_EFFECTS = Object.freeze({ horizontal: "row", vertical: "column", bomb: "area", rainbow: "color", bee: "fish" });
 
   const DDUNG_SPECIAL_EFFECTS = Object.freeze({ 1: "row", 2: "column", 3: "area", 5: "color", 8: "fish" });
 
@@ -1343,6 +1346,7 @@ export function createGameEngine(getProject) {
     const bees = effects.filter((effect) => effect === "fish" || effect === "target").length;
     const colors = effects.filter((effect) => effect === "color").length;
     const hits = new Set(pair);
+    const beeFlights = [];
     const commands = new Map();
     const skip = new Set(pair);
     const addShape = (origin, shape, radius = 0) => {
@@ -1392,9 +1396,11 @@ export function createGameEngine(getProject) {
       label = "선택한 블록과 같은 색 제거";
     } else if (bees && (lines.length || bombs || bees === 2)) {
       const count = bees === 2 ? 3 : 1;
+      const origin = pair[effects.findIndex((effect) => effect === "fish" || effect === "target")];
       for (let flight = 0; flight < count; flight += 1) {
         const target = findBeeTarget(state, hits, new Set(), random);
         if (target < 0) break;
+        beeFlights.push({ from: origin, to: target });
         hits.add(target);
         if (lines.length || bombs) addShape(target, lines[0] ?? "area", bombs ? 1 : 0);
       }
@@ -1412,13 +1418,15 @@ export function createGameEngine(getProject) {
       skip.clear();
       label = "두 특수 효과 동시 발동";
     }
-    return { ...expandSpecialHits(state, hits, new Set(), random, skip, commands, true), label };
+    const expanded = expandSpecialHits(state, hits, new Set(), random, skip, commands, true);
+    return { ...expanded, beeFlights: [...beeFlights, ...expanded.beeFlights], label };
   }
 
   function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom = () => 0.5, skip = new Set(), overrides = new Map(), initialBlast = false) {
     const { cave } = state;
     const hits = new Set(matches);
     const targetedTerrain = new Set();
+    const beeFlights = [];
     const specialHits = initialBlast ? new Set(hits) : new Set();
     const addSpecialHit = (index) => { hits.add(index); specialHits.add(index); };
     for (const index of hits) {
@@ -1435,7 +1443,10 @@ export function createGameEngine(getProject) {
       for (const { op, radius = 1, cells } of commands) {
         if (op === "fish") {
           const target = findBeeTarget(state, hits, protectedCells, beeRandom);
-          if (target >= 0) addSpecialHit(target);
+          if (target >= 0) {
+            beeFlights.push({ from: index, to: target });
+            addSpecialHit(target);
+          }
           continue;
         }
         if (op === "target") {
@@ -1463,7 +1474,7 @@ export function createGameEngine(getProject) {
         }
       }
     }
-    return { hits, targetedTerrain, specialHits };
+    return { hits, targetedTerrain, specialHits, beeFlights };
   }
 
   function createdSpecials(cave, runs, preferred, hits) {
@@ -1940,7 +1951,7 @@ export function createGameEngine(getProject) {
   ];
 
   const SPECIAL_MATCH_SHAPES = {
-    horizontal: ["가로 4개", "horizontal"], vertical: ["세로 4개", "vertical"],
+    horizontal: ["가로 4개", "vertical"], vertical: ["세로 4개", "horizontal"],
     five: ["직선 5개 이상", "rainbow"], square: ["2×2", "bee"],
     tee: ["T자", "bomb"], ell: ["L자", "bomb"], cross: ["십자", "bomb"],
   };
