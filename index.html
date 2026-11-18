@@ -229,7 +229,7 @@
           </label>
           <button class="button ghost" id="saveButton">저장</button>
           <button type="button" class="button play" id="previewLevelButton">플레이 미리보기</button>
-          <details class="editor-disclosure">
+          <details class="editor-disclosure" id="projectMenu">
             <summary class="button ghost">프로젝트 메뉴</summary>
             <div class="editor-menu panel">
               <button class="button ghost" id="projectRulesButton">프로젝트 설정</button>
@@ -983,6 +983,22 @@
       .level-advanced > summary { font-size: 13px; font-weight: 700; margin-bottom: 12px; }
       #editorTabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 20px; border-bottom: 1px solid var(--border); }
       #editorTabs [aria-selected="true"] { border-color: var(--accent); background: var(--panel-3); }
+      @media (max-width: 760px) {
+        #projectMenu { flex-basis: 100%; grid-column: 1 / -1; }
+        #projectMenu > summary { min-height: 44px; }
+        .editor-disclosure > .editor-menu { position: static; width: 100%; margin-top: 6px; }
+        .editor-toolbar > .editor-disclosure { min-width: 0; }
+        .editor-toolbar > .editor-disclosure[open] { flex: 1 0 100%; }
+        #projectMenu :is(.version-control, .build-info) { flex-wrap: wrap; }
+      }
+      @media (max-width: 560px) {
+        #editorTabs {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          padding-inline: 10px;
+        }
+        #editorTabs > button { min-height: 44px; padding-inline: 4px; white-space: normal; }
+      }
       #editorWorkspace:not(:is([data-active-tab="levels"], [data-active-tab="settings"])) #levelPanel,
       #editorWorkspace:not([data-active-tab="levels"]) .cave-section,
       #editorWorkspace:not([data-active-tab="settings"]) .rules-section,
