@@ -3,7 +3,7 @@ import {
   $, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
-} from "./app.js?v=159";
+} from "./app.js?v=160";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.webp",

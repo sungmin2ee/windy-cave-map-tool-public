@@ -1193,7 +1193,11 @@ export function createGameEngine(getProject) {
         if (canCombineSpecials(cave, first, second)) {
           const action = { first, second, combo: true };
           if (firstOnly) return [action];
-          candidates.push({ ...action, score: scoreAutoMove(state, specialComboHits(state, first, second, state.beeRandom.copy()), goals) });
+          const swap = swapsDdungComboPieces(cave, first, second);
+          if (swap) swapPlaytestBlocks(cave, first, second);
+          const score = scoreAutoMove(state, specialComboHits(state, first, second, state.beeRandom.copy()), goals);
+          if (swap) swapPlaytestBlocks(cave, first, second);
+          candidates.push({ ...action, score });
           continue;
         }
         if (!blocks[second] || blockMatchKey(cave, first) === blockMatchKey(cave, second) || isSwapBlocked(cave, second)) continue;
@@ -1309,6 +1313,7 @@ export function createGameEngine(getProject) {
 
   function findBeeTarget(state, hits, protectedCells, random) {
     const { cave } = state;
+    const ddung = isDdungSource(cave.externalSource);
     const goals = cave.objectives.filter((objective, index) => {
       return remainingObjectiveCount(state, objective, index) > 0;
     });
@@ -1316,14 +1321,31 @@ export function createGameEngine(getProject) {
     const fallback = [];
     for (let index = 0; index < cave.layers.block.length; index += 1) {
       if (hits.has(index) || protectedCells.has(index) || isExcluded(cave, index)) continue;
+      const block = cave.layers.block[index];
+      if (ddung && isDdungTreasure(block)) continue;
       if (goals.some((objective) => {
-        const id = cave.layers[objective.layer][index];
+        const id = objective.layer === "gimmick"
+          ? state.gimmickOrigins.get(index) ?? cave.layers.gimmick[index]
+          : cave.layers[objective.layer][index];
         return id && matchesObjectiveAsset(objective, id);
       })) targets.push(index);
-      else if (cave.layers.block[index] && !isBarrier(cave, index)) fallback.push(index);
+      else if (block && !isBarrier(cave, index)) fallback.push(index);
     }
     const candidates = targets.length ? targets : fallback;
     return candidates.length ? candidates[Math.floor(random() * candidates.length)] : -1;
+  }
+
+  function usesDdungCombo(cave, first, second) {
+    return isDdungSource(cave.externalSource) && [first, second].every((index) => {
+      const piece = cave.playtestPieces[index];
+      return !piece || String(piece.type) === "6" || Object.hasOwn(DDUNG_SPECIAL_EFFECTS, piece.type) ||
+        Object.hasOwn(DEFAULT_SPECIAL_EFFECTS, piece.type);
+    });
+  }
+
+  function swapsDdungComboPieces(cave, first, second) {
+    return usesDdungCombo(cave, first, second) && !configuredCombo(cave, first, second) &&
+      [first, second].every((index) => cave.layers.block[index] !== "ddung-dust-piece");
   }
 
   function canCombineSpecials(cave, first, second) {
@@ -1333,6 +1355,10 @@ export function createGameEngine(getProject) {
     const custom = configuredCombo(cave, first, second);
     if (custom) return custom !== "disabled";
     const effects = pair.map((index) => specialEffect(cave, cave.playtestPieces[index]));
+    if (effects.includes("color") && usesDdungCombo(cave, first, second)) {
+      const partner = pair[effects[0] === "color" ? 1 : 0];
+      return !isDdungTreasure(cave.layers.block[partner]);
+    }
     return effects.every(Boolean) || (effects.includes("color") && pair.some((index) =>
       !cave.playtestPieces[index] && cave.layers.block[index] !== "ddung-dust-piece"));
   }
@@ -1341,6 +1367,7 @@ export function createGameEngine(getProject) {
     const { cave } = state;
     const pair = [first, second];
     const effects = pair.map((index) => specialEffect(cave, cave.playtestPieces[index]));
+    const ddung = usesDdungCombo(cave, first, second);
     const lines = effects.filter((effect) => effect === "row" || effect === "column");
     const bombs = effects.filter((effect) => effect === "area").length;
     const bees = effects.filter((effect) => effect === "fish" || effect === "target").length;
@@ -1380,20 +1407,34 @@ export function createGameEngine(getProject) {
     } else if (colors && (lines.length || bombs || bees)) {
       const partner = pair[effects[0] === "color" ? 1 : 0];
       const color = cave.layers.block[partner];
-      const converted = cave.layers.block.flatMap((block, index) =>
-        block === color && !skip.has(index) && !isSwapBlocked(cave, index) ? [index] : []);
-      for (const [order, index] of converted.entries()) {
+      if (ddung) skip.delete(partner);
+      let order = 0;
+      for (const [index, block] of cave.layers.block.entries()) {
+        if (block !== color || skip.has(index) || (ddung ? isExcluded(cave, index) : isSwapBlocked(cave, index))) continue;
+        const piece = cave.playtestPieces[index];
+        if (ddung && piece) {
+          const effect = specialEffect(cave, piece);
+          if (bombs ? effect === "area" : bees ? effect === "fish" : effect === "row" || effect === "column") hits.add(index);
+          continue;
+        }
         hits.add(index);
-        commands.set(index, [{ op: bombs ? "area" : bees ? "fish" : order % 2 ? "column" : "row" }]);
+        let op = "area";
+        if (bees) op = "fish";
+        if (lines.length) op = (ddung ? random() >= 0.5 : order % 2 === 1) ? "column" : "row";
+        commands.set(index, [{ op }]);
+        order += 1;
       }
       label = "같은 색을 특수 피스로 바꿔 연쇄 발동";
     } else if (colors && effects.includes(null)) {
       const partner = pair[effects[0] === "color" ? 1 : 0];
-      const color = cave.layers.block[partner];
+      const color = ddung ? blockMatchKey(cave, partner) : cave.layers.block[partner];
       cave.layers.block.forEach((block, index) => {
-        if (block === color && !isSwapBlocked(cave, index)) hits.add(index);
+        if (ddung) {
+          if (blockMatchKey(cave, index) === color && !isExcluded(cave, index) &&
+              specialEffect(cave, cave.playtestPieces[index]) !== "color") hits.add(index);
+        } else if (block === color && !isSwapBlocked(cave, index)) hits.add(index);
       });
-      label = "선택한 블록과 같은 색 제거";
+      label = color === "ddung-dust-piece" ? "보드의 먼지 제거" : "선택한 블록과 같은 색 제거";
     } else if (bees && (lines.length || bombs || bees === 2)) {
       const count = bees === 2 ? 3 : 1;
       const origin = pair[effects.findIndex((effect) => effect === "fish" || effect === "target")];
@@ -1734,15 +1775,18 @@ export function createGameEngine(getProject) {
       return;
     }
     if (action.combo && !canCombineSpecials(cave, first, second)) return;
-    const combo = action.combo ? specialComboHits(state, first, second, state.beeRandom) : null;
     const activation = second === undefined;
-    if (combo) {
-      captureFrame?.("특수 피스 조합", [first, second], "swap", 250);
+    const motions = activation ? [] : [{ from: first, to: second }, { from: second, to: first }];
+    let combo = null;
+    if (action.combo) {
+      const swap = swapsDdungComboPieces(cave, first, second);
+      if (swap) swapPlaytestBlocks(cave, first, second);
+      combo = specialComboHits(state, first, second, state.beeRandom);
+      captureFrame?.("특수 피스 조합", [first, second], "swap", 250, swap ? motions : []);
     } else if (activation) {
       captureFrame?.("특수 피스 발동", [first], "match");
     } else {
       swapPlaytestBlocks(cave, first, second);
-      const motions = [{ from: first, to: second }, { from: second, to: first }];
       captureFrame?.("블록 교환", [first, second], "swap", 400, motions);
       if (action.invalid) {
         swapPlaytestBlocks(cave, first, second);

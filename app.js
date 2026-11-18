@@ -1,4 +1,4 @@
-import { createGameEngine } from "./game-engine.js?v=5";
+import { createGameEngine } from "./game-engine.js?v=6";
 
 const {
   SPAWNER_ID,
