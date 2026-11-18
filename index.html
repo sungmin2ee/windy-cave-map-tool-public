@@ -270,8 +270,8 @@
           <select class="field" id="editorGuideStep"></select>
           <button type="button" class="button compact ghost" id="editorGuidePrevious">이전</button>
           <button type="button" class="button compact primary" id="editorGuideNext">다음</button>
-          <button type="button" class="button compact ghost" id="editorGuideSkip" hidden>두 단계 건너뛰기</button>
           <button type="button" class="button compact ghost" id="editorGuideClose">안내 닫기</button>
+          <button type="button" class="button compact ghost" id="editorGuideSkip" hidden>두 단계 건너뛰기</button>
         </div>
         <p id="editorGuideText" role="status"></p>
       </aside>
@@ -1019,6 +1019,27 @@
       .editor-guide-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
       .editor-guide-controls .field { width: auto; max-width: 100%; }
       #editorGuide p { margin: 6px 0 0; font-size: 13px; }
+      @media (max-width: 760px) {
+        #editorGuide { padding-inline: 12px; }
+        .editor-guide-controls {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-areas: "label step step" "previous next close";
+        }
+        .editor-guide-controls > label { grid-area: label; font-size: 13px; }
+        #editorGuideStep { grid-area: step; width: 100%; min-width: 0; min-height: 44px; font-size: 16px; }
+        #editorGuidePrevious { grid-area: previous; }
+        #editorGuideNext { grid-area: next; }
+        #editorGuideClose { grid-area: close; }
+        #editorGuideSkip { grid-area: 3 / 1 / 4 / -1; }
+        .editor-guide-controls > .button {
+          min-width: 0;
+          min-height: 44px;
+          padding: 4px;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+      }
       .editor-guide-target { outline: 2px solid var(--accent); outline-offset: 3px; }
       .level-setting-group + .level-setting-group { margin-top: 12px; }
       .level-setting-group > .field-label.spaced { margin-top: 0; }
