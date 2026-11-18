@@ -1317,13 +1317,30 @@ export function createGameEngine(getProject) {
     const goals = cave.objectives.filter((objective, index) => {
       return remainingObjectiveCount(state, objective, index) > 0;
     });
+    const routeTargets = new Set();
+    if (ddung && goals.some(({ layer, targetId }) => layer === "item" && isDdungTreasure(targetId))) {
+      const directions = ddungCellGravities(cave);
+      for (const [index, block] of cave.layers.block.entries()) {
+        if (!isDdungTreasure(block)) continue;
+        const [dx, dy] = GRAVITY_VECTORS[directions?.[index] ?? cave.gravity];
+        for (let next = offsetCell(cave, index, dx, dy); next >= 0; next = offsetCell(cave, next, dx, dy)) {
+          const piece = cave.layers.block[next];
+          if (piece && !isDdungTreasure(piece) && specialEffect(cave, cave.playtestPieces[next]) !== "fish") {
+            routeTargets.add(next);
+          }
+        }
+      }
+    }
     const targets = [];
     const fallback = [];
     for (let index = 0; index < cave.layers.block.length; index += 1) {
       if (hits.has(index) || protectedCells.has(index) || isExcluded(cave, index)) continue;
       const block = cave.layers.block[index];
       if (ddung && isDdungTreasure(block)) continue;
-      if (goals.some((objective) => {
+      if (routeTargets.has(index) || goals.some((objective) => {
+        if (ddung && objective.layer === "terrain" && Object.hasOwn(DDUNG_JAM_COLORS, objective.targetId)) {
+          return Boolean(block) && matchesObjectiveAsset(objective, cave.layers.terrain[offsetCell(cave, index, 0, 1)]);
+        }
         const id = objective.layer === "gimmick"
           ? state.gimmickOrigins.get(index) ?? cave.layers.gimmick[index]
           : cave.layers[objective.layer][index];
