@@ -920,10 +920,23 @@ export function createGameEngine(getProject) {
       }
       const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
       const burst = captureFrame && [...removedBlocks].map((index) => ({ index, block: state.cave.layers.block[index] }));
-      if (expanded.beeFlights?.length) {
-        captureFrame?.("벌 출격", [], "swap", 690, [], { type: "bee", flights: expanded.beeFlights });
+      const label = comboPending?.label ?? (triggered ? "특수 피스 폭발" : "매치");
+      if (captureFrame && expanded.beeFlights?.length) {
+        const cleared = [];
+        const lastWave = Math.max(...expanded.beeFlights.map(({ wave }) => wave)) + 1;
+        for (let wave = 0; wave <= lastWave; wave += 1) {
+          const cells = [...highlighted].filter((index) => (expanded.impactAt.get(index) ?? 0) === wave);
+          const particles = burst.filter(({ index }) => cells.includes(index));
+          if (cells.length) captureFrame(wave ? "벌 타격" : label, cells, "match", 360, [], null, particles, cleared);
+          cleared.push(...particles.map(({ index }) => index));
+          const flights = expanded.beeFlights.filter((flight) => flight.wave === wave).map((flight) => ({
+            ...flight, color: state.cave.layers.block[flight.from],
+          }));
+          if (flights.length) captureFrame("벌 출격", [], "swap", 690, [], { type: "bee", flights }, null, cleared);
+        }
+      } else {
+        captureFrame?.(label, [...highlighted], "match", 360, [], null, burst);
       }
-      captureFrame?.(comboPending?.label ?? (triggered ? "특수 피스 폭발" : "매치"), [...highlighted], "match", 360, [], null, burst);
       const splashBlocks = expanded.directOnly ? new Set() : removedBlocks;
       const terrainResult = damageTerrainFromMatches(
         state, matches, expanded.targetedTerrain, splashBlocks, expanded.bombPanelIndex, heatherAttacks, expanded.specialHits);
@@ -1390,6 +1403,7 @@ export function createGameEngine(getProject) {
     const bees = effects.filter((effect) => effect === "fish" || effect === "target").length;
     const colors = effects.filter((effect) => effect === "color").length;
     const hits = new Set(pair);
+    const impactAt = new Map();
     const beeFlights = [];
     const commands = new Map();
     const skip = new Set(pair);
@@ -1458,7 +1472,7 @@ export function createGameEngine(getProject) {
       for (let flight = 0; flight < count; flight += 1) {
         const target = findBeeTarget(state, hits, new Set(), random);
         if (target < 0) break;
-        beeFlights.push({ from: origin, to: target });
+        beeFlights.push({ from: origin, to: target, wave: 0 });
         hits.add(target);
         if (lines.length || bombs) addShape(target, lines[0] ?? "area", bombs ? 1 : 0);
       }
@@ -1476,63 +1490,79 @@ export function createGameEngine(getProject) {
       skip.clear();
       label = "두 특수 효과 동시 발동";
     }
-    const expanded = expandSpecialHits(state, hits, new Set(), random, skip, commands, true);
+    if (beeFlights.length) {
+      for (const index of hits) if (!skip.has(index)) impactAt.set(index, 1);
+    }
+    const expanded = expandSpecialHits(state, hits, new Set(), random, skip, commands, true, impactAt);
     return { ...expanded, beeFlights: [...beeFlights, ...expanded.beeFlights], label };
   }
 
-  function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom = () => 0.5, skip = new Set(), overrides = new Map(), initialBlast = false) {
+  function expandSpecialHits(state, matches, protectedCells = new Set(), beeRandom = () => 0.5, skip = new Set(), overrides = new Map(), initialBlast = false, impactAt = new Map()) {
     const { cave } = state;
     const hits = new Set(matches);
     const targetedTerrain = new Set();
     const beeFlights = [];
     const specialHits = initialBlast ? new Set(hits) : new Set();
-    const addSpecialHit = (index) => { hits.add(index); specialHits.add(index); };
-    for (const index of hits) {
-      if (skip.has(index) || isBarrier(cave, index)) continue;
-      const override = overrides.get(index);
-      const effect = specialEffect(cave, cave.playtestPieces[index]);
-      if (!effect && !override) continue;
+    const waves = [];
+    const queue = (index, wave) => {
+      (waves[wave] ??= new Set()).add(index);
+      impactAt.set(index, wave);
+    };
+    for (const index of hits) queue(index, impactAt.get(index) ?? 0);
+    const addSpecialHit = (index, wave) => {
+      if (!hits.has(index) || wave < impactAt.get(index)) queue(index, wave);
+      hits.add(index);
       specialHits.add(index);
-      const x = index % cave.width;
-      const y = Math.floor(index / cave.width);
-      const color = cave.layers.block[index];
-      const definition = effect === "script" && projectSpecialDefinition(cave, String(cave.playtestPieces[index].type));
-      const commands = override ?? (effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }]);
-      for (const { op, radius = 1, cells } of commands) {
-        if (op === "fish") {
-          const target = findBeeTarget(state, hits, protectedCells, beeRandom);
-          if (target >= 0) {
-            beeFlights.push({ from: index, to: target });
-            addSpecialHit(target);
+    };
+    for (let wave = 0; wave < waves.length; wave += 1) {
+      for (const index of waves[wave] ?? []) {
+        if (impactAt.get(index) !== wave) continue;
+        if (skip.has(index) || isBarrier(cave, index)) continue;
+        const override = overrides.get(index);
+        const effect = specialEffect(cave, cave.playtestPieces[index]);
+        if (!effect && !override) continue;
+        specialHits.add(index);
+        const x = index % cave.width;
+        const y = Math.floor(index / cave.width);
+        const color = cave.layers.block[index];
+        const definition = effect === "script" && projectSpecialDefinition(cave, String(cave.playtestPieces[index].type));
+        const commands = override ?? (effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }]);
+        for (const { op, radius = 1, cells } of commands) {
+          if (op === "fish") {
+            const target = findBeeTarget(state, hits, protectedCells, beeRandom);
+            if (target >= 0) {
+              beeFlights.push({ from: index, to: target, wave });
+              addSpecialHit(target, wave + 1);
+            }
+            continue;
           }
-          continue;
-        }
-        if (op === "target") {
-          const target = findRemainingTerrainTarget(state, index, targetedTerrain);
-          if (target >= 0) targetedTerrain.add(target);
-          continue;
-        }
-        if (op === "offsets") {
-          for (const [dx, dy] of cells) {
-            const targetX = x + dx;
-            const targetY = y + dy;
-            if (targetX < 0 || targetX >= cave.width || targetY < 0 || targetY >= cave.height) continue;
-            const other = targetY * cave.width + targetX;
-            if (!isExcluded(cave, other) && !protectedCells.has(other)) addSpecialHit(other);
+          if (op === "target") {
+            const target = findRemainingTerrainTarget(state, index, targetedTerrain);
+            if (target >= 0) targetedTerrain.add(target);
+            continue;
           }
-          continue;
-        }
-        for (let other = 0; other < cave.layers.block.length; other += 1) {
-          const dx = Math.abs(other % cave.width - x);
-          const dy = Math.abs(Math.floor(other / cave.width) - y);
-          const affected = (op === "row" && dy === 0) || (op === "column" && dx === 0) ||
-            (op === "cross" && (dx === 0 || dy === 0)) || (op === "area" && dx <= radius && dy <= radius) ||
-            (op === "color" && color && cave.layers.block[other] === color);
-          if (affected && !isExcluded(cave, other) && !protectedCells.has(other)) addSpecialHit(other);
+          if (op === "offsets") {
+            for (const [dx, dy] of cells) {
+              const targetX = x + dx;
+              const targetY = y + dy;
+              if (targetX < 0 || targetX >= cave.width || targetY < 0 || targetY >= cave.height) continue;
+              const other = targetY * cave.width + targetX;
+              if (!isExcluded(cave, other) && !protectedCells.has(other)) addSpecialHit(other, wave);
+            }
+            continue;
+          }
+          for (let other = 0; other < cave.layers.block.length; other += 1) {
+            const dx = Math.abs(other % cave.width - x);
+            const dy = Math.abs(Math.floor(other / cave.width) - y);
+            const affected = (op === "row" && dy === 0) || (op === "column" && dx === 0) ||
+              (op === "cross" && (dx === 0 || dy === 0)) || (op === "area" && dx <= radius && dy <= radius) ||
+              (op === "color" && color && cave.layers.block[other] === color);
+            if (affected && !isExcluded(cave, other) && !protectedCells.has(other)) addSpecialHit(other, wave);
+          }
         }
       }
     }
-    return { hits, targetedTerrain, specialHits, beeFlights };
+    return { hits, targetedTerrain, specialHits, beeFlights, impactAt };
   }
 
   function createdSpecials(cave, runs, preferred, hits) {

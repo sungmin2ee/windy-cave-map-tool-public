@@ -1,4 +1,4 @@
-import { createGameEngine } from "./game-engine.js?v=7";
+import { createGameEngine } from "./game-engine.js?v=8";
 
 const {
   SPAWNER_ID,
@@ -2902,7 +2902,8 @@ function startBatchReplay(cave, validation, example) {
 
 function animateBeeFlights(grid, cave, flights, duration) {
   const board = grid.getBoundingClientRect();
-  for (const { from, to } of flights) {
+  const stagger = Math.min(32, duration * 0.1 / Math.max(1, flights.length - 1));
+  for (const [order, { from, to, color }] of flights.entries()) {
     const start = grid.children[from].getBoundingClientRect();
     const end = grid.children[to].getBoundingClientRect();
     const size = start.width * 0.86;
@@ -2918,15 +2919,16 @@ function animateBeeFlights(grid, cave, flights, duration) {
     sprite.style.width = sprite.style.height = `${size}px`;
     sprite.style.fontSize = `${size * 0.8}px`;
     sprite.style.lineHeight = "1";
+    sprite.style.opacity = "0";
     fallback.textContent = "🐝";
     sprite.append(fallback);
-    showDdungSpecialImage(sprite, { type: "bee" }, cave.layers.block[from], null, fallback);
+    showDdungSpecialImage(sprite, { type: "bee" }, color ?? cave.layers.block[from], null, fallback);
     grid.append(sprite);
     sprite.animate([
-      { transform: "translate(0, 0) scale(0.8)" },
+      { transform: "translate(0, 0) scale(0.8)", opacity: 1 },
       { transform: `translate(${x * 0.5}px, ${y * 0.5 - lift}px) scale(1.14)`, offset: 0.5 },
-      { transform: `translate(${x}px, ${y}px) scale(0.8)` },
-    ], { duration, fill: "both", easing: "ease-in-out" });
+      { transform: `translate(${x}px, ${y}px) scale(0.8)`, opacity: 1 },
+    ], { delay: order * stagger, duration: duration - order * stagger, fill: "forwards", easing: "ease-in-out" });
   }
 }
 
@@ -3025,10 +3027,15 @@ async function showPlaytestFrames(state, frames) {
 
 async function animatePlaytestTurn(state, action) {
   const frames = [];
-  const capture = (label, cells, kind, delay = 360, motions = [], turnActor = null, burst = null) => {
+  const capture = (label, cells, kind, delay = 360, motions = [], turnActor = null, burst = null, cleared = []) => {
     const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
+    const playtestPieces = [...state.cave.playtestPieces];
+    for (const index of cleared) {
+      layers.block[index] = null;
+      playtestPieces[index] = null;
+    }
     frames.push({
-      cave: { ...state.cave, layers, playtestPieces: [...state.cave.playtestPieces] },
+      cave: { ...state.cave, layers, playtestPieces },
       terrainHits: [...state.terrainHits], gimmickHits: [...state.gimmickHits],
       label, cells, kind, delay, motions, turnActor, burst,
     });
