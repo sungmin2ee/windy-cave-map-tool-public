@@ -1,9 +1,10 @@
 import { createPuzzleEffects } from "./puzzle-effects.js?v=3";
 import {
-  $, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
+  $, adaptImportedJson, createPlayState, getAsset, normalizeObjectImage, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
-} from "./app.js?v=162";
+  readThemePack, THEME_PACK_FORMAT,
+} from "./app.js?v=183";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.webp",
@@ -69,6 +70,7 @@ function renderLevelSelect() {
 }
 
 function clearStarCount(state) {
+  if (state.movesLeft === null) return 3;
   const remaining = state.movesLeft / state.cave.moveLimit;
   return remaining >= rules.threeStars ? 3 : remaining >= rules.twoStars ? 2 : 1;
 }
@@ -77,7 +79,7 @@ function puzzleScore(state, won) {
   const earned = state.scoreTarget === null
     ? state.objectiveProgress.reduce((total, goal) => total + Math.min(goal.current, goal.target), 0) * rules.pointsPerGoalUnit
     : state.blocksRemoved * state.pointsPerBlock;
-  return earned + (won ? state.movesLeft * rules.pointsPerMoveLeft : 0);
+  return earned + (won ? (state.movesLeft ?? 0) * rules.pointsPerMoveLeft : 0);
 }
 let puzzleIndex = 0;
 
@@ -133,7 +135,7 @@ function renderPuzzleGoals(state) {
     icon.setAttribute("aria-hidden", "true");
     icon.textContent = asset?.visual || "◆";
     if (asset?.color) icon.style.color = asset.color;
-    const artwork = puzzleArtwork?.goals[objective.targetId] || puzzleArtwork?.layers[objective.layer]?.[objective.targetId];
+    const artwork = puzzleArtwork?.goals?.[objective.targetId] || puzzleArtwork?.layers[objective.layer]?.[objective.targetId];
     showObjectImage(icon, artwork || PUZZLE_GOAL_IMAGES[objective.targetId] || asset?.image);
 
     const count = document.createElement("strong");
@@ -147,7 +149,7 @@ function renderPuzzleGoals(state) {
 
 function renderPuzzlePlayer() {
   const state = playtestState;
-  $("movesLeft").textContent = state.movesLeft;
+  $("movesLeft").textContent = state.movesLeft ?? "무제한";
   const scoreMode = state.scoreTarget !== null;
   $("scoreCard").hidden = !scoreMode && !rules.pointsPerGoalUnit && !rules.pointsPerMoveLeft;
   $("score").textContent = puzzleScore(state, state.status === "won");
@@ -161,7 +163,7 @@ function renderPuzzlePlayer() {
 
   $("playtestFrameStatus").textContent = won
     ? (linkedPuzzle || hasNext ? "클리어!" : "준비된 레벨을 모두 클리어했어요!")
-    : state.status === "lost"
+    : state.status === "lost" && state.movesLeft === 0
       ? "이동 횟수를 모두 사용했어요."
       : state.message;
   $("restart").hidden = embedded;
@@ -263,6 +265,7 @@ function puzzleArtworkUrl(path, base) {
 }
 
 function usableImage(url) {
+  if (!url) return Promise.resolve(null);
   return new Promise((resolve) => {
     const image = new Image();
     image.onload = () => resolve(url);
@@ -271,36 +274,45 @@ function usableImage(url) {
   });
 }
 
-async function puzzleArtworkImages(entries, base) {
+async function puzzleArtworkImages(entries, imageUrl) {
   if (entries == null) return Object.create(null);
   if (typeof entries !== "object" || Array.isArray(entries)) throw new Error("이미지 설정은 객체여야 합니다.");
   const images = await Promise.all(Object.entries(entries).map(async ([id, path]) => (
-    [id, await usableImage(puzzleArtworkUrl(path, base))]
+    [id, await usableImage(imageUrl(path))]
   )));
   return Object.assign(Object.create(null), Object.fromEntries(images.filter(([, url]) => url)));
 }
 
-async function loadPuzzleArtwork() {
+async function loadPuzzleArtwork(previewTheme) {
   const path = puzzleParams.get("theme");
   const expectedVersion = puzzleParams.get("themeVersion");
-  if (!path && !expectedVersion) return;
+  if (!previewTheme && !path && !expectedVersion) return;
 
   try {
-    const url = puzzleArtworkUrl(path, location.href);
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const theme = await response.json();
+    let theme = previewTheme;
+    let base = location.href;
+    if (!theme) {
+      const url = puzzleArtworkUrl(path, base);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      theme = await response.json();
+      base = response.url || url;
+    }
     if (!theme || typeof theme !== "object" || Array.isArray(theme)) throw new Error("테마 JSON 형식을 확인해 주세요.");
-    const base = response.url || url;
     const themeVersion = theme.version == null ? null : String(theme.version);
+    const isPack = theme.format === THEME_PACK_FORMAT;
+    if (isPack) theme = readThemePack(theme);
+    const imageUrl = previewTheme || isPack
+      ? (value) => normalizeObjectImage(value, 1500000)
+      : (value) => puzzleArtworkUrl(value, base);
     if (expectedVersion && expectedVersion !== themeVersion) throw new Error("요청한 테마 버전과 다릅니다.");
-    const burst = theme.effects?.blockBurst;
+    const burst = previewTheme || isPack ? null : theme.effects?.blockBurst;
     const [layers, specials, goals, background, particle] = await Promise.all([
-      Promise.all(["block", "terrain", "gimmick", "item"].map(async (layer) => [layer, await puzzleArtworkImages(theme[layer], base)])),
-      puzzleArtworkImages(theme.specials, base),
-      puzzleArtworkImages(theme.goals, base),
-      theme.background == null ? null : usableImage(puzzleArtworkUrl(theme.background, base)),
-      burst?.particle ? usableImage(puzzleArtworkUrl(burst.particle, base)) : null,
+      Promise.all(["block", "terrain", "gimmick", "item"].map(async (layer) => [layer, await puzzleArtworkImages(theme[layer], imageUrl)])),
+      puzzleArtworkImages(theme.specials, imageUrl),
+      puzzleArtworkImages(theme.goals, imageUrl),
+      theme.background == null ? null : usableImage(imageUrl(theme.background)),
+      burst?.particle ? usableImage(imageUrl(burst.particle)) : null,
     ]);
     if (burst) {
       const effects = {};
@@ -330,7 +342,7 @@ function reportPuzzleResult(state, outcome) {
     levelId: linkedPuzzle.cave.id,
     level: linkedPuzzle.cave.number,
     success,
-    movesUsed: state.cave.moveLimit - state.movesLeft,
+    movesUsed: state.movesUsed,
     stars: success ? clearStarCount(state) : 0,
     score: puzzleScore(state, success),
     ...(state.scoreTarget === null ? {} : { scoreTarget: state.scoreTarget }),
@@ -373,9 +385,10 @@ async function loadLinkedPuzzle(mapPath, levelKey) {
     throw new Error("맵 JSON의 HTTP 또는 HTTPS 주소를 입력해 주세요.");
   }
 
-  const [response] = await Promise.all([fetch(url, { credentials: "omit" }), loadPuzzleArtwork(), loadPuzzleRules()]);
+  const [response] = await Promise.all([fetch(url, { credentials: "omit" }), localPreview ? null : loadPuzzleArtwork(), loadPuzzleRules()]);
   if (!response.ok) throw new Error(`맵 JSON을 읽을 수 없습니다 (HTTP ${response.status}).`);
   const data = await response.json();
+  if (localPreview) await loadPuzzleArtwork(data?.editorTheme);
   if (cancelled) return;
   versions.mapVersion = data?.contentVersion == null && data?.version == null ? null : String(data.contentVersion ?? data.version);
   const expectedVersion = puzzleParams.get("mapVersion");

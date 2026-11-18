@@ -201,10 +201,6 @@
        .difficulty-choices label { display: flex; gap: 8px; align-items: center; padding: 4px; cursor: pointer; }
       .difficulty-choices .asset-visual { position: relative; display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; margin: 0; }
       .difficulty-choices label:has(input:disabled) { opacity: .6; }
-      #difficultyShapeOptions { display: flex; flex-wrap: wrap; gap: 8px; }
-      #difficultyShapeOptions button[aria-pressed="true"] { border-color: #a992ff; background: #31254c; }
-      #difficultyShapeOptions { display: flex; flex-wrap: wrap; gap: 8px; }
-      #difficultyShapeOptions button[aria-pressed="true"] { border-color: #a992ff; background: #31254c; }
       #difficultyOptions details { padding: 12px; border: 1px solid #444952; border-radius: 8px; }
       #difficultyOptions summary { cursor: pointer; font-weight: 700; }
       .difficulty-preview-scroll { overflow: auto; max-height: 38vh; margin-block: 12px; }
@@ -223,51 +219,69 @@
           </div>
         </div>
 
-        <div class="version-control">
-          <label for="versionInput">CONTENT VERSION</label>
-          <div class="version-stepper">
-            <button type="button" class="button ghost" id="versionDown" aria-label="콘텐츠 버전 내리기">−</button>
-            <input id="versionInput" value="V0001" maxlength="16" />
-            <button type="button" class="button ghost" id="versionUp" aria-label="콘텐츠 버전 올리기">+</button>
-          </div>
-        </div>
-
-        <div class="build-info" title="클라이언트 버전은 실행 코드, 스키마 버전은 JSON 구조의 호환 기준입니다.">
-          <span id="clientVersionBadge">CLIENT 2.3.0</span>
-          <span id="schemaVersionBadge">SCHEMA 4</span>
-        </div>
-
         <div class="top-actions">
           <button type="button" class="button ghost" aria-haspopup="dialog" onclick="document.getElementById('mapToolGuide').showModal()">사용법</button>
-          <a class="button ghost" href="./host-demo.html" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">퍼즐 연동 데모</a>
-          <button type="button" class="button ghost" id="previewLevelButton">현재 레벨을 데모에서 열기</button>
-          <button class="button ghost" id="projectRulesButton">프로젝트 설정</button>
-          <button class="button ghost" id="newProjectButton">새 프로젝트</button>
+          <button type="button" class="button ghost" id="startEditorGuide" aria-expanded="false" aria-controls="editorGuide">가이드 따라가기</button>
+          <button type="button" class="button ghost" id="themeEditorButton">테마 편집</button>
           <label class="button ghost file-picker" id="importButton">
             <span>JSON 가져오기</span>
             <input id="importFile" type="file" aria-label="JSON 가져오기" />
           </label>
-          <button class="button ghost" id="exportButton">전체 레벨 JSON으로 내보내기</button>
-        <button class="button ghost" id="exportGridTiles" type="button">현재 레벨 JSON으로 내보내기</button>
-          <button class="button primary" id="saveButton">저장</button>
-          <button class="button ghost" id="exportPatchButton" title="기준 전체 JSON을 선택해 변경분을 내보냅니다">패치 내보내기</button>
-          <button type="button" class="button ghost" id="reopenPatchPreview" hidden>같은 기준으로 패치 미리보기</button>
-          <input id="patchBaseFile" type="file" accept=".json,application/json" hidden />
+          <button class="button ghost" id="saveButton">저장</button>
+          <button type="button" class="button play" id="previewLevelButton">플레이 미리보기</button>
+          <details class="editor-disclosure">
+            <summary class="button ghost">프로젝트 메뉴</summary>
+            <div class="editor-menu panel">
+              <button class="button ghost" id="projectRulesButton">프로젝트 설정</button>
+              <button class="button ghost" id="newProjectButton">새 프로젝트</button>
+              <button class="button ghost" id="exportButton">전체 레벨 내보내기</button>
+              <button class="button ghost" id="exportGridTiles" type="button">현재 레벨 내보내기</button>
+              <button class="button ghost" id="exportPatchButton" title="기준 전체 JSON을 선택해 변경분을 내보냅니다">패치 내보내기</button>
+              <button type="button" class="button ghost" id="reopenPatchPreview" hidden>같은 기준으로 패치 미리보기</button>
+              <input id="patchBaseFile" type="file" accept=".json,application/json" hidden />
+              <a class="button ghost" href="./host-demo.html" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">퍼즐 연동 데모</a>
+              <div class="version-control">
+                <label for="versionInput">콘텐츠 버전</label>
+                <div class="version-stepper">
+                  <button type="button" class="button ghost" id="versionDown" aria-label="콘텐츠 버전 내리기">−</button>
+                  <input id="versionInput" value="V0001" maxlength="16" />
+                  <button type="button" class="button ghost" id="versionUp" aria-label="콘텐츠 버전 올리기">+</button>
+                </div>
+              </div>
+              <div class="build-info" title="클라이언트 버전은 실행 코드, 스키마 버전은 JSON 구조의 호환 기준입니다.">
+                <span id="clientVersionBadge">CLIENT 2.3.0</span>
+                <span id="schemaVersionBadge">SCHEMA 4</span>
+              </div>
+            </div>
+          </details>
         </div>
       </header>
 
-      <nav class="mobile-workspace-nav" aria-label="맵툴 영역 이동">
-        <a href="#boardEditor">보드</a>
-        <a href="#objectPanel">오브젝트</a>
-        <a href="#levelPanel">레벨 설정</a>
+      <nav id="editorTabs" role="tablist" aria-label="맵툴 편집 탭">
+        <button type="button" class="button compact" id="editorTab-levels" role="tab" aria-controls="editorWorkspace" aria-selected="false" tabindex="-1" data-editor-tab="levels">레벨 목록</button>
+        <button type="button" class="button compact" id="editorTab-settings" role="tab" aria-controls="editorWorkspace" aria-selected="false" tabindex="-1" data-editor-tab="settings">레벨 설정</button>
+        <button type="button" class="button compact" id="editorTab-board" role="tab" aria-controls="editorWorkspace" aria-selected="true" tabindex="0" data-editor-tab="board">보드 편집</button>
+        <button type="button" class="button compact" id="editorTab-objects" role="tab" aria-controls="editorWorkspace" aria-selected="false" tabindex="-1" data-editor-tab="objects">오브젝트</button>
       </nav>
-      <main class="workspace">
+
+      <aside id="editorGuide" aria-label="가이드 따라가기" hidden>
+        <div class="editor-guide-controls">
+          <label for="editorGuideStep">가이드 단계</label>
+          <select class="field" id="editorGuideStep"></select>
+          <button type="button" class="button compact ghost" id="editorGuidePrevious">이전</button>
+          <button type="button" class="button compact primary" id="editorGuideNext">다음</button>
+          <button type="button" class="button compact ghost" id="editorGuideSkip" hidden>두 단계 건너뛰기</button>
+          <button type="button" class="button compact ghost" id="editorGuideClose">안내 닫기</button>
+        </div>
+        <p id="editorGuideText" role="status"></p>
+      </aside>
+
+      <main class="workspace" id="editorWorkspace" role="tabpanel" aria-labelledby="editorTab-board" data-active-tab="board">
         <aside class="left-panel panel" id="levelPanel">
           <section class="panel-section cave-section">
             <div class="section-heading">
               <div>
-                <span class="eyebrow">LEVELS</span>
-                <h2>Caves</h2>
+                <h2>레벨 목록</h2>
               </div>
               <button class="icon-button" id="newCaveButton" title="새 Cave">＋</button>
             </div>
@@ -293,15 +307,18 @@
           <section class="panel-section rules-section">
             <div class="section-heading simple">
               <div>
-                <span class="eyebrow">CAVE RULES</span>
                 <h2>레벨 설정</h2>
               </div>
             </div>
 
+            <div class="level-setting-group" data-setting-group="name">
             <label class="field-label" for="caveName">Cave 이름</label>
             <input class="field" id="caveName" />
             <p id="ddungTurnEvents" class="field-label" hidden></p>
+            </div>
 
+            <div class="level-setting-group" data-setting-group="size">
+              <span class="field-label">보드 크기</span>
             <div class="field-row">
               <label>
                 <span class="field-label">너비</span>
@@ -313,25 +330,13 @@
               </label>
             </div>
             <button class="button full" id="resizeButton">맵 크기 적용</button>
-
-            <span class="field-label spaced">중력 방향</span>
-            <div class="gravity-control" id="gravityControl">
-              <button data-gravity="up" title="위">↑</button>
-              <button data-gravity="left" title="왼쪽">←</button>
-              <button data-gravity="down" title="아래">↓</button>
-              <button data-gravity="right" title="오른쪽">→</button>
             </div>
 
-            <label class="field-label spaced" for="flowRule">막힘 우회 흐름</label>
-            <select class="field" id="flowRule">
-              <option value="left-first">왼쪽 통로 우선</option>
-              <option value="right-first">오른쪽 통로 우선</option>
-              <option value="alternate">좌우 교대</option>
-              <option value="seeded-random">시드 랜덤</option>
-              <option value="none">옆으로 흐르지 않음</option>
-            </select>
-            <small class="rule-help">중력 방향이 아래/위면 좌우, 왼쪽/오른쪽이면 위아래 통로를 뜻합니다.</small>
+            <div class="level-setting-group" data-setting-group="shape">
+              <button id="boardShapeButton" class="button ghost" type="button">보드 모양 후보</button>
+            </div>
 
+            <div class="level-setting-group" data-setting-group="goals">
             <label class="field-label spaced" for="clearMode">클리어 방식</label>
             <select class="field" id="clearMode">
               <option value="mission">기존 미션</option>
@@ -353,12 +358,59 @@
               </div>
               <div class="objective-list" id="objectiveList"></div>
             </div>
+            <label class="check-field">
+              <input id="moveLimitEnabled" type="checkbox" checked />
+              <span>이동 횟수 제한 사용</span>
+            </label>
+            <label class="field-label spaced" for="moveLimit">최대 이동 횟수</label>
+            <input class="field" id="moveLimit" type="number" min="1" max="999" />
+            </div>
 
-            <div class="field-row three">
-              <label>
-                <span class="field-label">Moves</span>
-                <input class="field" id="moveLimit" type="number" min="1" max="999" />
-              </label>
+            <div class="level-setting-group" data-setting-group="difficulty">
+              <button id="difficultyButton" class="button ghost" type="button">난이도로 보드 생성</button>
+            </div>
+
+            <div class="level-setting-group" data-setting-group="auto">
+              <span class="field-label">자동 배치</span>
+              <div class="field-row">
+                <label>
+                  <span class="field-label">시드</span>
+                  <input class="field" id="randomSeed" maxlength="40" />
+                </label>
+                <label>
+                  <span class="field-label">밀도 %</span>
+                  <input class="field" id="randomDensity" type="number" min="10" max="100" />
+                </label>
+              </div>
+              <button class="button full randomize" id="randomizeButton">랜덤 채우기 · 시드로 블록 배치</button>
+              <small>같은 시드·크기·색상이면 같은 결과이며, 시작 3-Match는 만들지 않습니다.</small>
+            </div>
+
+
+
+            <details class="editor-disclosure level-advanced" data-setting-group="advanced">
+
+              <summary>고급 레벨 설정</summary>
+
+            <span class="field-label spaced">중력 방향</span>
+            <div class="gravity-control" id="gravityControl">
+              <button data-gravity="up" title="위">↑</button>
+              <button data-gravity="left" title="왼쪽">←</button>
+              <button data-gravity="down" title="아래">↓</button>
+              <button data-gravity="right" title="오른쪽">→</button>
+            </div>
+
+            <label class="field-label spaced" for="flowRule">막힘 우회 흐름</label>
+            <select class="field" id="flowRule">
+              <option value="left-first">왼쪽 통로 우선</option>
+              <option value="right-first">오른쪽 통로 우선</option>
+              <option value="alternate">좌우 교대</option>
+              <option value="seeded-random">시드 랜덤</option>
+              <option value="none">옆으로 흐르지 않음</option>
+            </select>
+            <small class="rule-help">중력 방향이 아래/위면 좌우, 왼쪽/오른쪽이면 위아래 통로를 뜻합니다.</small>
+
+            <div class="field-row">
               <label>
                 <span class="field-label">권장 클리어 Moves</span>
                 <input class="field" id="parMoves" type="number" min="1" max="999" />
@@ -377,24 +429,7 @@
             </select>
             <small class="rule-help">서로 다른 파생 시드로 휴리스틱 플레이를 반복해 클리어율과 Moves 분포를 계산합니다.</small>
 
-            <div class="random-panel">
-              <span class="field-label">랜덤 배치</span>
-              <div class="field-row">
-                <label>
-                  <span class="field-label">시드</span>
-                  <input class="field" id="randomSeed" maxlength="40" />
-                </label>
-                <label>
-                  <span class="field-label">밀도 %</span>
-                  <input class="field" id="randomDensity" type="number" min="10" max="100" />
-                </label>
-              </div>
-              <button class="button full randomize" id="randomizeButton">랜덤 채우기 · 시드로 블록 배치</button>
-                <button id="difficultyButton" class="button ghost" type="button">난이도로 보드 생성</button>
-                <button id="boardShapeButton" class="button ghost" type="button">보드 모양 후보</button>
-                <button id="regionItemButton" class="button ghost" type="button">구역 아이템 랜덤 배치</button>
-              <small>같은 시드·크기·색상이면 같은 결과이며, 시작 3-Match는 만들지 않습니다.</small>
-            </div>
+              <button id="regionItemButton" class="button ghost" type="button">구역 아이템 랜덤 배치</button>
 
             <form id="levelSettingsForm">
           <fieldset>
@@ -415,8 +450,9 @@
 
             <label class="check-field">
               <input id="failureBonus" type="checkbox" />
-              <span>Failure Bonus 사용</span>
+              <span>실패 보너스 사용</span>
             </label>
+            </details>
           </section>
         </aside>
 
@@ -435,10 +471,16 @@
               <button class="tool-button" id="redoButton"><span>↷</span>다시 실행</button>
             </div>
             <div class="toolbar-spacer"></div>
-            <button class="button validate" id="validateButton">검증</button>
-            <button class="button validate" id="rangeButton">범위 검증</button>
-            <label class="check-line"><input id="specialMatches" type="checkbox"> 매치로 특수 피스 생성</label>
-            <button class="button play" id="playButton"><span>▶</span> Playtest</button>
+            <button class="button ghost" id="boardDifficultyButton" type="button">난이도로 보드 생성</button>
+            <details class="editor-disclosure">
+              <summary class="button ghost">검증 도구</summary>
+              <div class="editor-menu panel">
+                <button class="button validate" id="validateButton">검증</button>
+                <button class="button validate" id="rangeButton">범위 검증</button>
+                <label class="check-line"><input id="specialMatches" type="checkbox"> 매치로 특수 피스 생성</label>
+                <button class="button play" id="playButton">편집기 플레이테스트</button>
+              </div>
+            </details>
           </div>
 
           <div class="canvas-stage panel">
@@ -460,7 +502,6 @@
             </div>
             <div class="canvas-header">
               <div>
-                <span class="eyebrow">CURRENT CAVE</span>
                 <h1 id="currentCaveTitle">Cave 0001</h1>
               </div>
               <div class="canvas-meta">
@@ -498,19 +539,18 @@
           <section class="panel-section palette-section">
             <div class="section-heading simple">
               <div>
-                <span class="eyebrow">ASSET PALETTE</span>
-                <h2>오브젝트</h2>
+                <h2>배치할 오브젝트</h2>
               </div>
             </div>
 
             <div class="layer-tabs" id="layerTabs">
-              <button class="active" data-layer="terrain">Terrain</button>
-              <button data-layer="block">Block</button>
-              <button data-layer="gimmick">Gimmick</button>
-              <button data-layer="item">Item</button>
+              <button class="active" data-layer="block">블록</button>
+              <button data-layer="terrain">지형</button>
+              <button data-layer="gimmick">기믹</button>
+              <button data-layer="item">아이템</button>
             </div>
 
-            <p class="palette-help">항목 선택 → 맵 셀 클릭/드래그로 추가 · 선택 항목 재클릭 → 배치 해제</p>
+            <p class="palette-help">오브젝트를 고른 뒤 보드의 칸을 클릭하거나 드래그해 배치하세요.</p>
 
             <div class="selected-asset" id="selectedAssetSummary"></div>
             <select id="addDdungGimmick" aria-label="DDUNG 원작 기믹 추가" hidden></select>
@@ -631,18 +671,9 @@
       <div class="dialog-header"><h2 id="difficultyTitle">목표 난이도로 보드 생성</h2></div>
       <form id="difficultyForm">
         <fieldset id="difficultyFields">
-          <fieldset>
-            <legend>1. 보드 크기와 모양 선택</legend>
-            <label>가로 (칸) <input id="difficultyWidth" class="field" type="number" min="4" max="20" step="1" required></label>
-            <label>세로 (칸) <input id="difficultyHeight" class="field" type="number" min="4" max="20" step="1" required></label>
-            <label>대칭 <select id="difficultyShapeSymmetry" class="field"><option value="none">없음</option><option value="horizontal">좌우 대칭</option><option value="vertical">상하 대칭</option></select></label>
-            <label>막힌 칸 (%) <input id="difficultyShapePercent" class="field" type="number" min="0" max="70" value="20"></label>
-            <button id="difficultyShapeRefresh" class="button ghost" type="button">후보 다시 생성</button>
-            <p id="difficultyShapeStatus" role="status"></p>
-            <div id="difficultyShapeOptions"></div>
-            <p id="difficultyShapeSelection" role="status"></p>
-          </fieldset>
-          <label>2. 목표 난이도 (1~100)
+          <p id="difficultyBoardSummary"></p>
+          <p id="difficultyGoalSummary"></p>
+          <label>목표 난이도 (1~100)
             <input id="difficultyTarget" class="field" type="number" min="1" max="100" step="1" value="50" required>
           </label>
           <label><input id="difficultyAutomatic" type="checkbox" checked> 전체 자동 배치</label>
@@ -661,13 +692,13 @@
           </label>
           <label><input id="difficultyKeepPlacement" type="checkbox" checked> 기존 오브젝트 배치 유지</label>
           </div>
-          <div><label>목표 Terrain 종류 수 <input class="field" id="difficultyTerrainCount" type="number" min="1" max="4" value="1" required></label>
+          <div><label>추가 배치할 지형 종류 수 <input class="field" id="difficultyTerrainCount" type="number" min="0" max="4" value="0" required></label>
           <div class="difficulty-choices" id="difficultyTerrain"></div></div>
           <div><label>추가할 기믹 종류 수 <input class="field" id="difficultyGimmickCount" type="number" min="0" max="6" value="1" required></label>
           <div class="difficulty-choices" id="difficultyGimmick"></div></div>
           <p>체크한 항목 중에서 지정한 종류 수만큼 고릅니다. 체크하지 않으면 사용 가능한 전체 목록에서 고릅니다.</p>
         </fieldset>
-        <p>Terrain 제거를 목표로 설정합니다. 자동 플레이 결과는 후보에 표시합니다.</p>
+        <p>레벨에 설정된 클리어 목표로 후보별 자동 플레이를 돌려 비교해요.</p>
         <button id="difficultyGenerate" class="button primary" type="submit">후보 생성</button>
       </form>
       <p id="difficultyStatus" role="status"></p>
@@ -680,9 +711,10 @@
       <div style="max-height: 60vh; overflow: auto;">
         <label>대칭 <select id="boardShapeSymmetry" class="field"><option value="none">없음</option><option value="horizontal">좌우 대칭</option><option value="vertical">상하 대칭</option></select></label>
         <label>막힌 칸 (%) <input id="boardShapePercent" class="field" type="number" min="0" max="70" value="20"></label>
+        <label><input id="boardShapeKeepBlocks" type="checkbox" checked> 일반 블록 배치 유지</label>
         <button id="boardShapeRefresh" class="button ghost" type="button">후보 다시 생성</button>
         <p id="boardShapeStatus" role="status"></p>
-        <p>어두운 칸은 막힌 칸입니다. 후보를 적용하면 현재 막힌 칸 배치가 바뀝니다.</p>
+        <p>어두운 칸은 막힌 칸이에요. 일반 블록 배치 유지를 끄면 후보에 새로 막힐 칸의 블록이 개수와 함께 표시되고, 적용할 때 제거돼요.</p>
         <div id="boardShapeOptions" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
       </div>
       <form method="dialog" class="dialog-footer"><button class="button ghost">취소</button></form>
@@ -877,13 +909,13 @@
           <ul>
             <li>기존 맵은 상단의 <strong>JSON 가져오기</strong>로 엽니다. 미리보기에서 레벨 수, 맵 크기, 특수 피스 종류, 읽지 못한 값을 확인한 뒤 <strong>가져오기</strong>를 누르세요. 취소하면 편집 중이던 프로젝트로 돌아갑니다.</li>
             <li>읽지 못한 타일 목록에는 레벨, 행·열, 총 칸 수가 표시됩니다. <strong>목록 복사</strong>로 가져오기 문제를 공유할 수 있습니다. 외부 JSON은 지원하는 구조와 타일 매핑이 필요합니다.</li>
-            <li>빈 맵은 <strong>새 프로젝트</strong>에서 시작합니다. 왼쪽 <strong>Caves</strong>에서 레벨을 추가하거나 번호·이름으로 찾습니다. <strong>다른 번호로 저장</strong>을 누르면 번호를 직접 지정할 수 있고, 이미 있는 번호는 덮어쓰기 확인이 뜹니다.</li>
+            <li>빈 맵은 <strong>프로젝트 메뉴 → 새 프로젝트</strong>에서 시작합니다. 왼쪽 <strong>레벨 목록</strong>에서 레벨을 추가하거나 번호·이름으로 찾습니다. <strong>다른 번호로 저장</strong>을 누르면 번호를 직접 지정할 수 있고, 이미 있는 번호는 덮어쓰기 확인이 뜹니다.</li>
           </ul>
         </details>
         <details style="margin-block: .65rem;">
           <summary style="cursor: pointer; font-weight: 700;">보드 편집</summary>
           <ul>
-            <li>왼쪽에서 맵 크기, 중력, 클리어 목표와 <strong>Moves</strong>를 설정합니다. 별 점수, 수동 난이도, 오브젝트 생성 방식은 <strong>레벨별 설정</strong>에서 입력하고 <strong>레벨 설정 적용</strong>을 누릅니다.</li>
+            <li>왼쪽에서 클리어 방식과 이동 횟수를 설정한 뒤 <strong>플레이 미리보기</strong>를 누르면 현재 레벨을 새 탭에서 플레이합니다. 맵 크기, 중력, 별 점수와 생성 방식은 <strong>고급 레벨 설정</strong>에 있어요.</li>
             <li>오른쪽에서 <strong>Terrain / Block / Gimmick / Item</strong> 레이어를 선택한 뒤 <strong>오브젝트 만들기</strong>로 등록하거나, 가져온 오브젝트를 선택합니다. <strong>브러시</strong>로 클릭·드래그해 배치하고 <strong>채우기</strong>, <strong>지우개</strong>, <strong>실행 취소</strong>로 편집합니다.</li>
             <li>셀에 마우스를 올리면 속성을 볼 수 있습니다. <strong>칸 속성</strong>으로 초기 특수 피스의 색·종류를 편집하거나 해제할 수 있습니다. <strong>칸 비활성화</strong>는 해당 칸을 보드에서 제외하며, 다시 누르면 빈 칸으로 복원합니다.</li>
             <li><strong>Gimmick</strong> 탭에는 새 프로젝트와 가져온 프로젝트 모두에서 <strong>Spawner</strong>가 기본으로 표시됩니다. 보드에 배치한 스포너는 <strong>지우개</strong>로 제거할 수 있습니다.</li>
@@ -896,7 +928,7 @@
             <li>왼쪽 레벨 설정의 <strong>랜덤 배치</strong>에 시드와 밀도를 입력하고 <strong>랜덤 채우기 · 시드로 블록 배치</strong>를 누릅니다. 오른쪽 <strong>사용 색상</strong>에서 사용할 블록을 지정하세요.</li>
             <li>같은 영역의 <strong>보드 모양 후보</strong>에서 모양을 골라 적용할 수 있습니다. <strong>구역 아이템 랜덤 배치</strong>는 행·열 범위, 아이템 종류, 개수를 받아 범위 안의 배치 가능한 빈 칸에 배치합니다. 먼저 오른쪽 <strong>Item</strong> 탭에 종류를 등록하세요.</li>
             <li>왼쪽 <strong>랜덤 배치 → 난이도로 보드 생성</strong>에서 목표 난이도 <code>1~100</code>을 입력하고 <strong>후보 생성</strong>을 누릅니다. <strong>사용 색상</strong>에 생성 가중치가 0보다 큰 블록이 두 종류 이상 필요합니다. <strong>Terrain</strong> 탭에는 매치로 제거할 수 있는 지형을 등록하고 반응 규칙을 설정하세요.</li>
-            <li>생성된 보드의 클리어 목표는 <strong>Terrain 파괴</strong>입니다. 후보당 6회 자동 플레이를 돌려 목표 난이도에 가까운 후보를 최대 3개 보여줍니다. 자동 플레이에서 클리어하지 못한 후보도 적용할 수 있습니다. 보드, 목표 수량, 제한 Moves, 추정 난이도와 클리어율을 확인하고 <strong>이 후보 적용</strong>을 누르세요.</li>
+            <li>먼저 미션이나 목표 점수를 정한 뒤 난이도 후보를 생성하세요. 후보당 6회 자동 플레이 결과와 목표, 이동 횟수를 확인하고 <strong>이 후보 적용</strong>을 누르세요.</li>
             <li><strong>기존 오브젝트 배치 유지</strong>는 기본으로 켜져 있습니다. 기존 배치를 바탕으로 생성하려면 체크하고, 새로 배치하려면 체크를 해제하세요. 두 경우 모두 보드 크기와 비활성 칸을 유지합니다.</li>
             <li>자동 생성 시 스포너는 중력 반대쪽 가장자리에 배치됩니다. 중력이 아래면 위쪽, 위면 아래쪽, 왼쪽이면 오른쪽, 오른쪽이면 왼쪽입니다. 비활성 칸, 막힌 지형, 다른 기믹이 있는 칸은 건너뜁니다. <strong>기존 오브젝트 배치 유지</strong>를 켜도 생성 후보의 스포너 위치는 이 규칙에 맞춰 조정됩니다.</li>
           </ul>
@@ -933,7 +965,70 @@
       <form method="dialog" class="dialog-footer"><button type="submit" class="button ghost">닫기</button></form>
     </dialog>
 
-    <script type="module" src="./app.js?v=162"></script>
+    <style>
+      #themeEditorDialog { width: min(860px, 94vw); }
+      #themeImageSlots { display: grid; gap: 18px; max-height: 60dvh; overflow: auto; }
+      #themeImageSlots h3 { margin: 0 0 8px; font-size: 14px; }
+      .theme-slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 163px), 1fr)); gap: 8px; }
+      .theme-slot { display: grid; gap: 6px; align-content: start; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+      .theme-slot img { width: 56px; height: 56px; object-fit: contain; }
+      .theme-slot span { color: var(--muted); font-size: 12px; }
+      .theme-slot-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+      .editor-disclosure { position: relative; }
+      .editor-disclosure > summary { cursor: pointer; }
+      .editor-disclosure > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .editor-menu { position: absolute; inset: calc(100% + 6px) 0 auto auto; z-index: 20; width: min(310px, calc(100vw - 32px)); padding: 10px; display: grid; gap: 6px; border-radius: 10px; background: var(--panel); }
+      .editor-menu > .button { text-align: left; }
+      .level-advanced { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--border); }
+      .level-advanced > summary { font-size: 13px; font-weight: 700; margin-bottom: 12px; }
+      #editorTabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 20px; border-bottom: 1px solid var(--border); }
+      #editorTabs [aria-selected="true"] { border-color: var(--accent); background: var(--panel-3); }
+      #editorWorkspace:not(:is([data-active-tab="levels"], [data-active-tab="settings"])) #levelPanel,
+      #editorWorkspace:not([data-active-tab="levels"]) .cave-section,
+      #editorWorkspace:not([data-active-tab="settings"]) .rules-section,
+      #editorWorkspace:not(:is([data-active-tab="board"], [data-active-tab="settings"])) #boardEditor,
+      #editorWorkspace:not(:is([data-active-tab="board"], [data-active-tab="objects"], [data-active-tab="settings"]:not([data-guided-settings]))) #objectPanel { display: none; }
+      #editorWorkspace:not([data-active-tab="board"]) { grid-template-columns: minmax(0, 680px); justify-content: center; }
+      #editorWorkspace[data-active-tab="settings"] #boardEditor { order: 0; }
+      #editorWorkspace[data-guided-settings] :is(.editor-toolbar, #assetReplaceForm, #assetLocator),
+      #editorWorkspace[data-active-tab="settings"] :is(.canvas-footer, .note-panel, #boardDifficultyButton) { display: none; }
+      @media (min-width: 1051px) and (min-height: 541px) {
+        #editorWorkspace[data-active-tab="board"] { grid-template-columns: minmax(0, 1fr) minmax(240px, 300px); }
+        #editorWorkspace[data-active-tab="settings"] { grid-template-columns: minmax(280px, 400px) minmax(0, 1fr); }
+      }
+      @media (min-width: 1051px) {
+        #editorWorkspace[data-active-tab="settings"]:not([data-guided-settings]) { grid-template-columns: minmax(250px, 320px) minmax(0, 1fr) minmax(220px, 280px); }
+      }
+      #editorGuide { position: sticky; top: 0; z-index: 12; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
+      .editor-guide-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .editor-guide-controls .field { width: auto; max-width: 100%; }
+      #editorGuide p { margin: 6px 0 0; font-size: 13px; }
+      .editor-guide-target { outline: 2px solid var(--accent); outline-offset: 3px; }
+      .level-setting-group + .level-setting-group { margin-top: 12px; }
+      .level-setting-group > .field-label.spaced { margin-top: 0; }
+      .editor-goal-art { width: 24px; height: 24px; object-fit: contain; vertical-align: middle; margin-inline-end: 6px; }
+    </style>
+    <dialog id="themeEditorDialog" aria-labelledby="themeEditorTitle">
+      <div class="dialog-header">
+        <h2 id="themeEditorTitle">테마 편집</h2>
+        <div class="theme-slot-actions">
+          <button type="button" class="button ghost" id="saveThemePack">테마 팩 저장</button>
+          <button type="button" class="button ghost" id="openThemePack">테마 팩 불러오기</button>
+          <input type="file" id="themePackFile" accept=".json,application/json" hidden>
+        </div>
+      </div>
+      <div class="panel-section">
+        <p id="themePackStatus" role="status"></p>
+        <div id="themeImageSlots"></div>
+      </div>
+      <div class="dialog-footer">
+        <button type="button" class="button ghost" id="clearEditorTheme">맵툴 기본 이미지로</button>
+        <button type="button" class="button" id="applyEditorTheme">맵툴에 적용</button>
+        <button type="button" class="button primary" id="previewThemeButton">현재 레벨에서 미리보기</button>
+        <form method="dialog"><button class="button">닫기</button></form>
+      </div>
+    </dialog>
+    <script type="module" src="./app.js?v=185"></script>
   </body>
 </html>
 

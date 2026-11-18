@@ -1,4 +1,6 @@
 // Board rules shared by the editor Playtest and the standalone puzzle.
+export const AUTO_UNLIMITED_TURN_LIMIT = 100;
+
 export function createGameEngine(getProject) {
   const SPAWNER_ID = "spawner";
 
@@ -931,6 +933,7 @@ export function createGameEngine(getProject) {
           cleared.push(...particles.map(({ index }) => index));
           const flights = expanded.beeFlights.filter((flight) => flight.wave === wave).map((flight) => ({
             ...flight, color: state.cave.layers.block[flight.from],
+            pieceType: state.cave.playtestPieces[flight.from]?.type,
           }));
           if (flights.length) captureFrame("벌 출격", [], "swap", 690, [], { type: "bee", flights }, null, cleared);
         }
@@ -1769,8 +1772,7 @@ export function createGameEngine(getProject) {
   }
 
   function runDdungTurnEvent(state, captureFrame) {
-    const { cave, movesLeft, ddungEvents, ddungEventRandom } = state;
-    const movesUsed = cave.moveLimit - movesLeft;
+    const { cave, movesUsed, ddungEvents, ddungEventRandom } = state;
     if (movesUsed <= 0) return;
     const pick = (cells) => cells.splice(Math.floor(ddungEventRandom() * cells.length), 1)[0];
     const available = (index) => cave.layers.block[index] && !isBarrier(cave, index);
@@ -1842,7 +1844,8 @@ export function createGameEngine(getProject) {
         return;
       }
     }
-    state.movesLeft -= 1;
+    state.movesUsed += 1;
+    if (state.movesLeft !== null) state.movesLeft -= 1;
     state.chocolateRemoved = false;
     const resolved = resolveMatches(state, captureFrame, combo ? [first, second] : activation ? [first] : [], activation || combo ? [] : [second, first], combo);
     state.message = (combo ? combo.label + " · " : "") + resolved.removed + "개 제거 · " + resolved.cascade + "연쇄 · Terrain " + resolved.terrainBroken + "개 파괴";
@@ -1874,7 +1877,7 @@ export function createGameEngine(getProject) {
     }
     state.turnPanelsHit.clear();
     if (clearConditionMet(state)) state.status = "won";
-    else if (!state.movesLeft) state.status = "lost";
+    else if (state.movesLeft === 0) state.status = "lost";
     else {
       spreadDdungChocolate(state, captureFrame);
       runDdungTurnEvent(state, captureFrame);
@@ -1901,7 +1904,8 @@ export function createGameEngine(getProject) {
     });
     const state = {
       cave: copy,
-      movesLeft: copy.moveLimit,
+      movesLeft: copy.moveLimitEnabled === false ? null : copy.moveLimit,
+      movesUsed: 0,
       blocksRemoved: 0,
       scoreTarget,
       pointsPerBlock,
@@ -1959,8 +1963,12 @@ export function createGameEngine(getProject) {
   function runAutoGame(cave, runIndex) {
     const state = createPlayState(cave, `batch-${runIndex}`);
     if (state.goalLimitations.some(Boolean)) return { status: "unsupported", moves: 0, runIndex };
-    while (state.status === "playing") playSimulationTurn(state, chooseAutoAction(state));
-    return { status: state.status, moves: cave.moveLimit - state.movesLeft, shuffles: state.shuffleCount, runIndex };
+    const turnLimit = cave.moveLimitEnabled === false ? AUTO_UNLIMITED_TURN_LIMIT : Infinity;
+    for (let turn = 0; state.status === "playing" && turn < turnLimit; turn++) {
+      playSimulationTurn(state, chooseAutoAction(state));
+    }
+    const status = state.status === "playing" ? "limit" : state.status;
+    return { status, moves: state.movesUsed, shuffles: state.shuffleCount, runIndex };
   }
 
   const DDUNG_COLOR_IDS = ["yellow", "blue", "orange", "green", "red", "purple"];

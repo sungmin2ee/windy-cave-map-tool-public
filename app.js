@@ -1,4 +1,4 @@
-import { createGameEngine } from "./game-engine.js?v=8";
+import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=10";
 
 const {
   SPAWNER_ID,
@@ -245,12 +245,12 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
   const layers = emptyLayers(width * height);
   return {
     id: crypto.randomUUID(), number, name, width, height, gravity: "down", layers,
-    usableBlocks: [],
+    usableBlocks: Object.keys(COLORS),
     levelSettings: normalizeLevelSettings({}),
     objectives: [],
     scoreTarget: null, pointsPerBlock: 100,
     targetType: null, targetCount: 0,
-    moveLimit: 20, parMoves: 14, testClearMoves: 0,
+    moveLimit: 20, moveLimitEnabled: true, parMoves: 14, testClearMoves: 0,
     simulationRuns: 30,
     randomSeed: `CAVE-${String(number).padStart(4, "0")}`, randomDensity: 100,
     flowRule: "left-first", terrainRules: deepCopy(DEFAULT_TERRAIN_RULES),
@@ -263,7 +263,7 @@ let project;
 let projectDatabase;
 let saveQueue = Promise.resolve();
 
-let activeLayer = "terrain";
+let activeLayer = "block";
 let activeTool = "brush";
 let selectedAssets = { terrain: null, block: null, gimmick: null, item: null };
 let undoStack = [];
@@ -314,8 +314,8 @@ const DDUNG_ART = new Set(["red", "blue", "green", "yellow", "purple", "orange",
   "ddung-heather-small", "ddung-heather-large", "ddung-stone", "ddung-stone-thick",
   "ddung-jelly", "ddung-dungs", "ddung-iron-box"]);
 
-function normalizeObjectImage(value) {
-  return typeof value === "string" && value.length <= 100000 &&
+function normalizeObjectImage(value, maxLength = 100000) {
+  return typeof value === "string" && value.length <= maxLength &&
     /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : null;
 }
 
@@ -584,7 +584,7 @@ function normalizeCave(data, index = 0, ddungProject = false, packedCatalog = {}
     specialMatches: source.specialMatches ?? true,
     usableBlocks: [...new Set(usableBlocks)],
     blockWeights: normalizeBlockWeights(source.blockWeights),
-    objectives, targetType, targetCount, moveLimit,
+    objectives, targetType, targetCount, moveLimit, moveLimitEnabled: source.moveLimitEnabled !== false,
     parMoves: clampNumber(source.parMoves, Math.min(moveLimit, estimatedPar), 1, 999),
     testClearMoves: goalChanged ? 0 : clampNumber(source.testClearMoves, 0, 0, 999),
     simulationRuns: [10, 30, 100].includes(Number(source.simulationRuns)) ? Number(source.simulationRuns) : 30,
@@ -751,6 +751,7 @@ function showObjectImage(element, source) {
   image.onerror = () => image.remove();
   image.src = source;
   element.append(image);
+  return image;
 }
 
 function blockColor(id) {
@@ -840,12 +841,21 @@ function renderObjectives() {
     row.querySelector(".objective-count-mode").addEventListener("change", (event) => updateObjective(index, { countMode: event.target.value }));
     row.querySelector(".objective-count")?.addEventListener("change", (event) => updateObjective(index, { count: clampNumber(event.target.value, 1, 1, 999) }));
     row.querySelector(".objective-remove").addEventListener("click", () => removeObjective(index));
+    const image = editorGoalArt(objective);
+    if (image) {
+      const icon = document.createElement("img");
+      icon.alt = "";
+      icon.className = "editor-goal-art";
+      icon.src = image;
+      row.querySelector(".objective-count-row > .objective-auto-count").prepend(icon);
+    }
     list.appendChild(row);
   });
   $("addObjectiveButton").disabled = cave.objectives.length >= MAX_OBJECTIVES;
 }
 
 function renderAll() {
+  renderAppliedEditorTheme();
   renderCaveList();
   renderRules();
   renderPalette();
@@ -912,6 +922,8 @@ function renderRules() {
   renderClearMode(cave);
   renderObjectives();
   $("moveLimit").value = cave.moveLimit;
+  $("moveLimitEnabled").checked = cave.moveLimitEnabled;
+  $("moveLimit").disabled = !cave.moveLimitEnabled;
   $("parMoves").value = cave.parMoves;
   $("testClearMoves").value = cave.testClearMoves || "";
   $("simulationRuns").value = String(cave.simulationRuns);
@@ -959,7 +971,7 @@ function renderDifficultySummary(cave) {
   node.className = `difficulty-summary difficulty-${analysis.key}`;
   node.innerHTML = `
     <div><span>휴리스틱 난이도</span><strong>${analysis.label}</strong></div>
-    <small>점수 ${analysis.score} · 목표 작업량 ${analysis.objectiveWork} · 여유 ${analysis.slack >= 0 ? "+" : ""}${analysis.slack} Moves · 블록 ${analysis.totalBlocks}</small>
+    <small>점수 ${analysis.score} · 목표 작업량 ${analysis.objectiveWork} · ${moveBudgetSummary(analysis)} · 블록 ${analysis.totalBlocks}</small>
     <small>면적 + 사용 색상 + 기믹/아이템 + 목표 비율 + 클리어 기록 대비 Moves로 계산</small>
   `;
 }
@@ -1094,28 +1106,279 @@ async function chooseObjectImage(event) {
   const id = selectedAssets[layer];
   const currentProject = project;
   if (!file || !id) return;
+  try {
+    const data = await readArtworkImage(file);
+    if (project === currentProject && paletteIdsFor(layer).includes(id)) saveObjectImage(layer, id, data);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function readArtworkImage(file, maxSide = 112, maxLength = 100000) {
   if (!/\.(?:png|jpe?g|webp)$/i.test(file.name) && !/^image\/(?:png|jpeg|webp)$/.test(file.type)) {
-    toast("PNG, JPG, WebP 이미지 파일을 선택하세요.");
-    return;
+    throw new Error("PNG, JPG, WebP 이미지 파일을 선택하세요.");
   }
   const url = URL.createObjectURL(file);
   try {
     const image = new Image();
     image.src = url;
     await image.decode();
-    const scale = Math.min(1, 112 / Math.max(image.naturalWidth, image.naturalHeight));
+    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
     canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-    const data = normalizeObjectImage(canvas.toDataURL("image/webp", 0.9));
+    const data = normalizeObjectImage(canvas.toDataURL("image/webp", 0.9), maxLength);
     if (!data) throw new Error("Image encoding failed");
-    if (project === currentProject && paletteIdsFor(layer).includes(id)) saveObjectImage(layer, id, data);
+    return data;
   } catch {
-    toast("이미지를 열 수 없습니다. 다른 이미지 파일을 선택하세요.");
+    throw new Error("이미지를 처리할 수 없습니다. 다른 이미지 파일을 선택하세요.");
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+const THEME_SPECIALS = { row: "가로 줄 폭탄", column: "세로 줄 폭탄", area: "폭탄", fish: "벌", color: "오색" };
+const THEME_OBJECT_LAYERS = { block: "일반 블록", terrain: "지형", gimmick: "기믹", item: "아이템" };
+
+let pendingThemeImages = 0;
+const THEME_PACK_FORMAT = "windy-cave-theme-pack";
+
+function readThemePack(pack) {
+  if (pack?.format !== THEME_PACK_FORMAT || pack.version !== 1) {
+    throw new Error("맵툴에서 저장한 테마 팩 JSON을 선택하세요.");
+  }
+  const imageData = (value, maxLength = 100000) => {
+    const image = normalizeObjectImage(value, maxLength);
+    if (!image) throw new Error("테마 팩에 읽을 수 없는 이미지가 있어요.");
+    return image;
+  };
+  const theme = {};
+  for (const category of [...Object.keys(THEME_OBJECT_LAYERS), "specials", "goals"]) {
+    const entries = pack[category];
+    if (entries === undefined) continue;
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+      throw new Error("테마 팩의 이미지 목록 형식이 올바르지 않아요.");
+    }
+    theme[category] = Object.fromEntries(Object.entries(entries).map(([id, value]) => {
+      if (!assetId(id) || Object.hasOwn(Object.prototype, id)) throw new Error("테마 팩에 잘못된 이미지 ID가 있어요.");
+      return [id, imageData(value)];
+    }));
+  }
+  if (pack.background !== undefined) theme.background = imageData(pack.background, 1500000);
+  return theme;
+}
+
+function objectThemeImages(layer) {
+  return Object.fromEntries((project.assetDefinitions?.[layer] ?? [])
+    .filter(({ image }) => image)
+    .map(({ id, image }) => [id, image]));
+}
+
+function saveThemePack() {
+  try {
+    const draft = project.editorTheme;
+    const layers = Object.fromEntries(Object.keys(THEME_OBJECT_LAYERS).map((layer) =>
+      [layer, { ...objectThemeImages(layer), ...draft?.[layer] }]));
+    const theme = readThemePack({ ...draft, ...layers, format: THEME_PACK_FORMAT, version: 1 });
+    downloadJson({ format: THEME_PACK_FORMAT, version: 1, ...theme }, "windy-theme-pack.json");
+    $("themePackStatus").textContent = "테마 팩을 저장했어요.";
+  } catch (error) {
+    $("themePackStatus").textContent = error.message;
+  }
+}
+
+async function loadThemePack(event) {
+  const input = event.currentTarget;
+  const file = input.files[0];
+  input.value = "";
+  if (!file) return;
+  const currentProject = project;
+  try {
+    const theme = readThemePack(JSON.parse(await file.text()));
+    if (project !== currentProject) return;
+    snapshot();
+    project.editorTheme = theme;
+    renderThemeEditor();
+    persist();
+    $("themePackStatus").textContent = "테마 팩을 불러왔어요. 맵툴에 적용 버튼을 누르면 편집 보드에도 표시돼요.";
+  } catch (error) {
+    $("themePackStatus").textContent = error instanceof SyntaxError ? "JSON 파일을 읽을 수 없어요." : error.message;
+  }
+}
+
+function editorGoalArt(objective) {
+  return puzzleArtwork?.goals?.[objective.targetId] || puzzleArtwork?.layers[objective.layer]?.[objective.targetId];
+}
+
+function renderAppliedEditorTheme() {
+  let theme;
+  if (project.appliedEditorTheme) {
+    try {
+      theme = readThemePack({ ...project.appliedEditorTheme, format: THEME_PACK_FORMAT, version: 1 });
+    } catch {
+      // Invalid artwork in an imported project falls back to the default theme.
+    }
+  }
+  puzzleArtwork = theme ? {
+    layers: Object.fromEntries(Object.keys(THEME_OBJECT_LAYERS).map((layer) => [layer, theme[layer]])),
+    specials: theme.specials,
+    goals: theme.goals,
+  } : null;
+  const background = theme?.background
+    ? `linear-gradient(rgb(12 15 30 / 55%), rgb(12 15 30 / 78%)), url(${JSON.stringify(theme.background)})`
+    : "";
+  $("editorWorkspace").style.backgroundImage = background;
+  $("simulationDialog").style.backgroundImage = background;
+  $("clearEditorTheme").disabled = !theme;
+}
+
+function applyEditorTheme(enabled) {
+  try {
+    const theme = enabled ? readThemePack({ ...project.editorTheme, format: THEME_PACK_FORMAT, version: 1 }) : null;
+    snapshot();
+    project.appliedEditorTheme = theme;
+    renderAll();
+    persist();
+    $("themeEditorDialog").close();
+    toast(enabled ? "편집 보드와 Playtest에 테마를 적용했어요." : "맵툴을 기본 이미지로 복원했어요.");
+  } catch (error) {
+    $("themePackStatus").textContent = error.message;
+  }
+}
+
+function renderThemeEditor() {
+  const cave = activeCave();
+  const objectImages = Object.fromEntries(Object.keys(THEME_OBJECT_LAYERS).map((layer) => [layer, objectThemeImages(layer)]));
+  const objectGroups = Object.entries(THEME_OBJECT_LAYERS).flatMap(([layer, title]) => {
+    const inherited = objectImages[layer];
+    const ids = new Set([
+      ...Object.keys(inherited),
+      ...Object.keys(project.editorTheme?.[layer] ?? {}),
+      ...Object.keys(project.appliedEditorTheme?.[layer] ?? {}),
+    ]);
+    if (layer === "block") {
+      for (const id of [...Object.keys(COLORS), ...paletteIdsFor(layer, cave)]) ids.add(id);
+    }
+    const entries = [...ids].map((id) => [id, getAsset(layer, id, cave)?.name ?? id, inherited[id]]);
+    return entries.length ? [[layer, title, entries]] : [];
+  });
+  const goals = [...new Map(cave.objectives.map(({ layer, targetId }) =>
+    [targetId, [targetId, getAsset(layer, targetId, cave)?.name ?? targetId,
+      objectImages[layer]?.[targetId]]])).values()];
+  const groups = [
+    ...objectGroups,
+    ["specials", "특수 피스", Object.entries(THEME_SPECIALS)],
+    ["goals", "현재 레벨의 목표 아이콘", goals],
+    ["background", "배경", [["background", "게임 배경"]]],
+  ];
+  $("themeImageSlots").replaceChildren(...groups.map(([category, title, entries]) => {
+    const group = document.createElement("section");
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    const grid = document.createElement("div");
+    grid.className = "theme-slot-grid";
+    if (entries.length) grid.append(...entries.map(([id, name, image]) => buildThemeSlot(category, id, name, image)));
+    else grid.textContent = "이 레벨에 설정된 목표가 없습니다.";
+    group.append(heading, grid);
+    return group;
+  }));
+}
+
+function buildThemeSlot(category, id, name, inheritedImage) {
+  const card = document.createElement("div");
+  card.className = "theme-slot";
+  const title = document.createElement("strong");
+  title.textContent = name;
+  const thumbnail = document.createElement("img");
+  thumbnail.alt = "";
+  const status = document.createElement("span");
+  status.setAttribute("role", "status");
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp";
+  input.hidden = true;
+  const upload = document.createElement("button");
+  upload.type = "button";
+  upload.className = "button compact";
+  upload.textContent = "이미지 교체";
+  upload.setAttribute("aria-label", name + " 이미지 교체");
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "button compact ghost";
+  const resetToObject = category === "goals" && inheritedImage;
+  reset.textContent = resetToObject ? "오브젝트 이미지로" : "기본값";
+  reset.setAttribute("aria-label", name + (resetToObject ? " 오브젝트 이미지로 복원" : " 기본값으로 복원"));
+  const actions = document.createElement("div");
+  actions.className = "theme-slot-actions";
+  actions.append(upload, reset);
+  card.append(title, thumbnail, status, input, actions);
+
+  function refresh() {
+    const override = themeSlotImage(project.editorTheme, category, id);
+    const applied = themeSlotImage(project.appliedEditorTheme, category, id);
+    const image = override || inheritedImage || applied;
+    if (image) thumbnail.src = image;
+    else thumbnail.removeAttribute("src");
+    thumbnail.hidden = !image;
+    reset.disabled = !override && !applied && !(inheritedImage && Object.hasOwn(THEME_OBJECT_LAYERS, category));
+    status.textContent = override ? "교체됨" : inheritedImage ? "오브젝트 편집에서 지정" : applied ? "맵툴에 적용됨" : "기본 이미지";
+  }
+
+  upload.addEventListener("click", () => input.click());
+  reset.addEventListener("click", () => resetThemeImage(category, id));
+  input.addEventListener("change", async () => {
+    const file = input.files[0];
+    input.value = "";
+    if (!file) return;
+    const currentProject = project;
+    const preview = $("previewThemeButton");
+    pendingThemeImages += 1;
+    preview.disabled = $("applyEditorTheme").disabled = $("saveThemePack").disabled = $("openThemePack").disabled = true;
+    upload.disabled = reset.disabled = true;
+    status.textContent = "이미지를 준비하는 중이에요.";
+    try {
+      const image = category === "background" ? await readArtworkImage(file, 960, 1500000) : await readArtworkImage(file, 192);
+      if (project === currentProject) setThemeImage(category, id, image);
+      refresh();
+    } catch (error) {
+      refresh();
+      status.textContent = error.message;
+    } finally {
+      upload.disabled = false;
+      pendingThemeImages -= 1;
+      preview.disabled = $("applyEditorTheme").disabled = $("saveThemePack").disabled = $("openThemePack").disabled = pendingThemeImages > 0;
+    }
+  });
+  refresh();
+  return card;
+}
+
+function setThemeImage(category, id, image) {
+  snapshot();
+  const theme = project.editorTheme ??= {};
+  if (category === "background") theme.background = image;
+  else (theme[category] ??= {})[id] = image;
+  persist();
+}
+
+function themeSlotImage(theme, category, id) {
+  return category === "background" ? theme?.background : theme?.[category]?.[id];
+}
+
+function resetThemeImage(category, id) {
+  snapshot();
+  for (const theme of [project.editorTheme, project.appliedEditorTheme]) {
+    if (category === "background") delete theme?.background;
+    else delete theme?.[category]?.[id];
+  }
+  if (Object.hasOwn(THEME_OBJECT_LAYERS, category)) {
+    const definition = project.assetDefinitions?.[category]?.find((asset) => asset.id === id);
+    delete definition?.image;
+  }
+  renderAll();
+  renderThemeEditor();
+  persist();
 }
 
 function saveSelectedGimmickRule(event) {
@@ -1168,6 +1431,7 @@ function showAssetUsage(layer, id, name, usage, message) {
       $("caveJump").value = String(cave.number);
       assetLocator = { caveId: cave.id, layer, id, name };
       jumpToCave();
+      selectEditorTab("board");
       stepLocatedAsset(0);
     });
     item.appendChild(button);
@@ -1268,6 +1532,7 @@ function openAssetReplacement() {
   $("assetReplaceRange").value = "";
   $("assetReplaceCaves").replaceChildren();
   assetReplacement = { caveId: cave.id, layer, id };
+  selectEditorTab("board");
   renderGrid();
   select.focus();
 }
@@ -1821,12 +2086,15 @@ function wouldCreateMatch(blocks, index, color, cave) {
   return false;
 }
 
-function boardShapeCandidates(cave, symmetry, percent) {
+function boardShapeCandidates(cave, symmetry, percent, keepBlocks = true) {
   const { width, height } = cave;
   const size = width * height;
   const target = Math.min(size - 1, Math.round(size * percent / 100));
+  const { block, terrain, gimmick, item } = cave.layers;
   const protectedCells = Array.from({ length: size }, (_, index) =>
-    Object.values(cave.layers).some((layer) => layer[index]) || initialPieceAt(cave, index)
+    (terrain[index] && terrain[index] !== "floor") || gimmick[index] || item[index] ||
+    (keepBlocks && block[index]) || isDdungTreasure(block[index]) ||
+    initialPieceAt(cave, index) || ddungMarkersAt(cave, index).length
   );
   const groups = [];
   for (let index = 0; index < size; index++) {
@@ -1838,7 +2106,7 @@ function boardShapeCandidates(cave, symmetry, percent) {
     groups.push(mirror === index ? [index] : [index, mirror]);
   }
   const candidates = new Map();
-  for (let attempt = 0; attempt < 30 && candidates.size < 3; attempt++) {
+  function sample(budget) {
     const shuffled = [...groups];
     for (let index = shuffled.length - 1; index > 0; index--) {
       const other = Math.floor(Math.random() * (index + 1));
@@ -1846,36 +2114,49 @@ function boardShapeCandidates(cave, symmetry, percent) {
     }
     const cells = [];
     for (const group of shuffled.sort((a, b) => b.length - a.length)) {
-      if (cells.length + group.length <= target) cells.push(...group);
+      if (cells.length + group.length <= budget) cells.push(...group);
     }
     cells.sort((a, b) => a - b);
-    candidates.set(cells.join(","), cells);
+    if (!target || cells.length) candidates.set(cells.join(","), cells);
+  }
+  for (let attempt = 0; attempt < 30 && candidates.size < 3; attempt++) sample(target);
+  const closest = candidates.values().next().value?.length ?? 0;
+  for (let budget = closest - 1; budget > 0 && candidates.size < 3; budget--) {
+    for (let attempt = 0; attempt < 8 && candidates.size < 3; attempt++) sample(budget);
   }
   return { target, candidates: [...candidates.values()] };
 }
 
-function renderBoardShapeCandidates(cave, prefix, onSelect) {
-  const options = $(prefix + "Options");
-  const percent = clampNumber($(prefix + "Percent").value, 20, 0, 70);
-  const { candidates, target } = boardShapeCandidates(cave, $(prefix + "Symmetry").value, percent);
+function renderBoardShapeCandidates(cave, onSelect) {
+  const options = $("boardShapeOptions");
+  const status = $("boardShapeStatus");
+  const keepBlocks = $("boardShapeKeepBlocks").checked;
+  const percent = clampNumber($("boardShapePercent").value, 20, 0, 70);
+  const { candidates, target } = boardShapeCandidates(cave, $("boardShapeSymmetry").value, percent, keepBlocks);
   options.replaceChildren();
-  $(prefix + "Status").textContent = cave.width + " × " + cave.height + " · 목표 " + target + "칸";
-  if (candidates[0].length < target) {
-    $(prefix + "Status").textContent += " · 대칭과 기존 오브젝트를 고려해 가능한 만큼 막았습니다.";
+  status.textContent = `${cave.width} × ${cave.height} · 목표 ${target}칸 · 후보 ${candidates.length}개`;
+  if (target && candidates.length < 3) {
+    status.textContent += keepBlocks
+      ? " · 바꿀 수 있는 칸이 적어요. ‘일반 블록 배치 유지’를 끄거나 대칭과 비율을 바꿔 보세요."
+      : " · 보호된 오브젝트와 대칭 조건 때문에 후보가 적어요. 대칭과 비율을 바꿔 보세요.";
+  } else if (candidates.some((cells) => cells.length < target)) {
+    status.textContent += " · 선택 폭을 넓히려고 목표보다 적게 막은 후보도 포함했어요.";
   }
   for (const [index, cells] of candidates.entries()) {
     const blocked = new Set(cells);
     const card = document.createElement("button");
     card.type = "button";
     card.className = "button ghost";
-    card.textContent = "후보 " + (index + 1) + " · 막힌 칸 " + cells.length + "개";
+    const removedBlocks = cells.filter((cell) => cave.layers.block[cell]).length;
+    card.textContent = `후보 ${index + 1} · 막힌 칸 ${cells.length}개` +
+      (removedBlocks ? ` · 일반 블록 ${removedBlocks}개 제거` : "");
     const grid = document.createElement("span");
     grid.className = "board-shape-grid";
     grid.style.gridTemplateColumns = "repeat(" + cave.width + ", 10px)";
     grid.setAttribute("aria-hidden", "true");
     for (let cell = 0; cell < cave.width * cave.height; cell++) {
       const tile = document.createElement("span");
-      if (blocked.has(cell)) tile.className = "board-shape-blocked";
+      if (blocked.has(cell) || cave.layers.terrain[cell] === "pit") tile.className = "board-shape-blocked";
       grid.append(tile);
     }
     card.append(grid);
@@ -1891,9 +2172,13 @@ function renderBoardShapeCandidates(cave, prefix, onSelect) {
 function openBoardShapes() {
   const cave = activeCave();
   const dialog = $("boardShapeDialog");
-  const refresh = () => renderBoardShapeCandidates(cave, "boardShape", (cells) => {
+  const refresh = () => renderBoardShapeCandidates(cave, (cells) => {
     snapshot();
     cave.excludedCells = cells;
+    for (const cell of cells) {
+      cave.layers.block[cell] = null;
+      if (cave.layers.terrain[cell] === "floor") cave.layers.terrain[cell] = null;
+    }
     cave.testClearMoves = 0;
     dialog.close();
     renderAll();
@@ -1903,6 +2188,7 @@ function openBoardShapes() {
   $("boardShapeRefresh").onclick = refresh;
   $("boardShapeSymmetry").onchange = refresh;
   $("boardShapePercent").onchange = refresh;
+  $("boardShapeKeepBlocks").onchange = refresh;
   refresh();
   dialog.showModal();
 }
@@ -2085,11 +2371,21 @@ function difficultyBlockIds(cave, automatic) {
 
 function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickIds = [], selectedTerrain = []) {
   const cave = deepCopy(source);
+  const goals = cave.objectives;
+  const requiredGoals = cave.scoreTarget == null ? goals : [];
+  const preserveLayer = (layer) => requiredGoals.some((goal) => goal.layer === layer);
   const seed = source.randomSeed + "|difficulty-" + target + "-" + (attempt + 1);
   const random = seededRandom(seed);
   if (!keepPlacement) {
     cave.layers = emptyLayers(cave.width * cave.height);
-    if (cave.externalSource?.overlappingMarkers) cave.externalSource.overlappingMarkers = {};
+    cave.layers.terrain = preserveLayer("terrain") ? [...source.layers.terrain]
+      : source.layers.terrain.map((id) => id === "pit" ? id : null);
+    if (preserveLayer("gimmick") || preserveLayer("item")) cave.layers.gimmick = [...source.layers.gimmick];
+    else if (cave.externalSource?.overlappingMarkers) cave.externalSource.overlappingMarkers = {};
+    if (preserveLayer("item")) {
+      cave.layers.item = [...source.layers.item];
+      cave.layers.block = source.layers.block.map((id) => isDdungTreasure(id) ? id : null);
+    }
     cave.initialPieceTypes = Object.fromEntries(
       source.layers.block.flatMap((_, index) => initialPieceAt(source, index) ? [[index, null]] : [])
     );
@@ -2106,11 +2402,21 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   terrain.forEach((id, index) => {
     if (id && !isExcluded(cave, index)) terrainCounts.set(id, (terrainCounts.get(id) || 0) + 1);
   });
-  const terrainIds = difficultyTerrainIds(cave).filter((id) =>
-    (!selectedTerrain.length || selectedTerrain.includes(id)) &&
+  for (const goal of requiredGoals.filter(({ layer }) => layer === "terrain")) {
+    const minimum = goal.countMode === "manual" ? goal.count : 1;
+    const needed = minimum - countObjectiveAssets(cave, goal);
+    if (needed <= 0) continue;
+    if (!difficultyTerrainIds(cave).includes(goal.targetId) || needed > terrainSlots.length) return null;
+    for (let placed = 0; placed < needed; placed++) {
+      const [index] = terrainSlots.splice(Math.floor(random() * terrainSlots.length), 1);
+      terrain[index] = goal.targetId;
+      terrainCounts.set(goal.targetId, (terrainCounts.get(goal.targetId) ?? 0) + 1);
+    }
+  }
+  const targets = difficultyTerrainIds(cave).filter((id) =>
+    selectedTerrain.includes(id) &&
     (terrainCounts.has(id) || terrainSlots.length));
-  if (!terrainIds.length || (selectedTerrain.length && terrainIds.length !== selectedTerrain.length)) return null;
-  const targets = selectedTerrain.length ? terrainIds : [terrainIds[Math.floor(random() * terrainIds.length)]];
+  if (targets.length !== selectedTerrain.length) return null;
   const variation = 0.65 + random() * 0.7;
   const newTargets = targets.filter((id) => !terrainCounts.has(id));
   if (terrainSlots.length < newTargets.length) return null;
@@ -2122,12 +2428,6 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     terrain[index] = id;
     terrainCounts.set(id, (terrainCounts.get(id) ?? 0) + 1);
   }
-  const goals = targets.map((id, index) => {
-    const available = terrainCounts.get(id);
-    const count = Math.max(1, Math.min(available, Math.round(available * (0.25 + target * 0.007) * variation)));
-    return normalizeObjective({ id: "generated-terrain-goal-" + index, layer: "terrain", targetId: id, count });
-  });
-  const terrainCount = goals.reduce((count, goal) => count + goal.count, 0);
   placeGenerationSpawners(cave);
   const gimmicks = cave.layers.gimmick;
 
@@ -2184,21 +2484,16 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   }
   if ((!keepPlacement && findMatches(cave).size) || !hasPossibleSwap(cave)) return null;
 
-  cave.objectives = goals;
   if (usesDdungGeneration(source)) cave.generatedBlockArt = "ddung";
   else delete cave.generatedBlockArt;
-  cave.targetType = null;
-  cave.targetCount = terrainCount;
-  const moveSpread = [-8, -4, 0, 4, 9, 15][attempt % 6];
-  cave.moveLimit = Math.max(2, Math.min(35, Math.round(16 - target / 8 + Math.sqrt(terrainCount) * 3 + moveSpread)));
-  cave.parMoves = Math.max(1, Math.floor(cave.moveLimit * 0.75));
+  syncLegacyTarget(cave);
   const validation = validateCave(cave, collectPaletteAssets([cave], project.paletteAssets, project.assetDefinitions));
   return validation.errors.length || validation.unsupported.length ? null : cave;
 }
 
 function difficultyCandidateScore(cave, batch) {
   const failureRate = 1 - batch.wins / batch.runs;
-  const movePressure = batch.average / cave.moveLimit;
+  const movePressure = batch.average / (cave.moveLimitEnabled ? cave.moveLimit : cave.parMoves);
   return Math.max(1, Math.min(100, Math.round(70 * failureRate + 25 * movePressure + 5 * batch.stuck / batch.runs)));
 }
 
@@ -2212,10 +2507,12 @@ function renderDifficultyCandidates(source, candidates) {
     summary.textContent = "후보 " + (index + 1) + (batch.wins ? " · 추정 난이도 " + score : " · 자동 검증 미클리어") +
       " · 자동 플레이 " + batch.runs + "회 시도 · " + batch.wins + "회 클리어 (" + batch.clearRate + "%)";
     const info = document.createElement("p");
-    info.textContent = cave.width + " × " + cave.height + " · 제한 " + cave.moveLimit + " Moves · 성공 평균 " + batch.average +
-      " Moves · 막힘 " + batch.stuck + "/" + batch.runs;
+    info.textContent = cave.width + " × " + cave.height + " · " + moveLimitSummary(cave) +
+      " · 성공 평균 " + batch.average + "회 · 막힘 " + batch.stuck + "/" + batch.runs +
+      (batch.limited ? " · 자동 검증 상한 도달 " + batch.limited + "회" : "");
     const goals = document.createElement("p");
-    goals.textContent = cave.objectives.map((goal) => objectiveLabel(goal) + " " + goal.count + "개").join(" · ");
+    goals.textContent = cave.scoreTarget != null ? "목표 점수 " + cave.scoreTarget
+      : cave.objectives.map((goal) => objectiveLabel(goal) + " " + resolvedObjectiveCount(cave, goal) + "개").join(" · ");
     const viewport = document.createElement("div");
     viewport.className = "difficulty-preview-scroll";
     const grid = document.createElement("div");
@@ -2267,52 +2564,24 @@ function renderDifficultyChoices(container, layer, ids, enabled) {
   }));
 }
 
-let difficultyShapeCells = null;
-
-function difficultyBoardSize() {
-  const width = $("difficultyWidth");
-  const height = $("difficultyHeight");
-  return width.validity.valid && height.validity.valid
-    ? { width: width.valueAsNumber, height: height.valueAsNumber } : null;
-}
-
-function renderDifficultyBoardShapes() {
-  const cave = activeCave();
-  const size = difficultyBoardSize();
-  difficultyShapeCells = null;
-  $("difficultyOptions").replaceChildren();
-  $("difficultyStatus").textContent = "";
-  $("difficultyShapeSelection").textContent = "생성할 보드 모양을 선택하세요.";
-  if (!size) {
-    $("difficultyShapeOptions").replaceChildren();
-    $("difficultyShapeStatus").textContent = "가로와 세로를 각각 4~20칸으로 입력하세요.";
-    return;
-  }
-  const keepPlacement = !$("difficultyAutomatic").checked && $("difficultyKeepPlacement").checked;
-  const { width, height } = size;
-  const shapeSource = keepPlacement ? deepCopy(cave) : {
-    ...cave, width, height, externalSource: null, initialPieceTypes: {}, layers: emptyLayers(width * height),
-  };
-  if (keepPlacement && (width !== cave.width || height !== cave.height)) {
-    resizeCaveBoard(shapeSource, width, height);
-  }
-  renderBoardShapeCandidates(shapeSource, "difficultyShape", (cells) => {
-    difficultyShapeCells = cells;
-    $("difficultyShapeSelection").textContent = "선택한 모양 · 막힌 칸 " + cells.length + "개";
-  });
-}
-
 function openDifficultyGenerator() {
   const cave = activeCave();
-  $("difficultyWidth").value = cave.width;
-  $("difficultyHeight").value = cave.height;
-  renderDifficultyBoardShapes();
+  const closedCells = cave.layers.terrain.filter((id, index) => id === "pit" || isExcluded(cave, index)).length;
+  $("difficultyBoardSummary").textContent = `현재 보드 ${cave.width} × ${cave.height} · 막힌 칸 ${closedCells}개 · ${moveLimitSummary(cave)}`;
+  $("difficultyGoalSummary").textContent = cave.scoreTarget != null ? `현재 목표 · ${cave.scoreTarget}점`
+    : cave.objectives.length ? "현재 목표 · " + cave.objectives.map((goal) =>
+      `${objectiveLabel(goal)} ${goal.countMode === "auto-map" ? "(보드 개수 기준)" : goal.count + "개"}`).join(" · ")
+      : "클리어 목표가 비어 있어요. 레벨 설정에서 미션이나 목표 점수를 먼저 정하세요.";
   const terrainIds = difficultyTerrainIds(cave);
   renderDifficultyChoices("difficultyTerrain", "terrain", difficultyTerrainAssets(cave), (id) => terrainIds.includes(id));
+  const terrainCount = $("difficultyTerrainCount");
+  terrainCount.max = Math.min(MAX_OBJECTIVES, terrainIds.length);
+  terrainCount.value = Math.min(terrainCount.valueAsNumber || 0, Number(terrainCount.max));
   const gimmicks = difficultyGimmickIds(cave);
   renderDifficultyChoices("difficultyGimmick", "gimmick", gimmicks, canGenerateGimmick);
   const gimmickCount = $("difficultyGimmickCount");
-  gimmickCount.value = Math.min(gimmickCount.valueAsNumber || 0, gimmicks.filter(canGenerateGimmick).length);
+  gimmickCount.max = Math.min(6, gimmicks.filter(canGenerateGimmick).length);
+  gimmickCount.value = Math.min(gimmickCount.valueAsNumber || 0, Number(gimmickCount.max));
   $("difficultyOptions").replaceChildren();
   $("difficultyStatus").textContent = "";
   $("difficultyDialog").showModal();
@@ -2330,8 +2599,6 @@ async function generateDifficultyCandidates(event) {
   const target = $("difficultyTarget").valueAsNumber;
   const automatic = $("difficultyAutomatic").checked;
   const keepPlacement = !automatic && $("difficultyKeepPlacement").checked;
-  const shape = difficultyShapeCells;
-  const size = difficultyBoardSize();
   const pattern = $("difficultyPattern").value;
   const gimmickIds = Array.from($("difficultyGimmick").querySelectorAll("input:checked"), (input) => input.value);
   const selectedTerrain = Array.from($("difficultyTerrain").querySelectorAll("input:checked"), (input) => input.value);
@@ -2341,14 +2608,14 @@ async function generateDifficultyCandidates(event) {
   const submit = $("difficultyGenerate");
   const fields = $("difficultyFields");
   if (submit.disabled || !Number.isInteger(target) || target < 1 || target > 100) return;
-  if (!size || !shape) {
-    status.textContent = "보드 크기를 입력하고 모양 후보를 선택하세요.";
+  $("difficultyOptions").replaceChildren();
+  if (source.scoreTarget == null && !source.objectives.length) {
+    status.textContent = "레벨 설정에서 클리어 목표를 하나 이상 정한 뒤 후보를 생성하세요.";
     return;
   }
-  $("difficultyOptions").replaceChildren();
   const terrainPool = selectedTerrain.length ? selectedTerrain : difficultyTerrainIds(source);
   const gimmickPool = gimmickIds.length ? gimmickIds : difficultyGimmickIds(source).filter(canGenerateGimmick);
-  if (!Number.isInteger(terrainCount) || terrainCount < 1 || terrainCount > MAX_OBJECTIVES ||
+  if (!Number.isInteger(terrainCount) || terrainCount < 0 || terrainCount > MAX_OBJECTIVES ||
       !Number.isInteger(gimmickCount) || gimmickCount < 0 || gimmickCount > 6) return;
   if (terrainCount > terrainPool.length || gimmickCount > gimmickPool.length) {
     status.textContent = "사용할 종류 수만큼 체크하거나 종류 수를 줄여 주세요.";
@@ -2357,17 +2624,9 @@ async function generateDifficultyCandidates(event) {
   const colors = difficultyBlockIds(source, automatic);
   const generationSeed = source.randomSeed + "|recommend|" + crypto.randomUUID();
   const generationSource = deepCopy(source);
-  if (size.width !== source.width || size.height !== source.height) {
-    resizeCaveBoard(generationSource, size.width, size.height);
-  }
   generationSource.randomSeed = generationSeed;
-  generationSource.excludedCells = [...shape];
   if (colors.length < 2) {
     status.textContent = "사용 색상에서 생성 가중치가 0보다 큰 블록 색상을 2종 이상 선택하세요.";
-    return;
-  }
-  if (!difficultyTerrainIds(source).length) {
-    status.textContent = "Terrain 탭에서 매치로 제거할 수 있는 지형을 등록하고 반응 규칙을 설정하세요.";
     return;
   }
   const candidates = [];
@@ -2411,7 +2670,7 @@ async function generateDifficultyCandidates(event) {
     renderDifficultyCandidates(source, best);
     status.textContent = best.length
       ? "목표 " + target + " · 가까운 후보 " + best.length + "개 · 후보당 자동 플레이 " + runs + "회"
-      : "선택한 패턴에 배치할 공간이 부족하거나 시작 상태에서 교환할 수 없습니다. 배치 유지 옵션과 선택한 오브젝트를 확인해 주세요.";
+      : "현재 목표에 필요한 오브젝트를 배치할 공간이 부족하거나 시작 상태에서 교환할 수 없어요. 보드와 목표 설정을 확인해 주세요.";
   } catch (error) {
     console.error(error);
     status.textContent = "후보를 만드는 중 오류가 발생했습니다.";
@@ -2429,8 +2688,8 @@ function analyzeDifficulty(cave, scoreTarget = cave.scoreTarget) {
   const itemCount = cave.layers.item.filter(Boolean).length;
   const area = cave.width * cave.height;
   const referenceMoves = cave.testClearMoves > 0 ? cave.testClearMoves : cave.parMoves;
-  const slack = cave.moveLimit - referenceMoves;
-  const budgetRatio = cave.moveLimit / Math.max(1, referenceMoves);
+  const slack = cave.moveLimitEnabled === false ? null : cave.moveLimit - referenceMoves;
+  const budgetRatio = slack === null ? Infinity : cave.moveLimit / Math.max(1, referenceMoves);
   const objectiveWork = scoreTarget != null ? Math.ceil(scoreTarget / cave.pointsPerBlock) : cave.objectives.reduce((sum, objective) => {
     const count = resolvedObjectiveCount(cave, objective);
     if (objective.layer !== "terrain") return sum + count;
@@ -2453,6 +2712,14 @@ function analyzeDifficulty(cave, scoreTarget = cave.scoreTarget) {
         ? { key: "hard", label: "Hard" }
         : { key: "expert", label: "Expert" };
   return { ...levels, score, slack, budgetRatio, totalBlocks, usedColors: usedColors.size, gimmickCount, itemCount, referenceMoves, objectiveWork };
+}
+
+function moveBudgetSummary({ slack }) {
+  return slack === null ? "이동 횟수 제한 없음" : `여유 ${slack >= 0 ? "+" : ""}${slack}회`;
+}
+
+function moveLimitSummary(cave) {
+  return cave.moveLimitEnabled === false ? "이동 횟수 제한 없음" : `이동 횟수 제한 ${cave.moveLimit}회`;
 }
 
 function validateCave(cave, palette = project.paletteAssets, scoreTarget = cave.scoreTarget ?? null) {
@@ -2496,10 +2763,10 @@ function validateCave(cave, palette = project.paletteAssets, scoreTarget = cave.
     if (isDdungSource(cave.externalSource) || cave.generatedBlockArt === "ddung") warnings.push("리필 색상에 없는 고정 배치 블록이 있습니다.");
     else errors.push("사용 색상에서 제외된 블록이 맵에 배치되어 있습니다.");
   }
-  if (cave.moveLimit < cave.parMoves) errors.push(`Moves ${cave.moveLimit}회가 권장 클리어 ${cave.parMoves}회보다 적습니다.`);
-  if (cave.testClearMoves > cave.moveLimit) errors.push(`테스트 클리어 ${cave.testClearMoves}회가 제한 ${cave.moveLimit}회를 초과합니다.`);
+  if (cave.moveLimitEnabled !== false && cave.moveLimit < cave.parMoves) errors.push(`Moves ${cave.moveLimit}회가 권장 클리어 ${cave.parMoves}회보다 적습니다.`);
+  if (cave.moveLimitEnabled !== false && cave.testClearMoves > cave.moveLimit) errors.push(`테스트 클리어 ${cave.testClearMoves}회가 제한 ${cave.moveLimit}회를 초과합니다.`);
   if (!cave.testClearMoves) warnings.push("테스트 클리어 Moves가 없습니다. 실제 플레이 기록을 입력하면 난이도 판정이 더 정확해집니다.");
-  if (cave.moveLimit >= cave.parMoves * 2) warnings.push("허용 Moves가 권장 클리어 횟수의 2배 이상이라 난이도가 크게 낮아질 수 있습니다.");
+  if (cave.moveLimitEnabled !== false && cave.moveLimit >= cave.parMoves * 2) warnings.push("허용 Moves가 권장 클리어 횟수의 2배 이상이라 난이도가 크게 낮아질 수 있습니다.");
   if (initialMatches) warnings.push(`시작 상태에 이미 3-Match 블록이 ${initialMatches}개 있습니다. 랜덤 재배치를 권장합니다.`);
   if (analysis.totalBlocks && !initialMatches && !hasPossibleSwap(cave) &&
       !cave.layers.block.some((block, index) => block && !isBarrier(cave, index) && specialEffect(cave, initialPieceAt(cave, index)))) {
@@ -2637,9 +2904,10 @@ function showSimulation(playMode, dialogAlreadyOpen = false) {
     result.innerHTML = `
       <strong>${validation.unsupported.length ? "원본 동작 판정 미지원" : blocked ? "검증 실패" : "검증 통과"}</strong><br>
       ${batch ? `자동 플레이 난이도 <b>${batch.label}</b> · 휴리스틱 ${validation.analysis.label} (${validation.analysis.score}점)<br>` : `휴리스틱 난이도 ${validation.analysis.label} (${validation.analysis.score}점)<br>`}
-      목표 ${objectiveSummary} · 제한 ${cave.moveLimit} · 권장 ${cave.parMoves}${cave.testClearMoves ? ` · 테스트 ${cave.testClearMoves}` : ""}<br>
-      여유 Moves ${validation.analysis.slack >= 0 ? "+" : ""}${validation.analysis.slack} · Gravity ${cave.gravity}
+      목표 ${objectiveSummary} · ${moveLimitSummary(cave)} · 권장 ${cave.parMoves}${cave.testClearMoves ? ` · 테스트 ${cave.testClearMoves}` : ""}<br>
+      ${moveBudgetSummary(validation.analysis)} · Gravity ${cave.gravity}
       ${batch ? `<div class="batch-summary"><span><b>${batch.clearRate}%</b>클리어율 (${batch.wins}/${batch.runs})</span><span><b>${batch.average || "-"}</b>평균 Moves</span><span><b>${batch.median || "-"} / ${batch.p90 || "-"}</b>중앙 / 90%</span></div><div>${batch.runs}회 중 성공 ${batch.wins}회 · 이동 횟수 소진 ${batch.lost}회 · 가능한 매치 없음 ${batch.stuck}회 · 셔플 총 ${batch.shuffles}회</div><div>목표 우선 휴리스틱 자동 플레이 결과이며 실제 유저 난이도와는 차이가 날 수 있습니다.</div>` : ""}
+      ${batch?.limited ? `<div>자동 검증 ${AUTO_UNLIMITED_TURN_LIMIT}턴 상한에 도달한 판 ${batch.limited}회</div>` : ""}
       ${issueHtml(validation)}
     `;
     if (batch) {
@@ -2687,9 +2955,11 @@ function objectiveProgressHtml(state) {
   }
   return `<div class="objective-progress">${state.cave.objectives.map((objective, index) => {
     const progress = state.objectiveProgress[index];
-    if (state.goalLimitations[index]) return `<div class="objective-progress-row"><span>${escapeHtml(objectiveLabel(objective))}</span><span></span><b>판정 미지원</b></div>`;
+    const image = editorGoalArt(objective);
+    const label = (image ? `<img class="editor-goal-art" alt="" src="${escapeHtml(image)}">` : "") + escapeHtml(objectiveLabel(objective));
+    if (state.goalLimitations[index]) return `<div class="objective-progress-row"><span>${label}</span><span></span><b>판정 미지원</b></div>`;
     const percent = Math.min(100, Math.round(progress.current / Math.max(1, progress.target) * 100));
-    return `<div class="objective-progress-row"><span>${escapeHtml(objectiveLabel(objective))}</span><i style="--progress:${percent}%"></i><b>${Math.min(progress.current, progress.target)} / ${progress.target}</b></div>`;
+    return `<div class="objective-progress-row"><span>${label}</span><i style="--progress:${percent}%"></i><b>${Math.min(progress.current, progress.target)} / ${progress.target}</b></div>`;
   }).join("")}</div>`;
 }
 
@@ -2880,6 +3150,7 @@ function summarizeBatch(results) {
     wins: wins.length,
     lost: results.filter((result) => result.status === "lost").length,
     stuck: results.filter((result) => result.status === "stuck").length,
+    limited: results.filter((result) => result.status === "limit").length,
     shuffles: results.reduce((total, result) => total + (result.shuffles || 0), 0),
     clearRate,
     average: Number(average.toFixed(1)),
@@ -2903,7 +3174,7 @@ function startBatchReplay(cave, validation, example) {
 function animateBeeFlights(grid, cave, flights, duration) {
   const board = grid.getBoundingClientRect();
   const stagger = Math.min(32, duration * 0.1 / Math.max(1, flights.length - 1));
-  for (const [order, { from, to, color }] of flights.entries()) {
+  for (const [order, { from, to, color, pieceType }] of flights.entries()) {
     const start = grid.children[from].getBoundingClientRect();
     const end = grid.children[to].getBoundingClientRect();
     const size = start.width * 0.86;
@@ -2922,7 +3193,16 @@ function animateBeeFlights(grid, cave, flights, duration) {
     sprite.style.opacity = "0";
     fallback.textContent = "🐝";
     sprite.append(fallback);
-    showDdungSpecialImage(sprite, { type: "bee" }, color ?? cave.layers.block[from], null, fallback);
+    const specials = puzzleArtwork?.specials;
+    const source = specials?.[pieceType] || specials?.fish;
+    const showDefault = () => {
+      fallback.hidden = false;
+      showDdungSpecialImage(sprite, { type: "bee" }, color ?? cave.layers.block[from], null, fallback);
+    };
+    if (source) {
+      fallback.hidden = true;
+      showObjectImage(sprite, source).addEventListener("error", showDefault, { once: true });
+    } else showDefault();
     grid.append(sprite);
     sprite.animate([
       { transform: "translate(0, 0) scale(0.8)", opacity: 1 },
@@ -3225,17 +3505,17 @@ function renderPlaytest() {
   if (!state) return;
   const failed = state.status === "lost" || state.status === "stuck";
   const remainingTargets = failed && state.scoreTarget === null ? playtestRemainingTargets(state) : [];
-  const usedMoves = state.cave.moveLimit - state.movesLeft;
+  const movesRemaining = state.movesLeft === null ? "무제한" : `${state.movesLeft} / ${state.cave.moveLimit}`;
   const practice = state.scoreTarget === null && state.goalLimitations.some(Boolean);
   const flowLabels = { "left-first": "왼쪽/위 우선", "right-first": "오른쪽/아래 우선", alternate: "교대", "seeded-random": "시드 랜덤", none: "우회 없음" };
   const result = $("simulationResult");
   result.className = `simulation-result ${state.status === "won" ? "success" : ["lost", "stuck"].includes(state.status) ? "error" : "warning"}`;
   result.innerHTML = `
     <strong>${practice ? "PLAYTEST 연습 · 클리어 판정 미지원" : state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 실패" : "PLAYTEST 진행 중"}</strong><br>
-    Moves <b>${state.movesLeft}</b> / ${state.cave.moveLimit} · 사용 ${usedMoves}회 · 셔플 ${state.shuffleCount}회<br>
+    남은 이동 <b>${movesRemaining}</b> · 사용 ${state.movesUsed}회 · 셔플 ${state.shuffleCount}회<br>
     ${objectiveProgressHtml(state)}
     Gravity ${state.cave.gravity} · 막힘 우회 ${flowLabels[state.cave.flowRule]}<br>
-    ${failed ? `<strong>${state.status === "lost" ? "이동 횟수 소진" : escapeHtml(state.message)}</strong>` : escapeHtml(state.message)}
+    ${failed ? `<strong>${state.status === "lost" && state.movesLeft === 0 ? "이동 횟수 소진" : escapeHtml(state.message)}</strong>` : escapeHtml(state.message)}
     ${remainingTargets.length ? `<ul aria-label="남은 목표">${remainingTargets.map(({ objective, remaining }) =>
       `<li>${escapeHtml(objectiveLabel(objective))} · ${remaining}개 남음</li>`).join("")}</ul>` : ""}
     ${practice ? issueHtml({ errors: [], warnings: [], unsupported: state.validation.unsupported }) : ""}
@@ -3268,7 +3548,7 @@ function resetPlaytest() {
 
 function usePlaytestResult() {
   if (!playtestState || playtestState.status !== "won") return;
-  const usedMoves = playtestState.cave.moveLimit - playtestState.movesLeft;
+  const usedMoves = playtestState.movesUsed;
   snapshot();
   activeCave().testClearMoves = usedMoves;
   renderRules(); persist();
@@ -3384,7 +3664,7 @@ function buildDdungLevelExport(cave) {
 function exportGridTilesProfile() {
   const cave = activeCave();
   try {
-    if (cave.scoreTarget != null) {
+    if (cave.scoreTarget != null || cave.moveLimitEnabled === false) {
       const payload = buildProjectExport({ ...project, caves: [cave], activeCaveId: cave.id });
       downloadJson(payload, `windy-cave-${cave.number}.json`);
       return;
@@ -3420,6 +3700,12 @@ function exportProject() {
 
 function openLevelDemo() {
   const cave = activeCave();
+  const { errors, unsupported } = validateCave(cave);
+  const issue = errors[0] ?? unsupported[0];
+  if (issue) {
+    toast(issue);
+    return;
+  }
   const preview = crypto.randomUUID();
   const payload = structuredClone(buildProjectExport({ ...project, caves: [cave], activeCaveId: cave.id }));
   const url = new URL("./host-demo.html", location.href);
@@ -3445,7 +3731,7 @@ function describePatchChanges(previous, cave) {
   const groups = [
     ["보드 배치", ["layers", "excludedCells", "width", "height", "initialPieceTypes", "initialPieceDefinitions", "specialMatches"]],
     ["클리어 목표", ["objectives", "targetType", "targetCount", "scoreTarget", "pointsPerBlock"]],
-    ["이동 횟수", ["moveLimit", "parMoves", "testClearMoves"]],
+    ["이동 횟수", ["moveLimit", "moveLimitEnabled", "parMoves", "testClearMoves"]],
   ];
   const changed = (key) => JSON.stringify(previous[key]) !== JSON.stringify(cave[key]);
   const labels = groups.filter(([, keys]) => keys.some(changed)).map(([label]) => label);
@@ -3516,6 +3802,7 @@ function patchSettingChanges(previous, cave) {
   }
   for (const [key, label] of [
     ["moveLimit", "이동 횟수 제한"],
+    ["moveLimitEnabled", "이동 횟수 제한 사용"],
     ["parMoves", "권장 이동 횟수"],
     ["testClearMoves", "테스트 클리어 이동 횟수"],
   ]) {
@@ -3611,6 +3898,7 @@ async function validatePatchCaves(dialog, entries) {
           dialog.close();
           $("caveJump").value = String(cave.number);
           jumpToCave();
+          selectEditorTab("board");
           $("mapGrid").scrollIntoView({ block: "nearest" });
         });
         cell.appendChild(edit);
@@ -4170,7 +4458,7 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers,
     gimmickRules: source.gimmickRules,
     blockWeights: source.blockWeights,
     levelSettings: source.levelSettings,
-    usableBlocks, objectives, targetType, targetCount, moveLimit, parMoves, testClearMoves,
+    usableBlocks, objectives, targetType, targetCount, moveLimit, moveLimitEnabled: source.moveLimitEnabled, parMoves, testClearMoves,
     failureBonus: Boolean(valueAt(source, ["failureBonus", "useFailureBonus"], false)),
     note: valueAt(source, ["note", "description", "memo"], ""),
     externalSource: { format, sourceId: valueAt(source, ["id", "levelId", "stageId", "level"], null), goals: source.goals, gridTilesTemplate: isGridTilesProfile(source) ? deepCopy(source) : undefined },
@@ -4339,7 +4627,122 @@ function importProject(file) {
   reader.readAsText(file);
 }
 
+function selectEditorTab(id, guideGroups) {
+  const workspace = $("editorWorkspace");
+  workspace.dataset.activeTab = id;
+  workspace.setAttribute("aria-labelledby", "editorTab-" + id);
+  const guidedSettings = id === "settings" && Boolean(guideGroups);
+  workspace.toggleAttribute("data-guided-settings", guidedSettings);
+  $("boardEditor").inert = guidedSettings;
+  for (const group of workspace.querySelectorAll("[data-setting-group]")) {
+    group.hidden = Boolean(guideGroups && !guideGroups.includes(group.dataset.settingGroup));
+  }
+  for (const tab of $("editorTabs").querySelectorAll('[role="tab"]')) {
+    const selected = tab.dataset.editorTab === id;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  }
+}
+
+function bindEditorTabs() {
+  const bar = $("editorTabs");
+  const tabs = [...bar.querySelectorAll('[role="tab"]')];
+
+  bar.addEventListener("click", (event) => {
+    const tab = event.target.closest('[role="tab"]');
+    if (tab) selectEditorTab(tab.dataset.editorTab);
+  });
+  bar.addEventListener("keydown", (event) => {
+    const index = tabs.indexOf(event.target);
+    if (index < 0) return;
+    const target = {
+      ArrowLeft: (index - 1 + tabs.length) % tabs.length,
+      ArrowRight: (index + 1) % tabs.length,
+      Home: 0,
+      End: tabs.length - 1,
+    }[event.key];
+    if (target === undefined) return;
+    event.preventDefault();
+    tabs[target].focus();
+    selectEditorTab(tabs[target].dataset.editorTab);
+  });
+}
+
+const EDITOR_GUIDE_STEPS = [
+  ["levels", "caveList", "레벨 선택", "목록에서 작업할 레벨을 고르세요. 새 레벨이 필요하면 + 버튼을 누르세요."],
+  ["settings", "mapWidth", "보드 크기 선택", "보드의 너비와 높이를 정한 뒤 ‘맵 크기 적용’을 누르세요. 지금 크기로 진행하려면 다음을 누르세요.", ["size"]],
+  ["objects", "assetGrid", "배치할 오브젝트 편집", "블록·지형·기믹·아이템 중 편집할 종류를 고르세요. ‘오브젝트 만들기’로 목록에 추가하거나, 항목을 선택한 뒤 ‘선택 오브젝트 삭제’로 제거할 수 있어요."],
+  ["settings", "boardShapeButton", "보드 모양 생성", "대칭과 막힌 칸 비율을 정해 원하는 모양을 적용하세요. 지금 모양을 쓰려면 바로 다음으로 진행할 수 있어요.", ["shape"]],
+  ["settings", "clearMode", "클리어 목표 설정", "미션 또는 목표 점수를 정하세요. 이동 횟수를 제한하려면 체크하고 최대 이동 횟수를 입력하세요.", ["goals"]],
+  ["settings", "difficultyButton", "난이도로 보드 생성", "현재 보드 모양, 클리어 목표, 이동 횟수 설정으로 후보를 만들고 자동 플레이로 비교해요.", ["difficulty"]],
+  ["settings", "randomizeButton", "자동 배치", "시드와 밀도를 정한 뒤 ‘랜덤 채우기’를 누르면 미리보기 보드가 바로 바뀌어요. 적용한 난이도 후보를 쓰려면 그대로 다음으로 넘어가세요.", ["auto"]],
+  ["board", "previewLevelButton", "플레이 미리보기", "현재 레벨을 새 탭에서 플레이해 보드, 목표, 이동 횟수를 확인하세요."],
+];
+
+function bindEditorGuide() {
+  const guide = $("editorGuide");
+  const start = $("startEditorGuide");
+  const selector = $("editorGuideStep");
+  const previous = $("editorGuidePrevious");
+  const next = $("editorGuideNext");
+  const skip = $("editorGuideSkip");
+  const goalsStep = EDITOR_GUIDE_STEPS.findIndex(([, target]) => target === "clearMode");
+  const difficultyStep = EDITOR_GUIDE_STEPS.findIndex(([, target]) => target === "difficultyButton");
+  const autoStep = EDITOR_GUIDE_STEPS.findIndex(([, target]) => target === "randomizeButton");
+  let skipDifficulty = false;
+  let displayedTarget;
+
+  selector.replaceChildren(...EDITOR_GUIDE_STEPS.map(([, , title], index) => new Option((index + 1) + ". " + title, index)));
+
+  function showStep(index) {
+    const [tab, target, , instruction, groups] = EDITOR_GUIDE_STEPS[index];
+    guide.hidden = false;
+    start.setAttribute("aria-expanded", "true");
+    selector.value = index;
+    previous.disabled = index === 0;
+    next.textContent = index === EDITOR_GUIDE_STEPS.length - 1 ? "플레이 미리보기" : "다음";
+    skip.hidden = target !== "boardShapeButton" && target !== "difficultyButton";
+    skip.textContent = target === "boardShapeButton" ? "두 단계 건너뛰기" : "난이도 생성 건너뛰기";
+    $("editorGuideText").textContent = instruction;
+    selectEditorTab(tab, groups);
+    displayedTarget?.classList.remove("editor-guide-target");
+    displayedTarget = $(target);
+    displayedTarget.classList.add("editor-guide-target");
+    $("editorTabs").scrollIntoView({ block: "start", inline: "nearest" });
+  }
+
+  start.addEventListener("click", () => {
+    skipDifficulty = false;
+    showStep(0);
+  });
+  selector.addEventListener("change", () => showStep(Number(selector.value)));
+  previous.addEventListener("click", () => showStep(Number(selector.value) - 1));
+  skip.addEventListener("click", () => {
+    if (Number(selector.value) === difficultyStep) showStep(autoStep);
+    else {
+      skipDifficulty = true;
+      showStep(goalsStep);
+    }
+    next.focus({ preventScroll: true });
+  });
+  next.addEventListener("click", () => {
+    const index = Number(selector.value);
+    if (index === EDITOR_GUIDE_STEPS.length - 1) openLevelDemo();
+    else if (index === goalsStep && skipDifficulty) showStep(autoStep);
+    else showStep(index + 1);
+  });
+  $("editorGuideClose").addEventListener("click", () => {
+    guide.hidden = true;
+    displayedTarget?.classList.remove("editor-guide-target");
+    selectEditorTab($("editorWorkspace").dataset.activeTab);
+    start.setAttribute("aria-expanded", "false");
+    start.focus();
+  });
+}
+
 function bindInputs() {
+  bindEditorTabs();
+  bindEditorGuide();
   $("addDdungGimmick").addEventListener("change", ({ target }) => {
     const id = target.value;
     if (!id || activeLayer !== "gimmick") return;
@@ -4422,18 +4825,11 @@ function bindInputs() {
   $("randomizeButton").addEventListener("click", randomizeBlocks);
   $("boardShapeButton").addEventListener("click", openBoardShapes);
   $("difficultyButton").addEventListener("click", openDifficultyGenerator);
+  $("boardDifficultyButton").addEventListener("click", openDifficultyGenerator);
   $("difficultyForm").addEventListener("submit", generateDifficultyCandidates);
   $("difficultyAutomatic").addEventListener("change", ({ target }) => {
     $("difficultyManualOptions").hidden = target.checked;
-    renderDifficultyBoardShapes();
   });
-  $("difficultyKeepPlacement").addEventListener("change", renderDifficultyBoardShapes);
-  for (const id of ["difficultyWidth", "difficultyHeight"]) {
-    $(id).addEventListener("input", renderDifficultyBoardShapes);
-  }
-  $("difficultyShapeRefresh").addEventListener("click", renderDifficultyBoardShapes);
-  $("difficultyShapeSymmetry").addEventListener("change", renderDifficultyBoardShapes);
-  $("difficultyShapePercent").addEventListener("change", renderDifficultyBoardShapes);
   $("regionItemButton").addEventListener("click", openRegionItems);
   $("regionItemCancel").addEventListener("click", () => $("regionItemDialog").close());
   $("undoButton").addEventListener("click", undo);
@@ -4456,6 +4852,17 @@ function bindInputs() {
   $("validateButton").addEventListener("click", () => showSimulation(false));
   $("playButton").addEventListener("click", () => showSimulation(true));
   $("previewLevelButton").addEventListener("click", openLevelDemo);
+  $("themeEditorButton").addEventListener("click", () => {
+    $("themePackStatus").textContent = "";
+    renderThemeEditor();
+    $("themeEditorDialog").showModal();
+  });
+  $("previewThemeButton").addEventListener("click", openLevelDemo);
+  $("saveThemePack").addEventListener("click", saveThemePack);
+  $("openThemePack").addEventListener("click", () => $("themePackFile").click());
+  $("themePackFile").addEventListener("change", loadThemePack);
+  $("applyEditorTheme").addEventListener("click", () => applyEditorTheme(true));
+  $("clearEditorTheme").addEventListener("click", () => applyEditorTheme(false));
   $("closeSimulationButton").addEventListener("click", () => $("simulationDialog").close());
   $("closeSimulationFooterButton").addEventListener("click", () => $("simulationDialog").close());
   $("playtestResetButton").addEventListener("click", resetPlaytest);
@@ -4494,6 +4901,7 @@ function bindInputs() {
     $(id).addEventListener("change", updateClearMode);
   }
   $("moveLimit").addEventListener("change", updateRule);
+  $("moveLimitEnabled").addEventListener("change", updateRule);
   $("parMoves").addEventListener("change", updateRule);
   $("testClearMoves").addEventListener("change", updateRule);
   $("simulationRuns").addEventListener("change", updateRule);
@@ -4519,6 +4927,7 @@ function bindInputs() {
     const id = selectedAssets[activeLayer];
     if (id) {
       addObjective(activeLayer, id);
+      selectEditorTab("settings");
       $("objectiveList")?.scrollIntoView({ block: "nearest" });
     }
   });
@@ -4578,11 +4987,20 @@ function updateClearMode() {
   persist();
 }
 
-function updateRule() {
+function updateRule(event) {
   snapshot(); const cave = activeCave();
-  cave.moveLimit = Math.max(1, Number($("moveLimit").value));
+  cave.moveLimit = Math.round(clampNumber($("moveLimit").value, cave.moveLimit, 1, 999));
+  cave.moveLimitEnabled = $("moveLimitEnabled").checked;
+  $("moveLimit").disabled = !cave.moveLimitEnabled;
   cave.parMoves = Math.max(1, Number($("parMoves").value));
   cave.testClearMoves = Math.max(0, Number($("testClearMoves").value || 0));
+  if (cave.moveLimitEnabled && [$("moveLimit"), $("moveLimitEnabled")].includes(event?.currentTarget)) {
+    if (cave.parMoves > cave.moveLimit) cave.parMoves = cave.moveLimit;
+    if (cave.testClearMoves > cave.moveLimit) cave.testClearMoves = 0;
+    $("moveLimit").value = cave.moveLimit;
+    $("parMoves").value = cave.parMoves;
+    $("testClearMoves").value = cave.testClearMoves || "";
+  }
   cave.simulationRuns = [10, 30, 100].includes(Number($("simulationRuns").value)) ? Number($("simulationRuns").value) : 30;
   cave.flowRule = FLOW_RULES.includes($("flowRule").value) ? $("flowRule").value : "left-first";
   cave.failureBonus = $("failureBonus").checked;
@@ -4975,7 +5393,8 @@ if (document.body.dataset.puzzlePlayer === undefined) loadProject().then((loaded
 });
 
 export {
-  $, activeCave, adaptImportedJson, createPlayState, getAsset, playtestState, puzzleArtwork,
+  $, activeCave, adaptImportedJson, createPlayState, getAsset, normalizeObjectImage, playtestState, puzzleArtwork,
+  readThemePack, THEME_PACK_FORMAT,
   renderPlaytest, renderSimulationGrid, showObjectImage, showPlaytestHint, validateCave,
 };
 
