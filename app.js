@@ -71,7 +71,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.48";
+const CLIENT_VERSION = "2.7.49";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -228,7 +228,8 @@ function packProjectForStorage(value) {
       const compact = { ...cave, layers, packedLayers };
       delete compact.targetType;
       delete compact.targetCount;
-      if (JSON.stringify(compact.terrainRules) === JSON.stringify(DEFAULT_TERRAIN_RULES)) delete compact.terrainRules;
+      delete compact.terrainRules;
+      delete compact.gimmickRules;
       if (compact.testClearMoves === 0) delete compact.testClearMoves;
       if (compact.simulationRuns === 30) delete compact.simulationRuns;
       if (compact.randomDensity === 100) delete compact.randomDensity;
@@ -417,7 +418,65 @@ function normalizeProject(data) {
     item: Array.isArray(palette?.item) ? palette.item.filter((id) => !ddungPanelFromItem(id, ddungOnly)) : [],
   }, assetDefinitions);
   const { savedAt, storageFormat, packedLayerIds, ...metadata } = source;
-  return { ...metadata, specialPieceRules: normalizeSpecialPieceRules(source.specialPieceRules), version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets };
+  const terrainRules = source.terrainRules && typeof source.terrainRules === "object"
+    ? normalizeTerrainRules(source.terrainRules)
+    : { ...normalizeTerrainRules(), ...legacySharedRules(caves, "terrainRules", isCustomTerrainRule) };
+  const gimmickRules = source.gimmickRules && typeof source.gimmickRules === "object"
+    ? normalizeGimmickRules(source.gimmickRules)
+    : legacySharedRules(caves, "gimmickRules");
+  const normalized = { ...metadata, specialPieceRules: normalizeSpecialPieceRules(source.specialPieceRules), version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets, terrainRules, gimmickRules };
+  bindProjectObjectRules(normalized);
+  return normalized;
+}
+
+function legacySharedRules(caves, field, include = () => true) {
+  const rules = new Map();
+  for (const cave of [...caves].sort((a, b) => a.number - b.number)) {
+    for (const [id, rule] of Object.entries(cave[field] ?? {})) {
+      if (!rules.has(id) && include(id, rule)) rules.set(id, rule);
+    }
+  }
+  return Object.fromEntries(rules);
+}
+
+function bindProjectObjectRules(value) {
+  for (const cave of value.caves) {
+    cave.terrainRules = value.terrainRules;
+    cave.gimmickRules = value.gimmickRules;
+  }
+}
+
+function normalizeTerrainRule(id, rule = {}) {
+  const fallback = getDefaultTerrainRule(id);
+  return {
+    blocksFlow: rule.blocksFlow == null ? fallback.blocksFlow : Boolean(rule.blocksFlow),
+    blocksSwap: rule.blocksSwap == null ? Boolean(fallback.blocksSwap) : Boolean(rule.blocksSwap),
+    locksBlock: rule.locksBlock == null ? Boolean(fallback.locksBlock) : Boolean(rule.locksBlock),
+    reaction: ["none", "under", "adjacent", "adjacent-only", "splash"].includes(rule.reaction) ? rule.reaction : fallback.reaction,
+    durability: clampNumber(rule.durability, fallback.durability, 1, 99),
+  };
+}
+
+function normalizeTerrainRules(saved = {}) {
+  const ids = new Set([...Object.keys(DEFAULT_TERRAIN_RULES), ...Object.keys(saved).filter(assetId)]);
+  return Object.fromEntries([...ids].map((id) => [id, normalizeTerrainRule(id, saved[id] ?? {})]));
+}
+
+function isCustomTerrainRule(id, rule) {
+  return JSON.stringify(rule) !== JSON.stringify(normalizeTerrainRule(id));
+}
+
+function normalizeGimmickRules(saved = {}) {
+  return Object.fromEntries(Object.entries(saved).flatMap(([key, rule]) => {
+    const id = assetId(key);
+    if (!id || !rule || typeof rule !== "object") return [];
+    return [[id, {
+      durability: clampNumber(rule.durability, 1, 1, 99),
+      reaction: ["direct", "adjacent", "either"].includes(rule.reaction) ? rule.reaction : "direct",
+      blocksFlow: rule.blocksFlow === true,
+      nextId: assetId(rule.nextId),
+    }]];
+  }));
 }
 
 function normalizeLevelSettings(source) {
@@ -544,33 +603,15 @@ function normalizeCave(data, index = 0, ddungProject = false, packedCatalog = {}
   const moveLimit = clampNumber(source.moveLimit, 20, 1, 999);
   const estimatedTargetCount = objectives.reduce((sum, objective) => sum + resolvedObjectiveCount({ layers }, objective), 0);
   const estimatedPar = Math.max(1, Math.ceil(estimatedTargetCount * 0.8 + usableBlocks.length * 0.7));
-  const terrainRules = {};
   const terrainIds = new Set([...Object.keys(DEFAULT_TERRAIN_RULES), ...Object.keys(source.terrainRules || {}).filter(assetId)]);
-  terrainIds.forEach((terrainId) => {
-    const fallback = getDefaultTerrainRule(terrainId);
+  const terrainRules = Object.fromEntries([...terrainIds].map((terrainId) => {
     const saved = source.terrainRules?.[terrainId];
     const oldJellyRule = terrainId === "ddung-jelly" && isDdungSource(externalSource) &&
       !externalSource.jellyGroupsParsed && saved?.reaction === "adjacent" && saved.durability === 1;
-    const rule = (terrainId === "ddung-water" && oldWaterRule) || oldJellyRule ? fallback : saved || {};
-    const reaction = ["none", "under", "adjacent", "adjacent-only", "splash"].includes(rule.reaction) ? rule.reaction : fallback.reaction;
-    terrainRules[terrainId] = {
-      blocksFlow: rule.blocksFlow == null ? fallback.blocksFlow : Boolean(rule.blocksFlow),
-      blocksSwap: rule.blocksSwap == null ? Boolean(fallback.blocksSwap) : Boolean(rule.blocksSwap),
-      locksBlock: rule.locksBlock == null ? Boolean(fallback.locksBlock) : Boolean(rule.locksBlock),
-      reaction,
-      durability: clampNumber(rule.durability, fallback.durability, 1, 99),
-    };
-  });
-  const gimmickRules = Object.fromEntries(Object.entries(source.gimmickRules ?? {}).flatMap(([key, rule]) => {
-    const id = assetId(key);
-    if (!id || !rule || typeof rule !== "object") return [];
-    return [[id, {
-      durability: clampNumber(rule.durability, 1, 1, 99),
-      reaction: ["direct", "adjacent", "either"].includes(rule.reaction) ? rule.reaction : "direct",
-      blocksFlow: rule.blocksFlow === true,
-      nextId: assetId(rule.nextId),
-    }]];
+    const useDefault = (terrainId === "ddung-water" && oldWaterRule) || oldJellyRule;
+    return [terrainId, normalizeTerrainRule(terrainId, useDefault ? undefined : saved ?? {})];
   }));
+  const gimmickRules = normalizeGimmickRules(source.gimmickRules ?? {});
   const normalized = {
     ...source,
     gimmickRules,
@@ -855,6 +896,7 @@ function renderObjectives() {
 }
 
 function renderAll() {
+  bindProjectObjectRules(project);
   renderAppliedEditorTheme();
   renderCaveList();
   renderRules();
@@ -943,14 +985,13 @@ function renderRules() {
 }
 
 function renderTerrainRuleEditor() {
-  const cave = activeCave();
   const terrainSelect = $("terrainRuleType");
   const terrainIds = project.paletteAssets.terrain || [];
   $("terrainRuleSection").hidden = terrainIds.length === 0;
   if (!terrainIds.length) return;
   terrainSelect.innerHTML = paletteOptions("terrain").map((asset) => `<option value="${escapeHtml(asset.id)}">${escapeHtml(asset.name)}</option>`).join("");
   if (!terrainIds.includes(selectedTerrainRule)) selectedTerrainRule = terrainIds[0];
-  const rule = cave.terrainRules[selectedTerrainRule] || getDefaultTerrainRule(selectedTerrainRule);
+  const rule = project.terrainRules[selectedTerrainRule] || getDefaultTerrainRule(selectedTerrainRule);
   terrainSelect.value = selectedTerrainRule;
   $("terrainReaction").value = rule.reaction;
   $("terrainDurability").value = rule.durability;
@@ -1076,7 +1117,7 @@ function renderSelectedObjectRules(asset) {
     !asset.id.startsWith("ddung-") && !isDdungSource(cave.externalSource);
   $("gimmickRulesForm").hidden = !showRule;
   if (!showRule) return;
-  const rule = cave.gimmickRules?.[asset.id];
+  const rule = project.gimmickRules[asset.id];
   $("gimmickReaction").value = rule?.reaction ?? "either";
   $("gimmickDurability").value = rule?.durability ?? 1;
   $("gimmickBlocksFlow").checked = rule?.blocksFlow ?? false;
@@ -1388,20 +1429,19 @@ function saveSelectedGimmickRule(event) {
   if (!id || activeLayer !== "gimmick" || id === SPAWNER_ID || isDdungSource(cave.externalSource)) return;
   const nextId = $("gimmickNext").value || null;
   const seen = new Set([id]);
-  for (let step = nextId; step; step = cave.gimmickRules?.[step]?.nextId) {
+  for (let step = nextId; step; step = project.gimmickRules[step]?.nextId) {
     if (seen.has(step)) return toast("다음 상태가 다시 같은 오브젝트로 돌아옵니다.");
     seen.add(step);
   }
   snapshot();
-  cave.gimmickRules ??= {};
-  cave.gimmickRules[id] = {
+  project.gimmickRules[id] = {
     reaction: $("gimmickReaction").value,
     durability: clampNumber($("gimmickDurability").value, 1, 1, 99),
     blocksFlow: $("gimmickBlocksFlow").checked,
     nextId,
   };
   persist();
-  toast("오브젝트 동작을 저장했습니다.");
+  toast("모든 레벨에 적용할 오브젝트 동작을 저장했습니다.");
 }
 
 function findAssetUsage(caves, layer, id) {
@@ -3664,7 +3704,9 @@ function buildDdungLevelExport(cave) {
 function exportGridTilesProfile() {
   const cave = activeCave();
   try {
-    if (cave.scoreTarget != null || cave.moveLimitEnabled === false) {
+    if (cave.scoreTarget != null || cave.moveLimitEnabled === false ||
+        Object.entries(project.terrainRules).some(([id, rule]) => isCustomTerrainRule(id, rule)) ||
+        Object.keys(project.gimmickRules).length) {
       const payload = buildProjectExport({ ...project, caves: [cave], activeCaveId: cave.id });
       downloadJson(payload, `windy-cave-${cave.number}.json`);
       return;
@@ -3767,6 +3809,8 @@ function buildPatch(baseData) {
     minimumClientVersion: CLIENT_VERSION,
     paletteAssets: project.paletteAssets,
     assetDefinitions: project.assetDefinitions,
+    terrainRules: project.terrainRules,
+    gimmickRules: project.gimmickRules,
     patch: {
       upsertCaves: currentCaves.filter((cave) => JSON.stringify(baseCaves.get(String(cave.id))) !== JSON.stringify(cave)),
       removeCaveIds: [...baseCaves.keys()].filter((id) => !currentIds.has(id)),
@@ -4051,6 +4095,8 @@ function applyPatchPayload(data) {
   next.contentVersion = next.version;
   if (data.paletteAssets) next.paletteAssets = data.paletteAssets;
   if (data.assetDefinitions) next.assetDefinitions = data.assetDefinitions;
+  if (data.terrainRules) next.terrainRules = data.terrainRules;
+  if (data.gimmickRules) next.gimmickRules = data.gimmickRules;
   if (!next.caves.some((cave) => cave.id === next.activeCaveId)) next.activeCaveId = next.caves[0].id;
   return { project: normalizeProject(next), format: `패치 ${baseVersion} → ${next.version}`, unknownTokens: [] };
 }
@@ -4501,7 +4547,7 @@ function adaptImportedJson(data) {
     });
     return adaptExternalLevel(level, index, format, unknownTokens, declaredLayers, tileReporter);
   });
-  const next = normalizeProject({ version: String(data?.version || data?.gameVersion || "IMPORTED"), caves, activeCaveId: caves[0].id, assetDefinitions: data?.assetDefinitions, specialPieceRules: data?.specialPieceRules });
+  const next = normalizeProject({ version: String(data?.version || data?.gameVersion || "IMPORTED"), caves, activeCaveId: caves[0].id, assetDefinitions: data?.assetDefinitions, specialPieceRules: data?.specialPieceRules, terrainRules: data?.terrainRules, gimmickRules: data?.gimmickRules });
   return { project: next, format, unknownTokens: [...unknownTokens], unknownTiles };
 }
 
@@ -4942,15 +4988,14 @@ function bindInputs() {
 
 function updateTerrainRule() {
   snapshot();
-  const cave = activeCave();
-  cave.terrainRules[selectedTerrainRule] = {
+  project.terrainRules[selectedTerrainRule] = {
     blocksFlow: $("terrainBlocksFlow").checked,
     blocksSwap: $("terrainBlocksSwap").checked,
     locksBlock: $("terrainLocksBlock").checked,
     reaction: $("terrainReaction").value,
     durability: clampNumber($("terrainDurability").value, 1, 1, 99),
   };
-  renderTerrainRuleEditor(); persist();
+  renderTerrainRuleEditor(); renderGrid(); renderDifficultySummary(activeCave()); persist();
 }
 
 function updateRandomSettings() {
