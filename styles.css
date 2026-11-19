@@ -437,3 +437,20 @@ h2 { font-size: 16px; margin-top: 3px; }
   pointer-events: none;
 }
 .map-cell > .cell-exit .object-image { object-position: center bottom; }
+
+#simulationGrid > .live-piece-actor {
+  position: absolute;
+  z-index: 6;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+  overflow: visible;
+  will-change: left, top;
+}
+#simulationGrid > .live-special-actor { pointer-events: auto; cursor: pointer; }
+#simulationGrid > .live-burst-actor, #simulationGrid > .live-swap-actor { z-index: 7; }
+#simulationGrid .live-piece-moving > .cell-block,
+#simulationGrid .live-piece-moving > .initial-piece-badge,
+#simulationGrid .live-swap-covered > .cell-block,
+#simulationGrid .live-swap-covered > .initial-piece-badge { visibility: hidden; }

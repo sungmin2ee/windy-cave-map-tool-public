@@ -74,6 +74,24 @@ export function createGameEngine(getProject) {
     return type >= 7 && type <= 37 && type !== 11 && type !== 12;
   }
 
+  function isDdungBoardObjective(cave, objective) {
+    const type = ddungObjectiveType(objective);
+    // Dust uses the initial board count and then counts destroyed pieces in Unity.
+    return isDdungSource(cave.externalSource) && objective.countMode === "auto-map" &&
+      ddungUsesBoardCount(type) && type !== 9;
+  }
+
+  function isDdungColorObjective(cave, objective) {
+    const type = ddungObjectiveType(objective);
+    return isDdungSource(cave.externalSource) && objective.layer === "block" && type >= 1 && type <= 6;
+  }
+
+  function countsForDdungColorGoal(cave, index) {
+    const piece = cave.playtestPieces[index];
+    // Unity counts colored power pieces too. Seals have slots above the six colors.
+    return String(piece?.type) !== "6" && specialEffect(cave, piece) !== "color";
+  }
+
   function ddungGoalLimitation(cave, objective) {
     if (!isDdungSource(cave.externalSource)) return null;
     const type = ddungObjectiveType(objective);
@@ -99,15 +117,27 @@ export function createGameEngine(getProject) {
       objective.targetId === "ddung-box" && ddungObjectiveType(objective) === 7 && id === "ddung-iron-box");
   }
 
+  function includesDdungIceBag(cave, objective) {
+    return isDdungBoardObjective(cave, objective) && ddungObjectiveType(objective) === 10 &&
+      objective.layer === "terrain" && objective.targetId === "ddung-oak";
+  }
+
+  function matchesObjectiveOnLayer(cave, objective, layer, id) {
+    return objective.layer === layer ? matchesObjectiveAsset(objective, id)
+      : layer === "gimmick" && id === "ddung-octo" && includesDdungIceBag(cave, objective);
+  }
+
   function countObjectiveAssets(cave, objective) {
     if (objective.layer === "terrain" && objective.targetId === "ddung-jelly") {
       const cells = ddungJellyCells(cave);
       if (cells.size) return new Set([...cells].filter(([index]) => cave.layers.terrain[index] === "ddung-jelly")
         .map(([, cell]) => cell.group)).size;
     }
-    return cave.layers[objective.layer].filter((id, index) => matchesObjectiveAsset(objective, id) &&
-      (id !== "ddung-heather-large" || heatherGroup(cave, index)[0] === index) &&
+    const primaryCount = cave.layers[objective.layer].filter((id, index) => matchesObjectiveAsset(objective, id) &&
+      (objective.layer !== "terrain" || terrainGroup(cave, index)[0] === index) &&
       (objective.layer !== "gimmick" || ddungGimmickGroup(cave, index)[0] === index)).length;
+    return primaryCount + (includesDdungIceBag(cave, objective)
+      ? cave.layers.gimmick.filter((id) => id === "ddung-octo").length : 0);
   }
 
   function resolvedObjectiveCount(cave, objective) {
@@ -263,11 +293,12 @@ export function createGameEngine(getProject) {
     }));
   }
 
-  function advanceObjectives(state, layer, targetId, amount = 1) {
+  function advanceObjectives(state, layer, targetId, { normalBlock = true, removed = true } = {}) {
     state.cave.objectives.forEach((objective, index) => {
-      if (objective.layer !== layer || !matchesObjectiveAsset(objective, targetId)) return;
+      if (!matchesObjectiveOnLayer(state.cave, objective, layer, targetId)) return;
+      if (layer === "block" && (isDdungColorObjective(state.cave, objective) ? !normalBlock : !removed)) return;
       const progress = state.objectiveProgress[index];
-      progress.current = Math.min(progress.target, progress.current + amount);
+      progress.current = Math.min(progress.target, progress.current + 1);
     });
   }
 
@@ -276,8 +307,7 @@ export function createGameEngine(getProject) {
     return !state.goalLimitations.some(Boolean) && state.objectiveProgress.length > 0 &&
       state.objectiveProgress.every((progress, index) => {
         const objective = state.cave.objectives[index];
-        if (isDdungSource(state.cave.externalSource) && ddungUsesBoardCount(ddungObjectiveType(objective)) &&
-            objective.countMode === "auto-map") return countObjectiveAssets(state.cave, objective) === 0;
+        if (isDdungBoardObjective(state.cave, objective)) return countObjectiveAssets(state.cave, objective) === 0;
         return progress.current >= progress.target;
       });
   }
@@ -447,7 +477,8 @@ export function createGameEngine(getProject) {
     return hits;
   }
 
-  function isBarrier(cave, index) {
+  function isBarrier(cave, index, ignoreLive = false) {
+    if (!ignoreLive && cave.liveBarriers?.has(index)) return true;
     if (index < 0 || index >= cave.width * cave.height || isExcluded(cave, index)) return true;
     if (ddungBoxDurability(cave, index) || isDdungGimmickBarrier(cave, index) ||
         cave.gimmickRules?.[cave.layers.gimmick[index]]?.blocksFlow) return true;
@@ -478,7 +509,7 @@ export function createGameEngine(getProject) {
       let segment = [];
       const settle = () => {
         const values = segment.filter((index) => cave.layers.block[index])
-          .map((index) => ({ index, block: cave.layers.block[index], piece: pieces?.[index] }));
+          .map((index) => ({ index, block: cave.layers.block[index], piece: pieces?.[index], id: cave.livePieceIds?.[index] }));
         if (trackMove) {
           values.forEach(({ index }, position) => {
             if (index !== segment[position]) trackMove(index, segment[position]);
@@ -487,6 +518,7 @@ export function createGameEngine(getProject) {
         segment.forEach((index, position) => {
           cave.layers.block[index] = values[position]?.block ?? null;
           if (pieces) pieces[index] = values[position]?.piece ?? null;
+          if (cave.livePieceIds) cave.livePieceIds[index] = values[position]?.id ?? null;
         });
         segment = [];
       };
@@ -533,7 +565,7 @@ export function createGameEngine(getProject) {
         const upstream = offsetCell(cave, target, -dx, -dy);
         const warp = warpRoutes.get(target);
         let donors = [warp ?? upstream];
-        if (warp === undefined && upstream >= 0 && isBarrier(cave, upstream) && state && cave.flowRule !== "none") {
+        if (warp === undefined && upstream >= 0 && isBarrier(cave, upstream, true) && state && cave.flowRule !== "none") {
           donors = flowOffsets(cave, state, directions[target]).map(([x, y]) => offsetCell(cave, target, -x, -y));
         }
         const donor = donors.find((index) => index >= 0 && blocks[index] &&
@@ -554,6 +586,7 @@ export function createGameEngine(getProject) {
   }
 
   function applyGravity(cave, state, trackMove) {
+    if (cave.flowRule === "royal") return settleRoyalGravity(cave, state, trackMove);
     const warpRoutes = ddungWarpRoutes(cave);
     const directions = ddungCellGravities(cave);
     if (directions) return settleCellGravity(cave, state, trackMove, warpRoutes, directions);
@@ -572,17 +605,17 @@ export function createGameEngine(getProject) {
       }
       const order = cave.flowRule === "none" ? [] : gravityLines(cave).flat();
       for (const index of order) {
-        if (!cave.layers.block[index]) continue;
+        if (!cave.layers.block[index] || cave.liveBarriers?.has(index)) continue;
         const x = index % cave.width;
         const y = Math.floor(index / cave.width);
         const nextX = x + directX;
         const nextY = y + directY;
         if (nextX < 0 || nextX >= cave.width || nextY < 0 || nextY >= cave.height) continue;
         const directIndex = nextY * cave.width + nextX;
-        const blockedAhead = isBarrier(cave, directIndex);
+        const blockedAhead = isBarrier(cave, directIndex, true);
         const upstreamIndex = index - (directY * cave.width + directX);
         if (!blockedAhead && !neighborsOf(cave, index).some((side) =>
-          side !== directIndex && side !== upstreamIndex && isBarrier(cave, side))) continue;
+          side !== directIndex && side !== upstreamIndex && isBarrier(cave, side, true))) continue;
         const offsets = flowOffsets(cave, state);
         for (const [offsetX, offsetY] of offsets) {
           const targetX = x + offsetX;
@@ -592,7 +625,7 @@ export function createGameEngine(getProject) {
           if (isBarrier(cave, targetIndex) || warpRoutes.has(targetIndex) || cave.layers.block[targetIndex]) continue;
           const targetUpstream = (targetY - directY) * cave.width + targetX - directX;
           // A gap below a barrier can receive a block from the neighboring lane.
-          if (!blockedAhead && !isBarrier(cave, targetUpstream)) continue;
+          if (!blockedAhead && !isBarrier(cave, targetUpstream, true)) continue;
           trackMove?.(index, targetIndex);
           swapPlaytestBlocks(cave, targetIndex, index);
           flowMoves += 1;
@@ -685,26 +718,32 @@ export function createGameEngine(getProject) {
   function spawnPlaytestBlock(state, index, color) {
     const { cave } = state;
     cave.layers.block[index] = color;
+    if (cave.livePieceIds) cave.livePieceIds[index] = color ? ++state.liveNextPieceId : null;
     if (state.sealRandom && cave.externalSource.specialColors.includes(color) && state.sealRandom() < 0.5) {
       cave.playtestPieces[index] = { type: "6", color, name: "봉인 블록", symbol: "✚" };
     }
   }
 
-  function refillBlocks(state, origins, trackMove) {
-    const { cave } = state;
-    const colors = cave.usableBlocks;
-    if (!colors.length) return;
-    if (Array.isArray(cave.generatedSpawnerOverlaps)) placeGenerationSpawners(cave);
+  function blockSpawnSources(cave) {
     const spawners = cave.layers.gimmick.flatMap((id, index) =>
       id === SPAWNER_ID || ddungMarkersAt(cave, index).includes(SPAWNER_ID) ? [index] : []);
     const sourceSet = new Set(spawners);
     const directions = ddungCellGravities(cave);
-    const sources = Array.isArray(cave.generatedSpawnerOverlaps) ? spawners
+    return Array.isArray(cave.generatedSpawnerOverlaps) ? spawners
       : directions ? [...new Set([...spawners, ...localSpawnEdges(cave, directions)])]
       : isDdungSource(cave.externalSource) ? gravityLines(cave).flatMap((line) => {
           const marked = line.filter((index) => sourceSet.has(index));
           return marked.length ? marked : [line.at(-1)];
-        }) : spawners.length ? spawners : null;
+        }) : spawners.length ? spawners
+        : ["royal", "none"].includes(cave.flowRule) ? gravityLines(cave).map((line) => line.at(-1)) : null;
+  }
+
+  function refillBlocks(state, origins, trackMove, singlePass = false) {
+    const { cave } = state;
+    const colors = cave.usableBlocks;
+    if (!colors.length) return;
+    if (Array.isArray(cave.generatedSpawnerOverlaps)) placeGenerationSpawners(cave);
+    const sources = blockSpawnSources(cave);
     if (!sources) {
       cave.layers.block.forEach((block, index) => {
         if (block || isBarrier(cave, index)) return;
@@ -725,20 +764,24 @@ export function createGameEngine(getProject) {
         spawned = true;
       }
       if (!spawned) break;
+      if (singlePass) break;
       applyGravity(cave, state, trackMove);
       collectDdungTreasure(state);
     }
   }
 
-  function heatherGroup(cave, index) {
+  function terrainGroup(cave, index) {
+    const id = cave.layers.terrain[index];
+    const pattern = id === "ddung-heather-large" ? "tuvw" : id === "ddung-oak" ? "!@#$" : "";
+    if (!pattern) return [index];
     const tile = ddungCellSource(cave, index)?.tile;
-    const offset = { t: 0, u: 1, v: cave.width, w: cave.width + 1 }[tile];
-    if (offset === undefined) return [index];
-    const anchor = index - offset;
+    const offset = tile ? pattern.indexOf(tile) : -1;
+    if (offset < 0) return [index];
+    const anchor = index - (offset % 2) - (offset >= 2 ? cave.width : 0);
     const group = [anchor, anchor + 1, anchor + cave.width, anchor + cave.width + 1];
-    return anchor % cave.width < cave.width - 1 &&
+    return anchor >= 0 && anchor % cave.width < cave.width - 1 &&
       group.every((cell, position) => !isExcluded(cave, cell) &&
-        cave.layers.terrain[cell] === "ddung-heather-large" && ddungCellSource(cave, cell)?.tile === "tuvw"[position])
+        cave.layers.terrain[cell] === id && ddungCellSource(cave, cell)?.tile === pattern[position])
       ? group : [index];
   }
 
@@ -780,7 +823,7 @@ export function createGameEngine(getProject) {
       const terrainId = cave.layers.terrain[index];
       if (Object.hasOwn(DDUNG_JAM_COLORS, terrainId)) continue;
       const rule = terrainId ? cave.terrainRules?.[terrainId] : null;
-      const group = terrainId === "ddung-heather-large" ? heatherGroup(cave, index) : [index];
+      const group = terrainGroup(cave, index);
       const anchor = group[0];
       if (damagedGroups.has(anchor)) continue;
       const forced = group.some((cell) => forcedTerrain.has(cell));
@@ -789,7 +832,7 @@ export function createGameEngine(getProject) {
       const adjacent = rule?.reaction === "adjacent-only" || rule?.reaction === "splash"
         ? group.flatMap((cell) => neighborsOf(cave, cell).filter((neighbor) => removedBlocks.has(neighbor)))
         : rule?.reaction === "adjacent" && !direct.length
-          ? neighborsOf(cave, index).filter((neighbor) => matches.has(neighbor)) : [];
+          ? group.flatMap((cell) => neighborsOf(cave, cell).filter((neighbor) => matches.has(neighbor))) : [];
       const damage = direct.length + (rule?.reaction === "adjacent" ? Number(adjacent.length > 0) : adjacent.length);
       if (!damage && !forced) continue;
       damagedGroups.add(anchor);
@@ -889,9 +932,9 @@ export function createGameEngine(getProject) {
     }
   }
 
-  function resolveMatches(state, captureFrame, activation = [], preferred = [], combo = null) {
+  function resolveMatches(state, captureFrame, activation = [], preferred = [], combo = null, beforeRefill) {
     let runs = [];
-    let matches = findMatches(state.cave, runs);
+    let matches = findMatches(state.cave, runs, state.liveBlockedCells);
     activation.forEach((index) => matches.add(index));
     let cascade = 0;
     let removed = 0;
@@ -1032,7 +1075,8 @@ export function createGameEngine(getProject) {
               }
             }
             cave.objectives.forEach((objective, goal) => {
-              if (objective.layer === "terrain" && objective.targetId === "ddung-web") state.objectiveProgress[goal].target += added;
+              if (objective.layer === "terrain" && objective.targetId === "ddung-web" &&
+                  objective.countMode === "auto-map") state.objectiveProgress[goal].target += added;
             });
           }
         } else {
@@ -1043,9 +1087,10 @@ export function createGameEngine(getProject) {
       }
       clearableCells.forEach((index) => {
         const blockId = state.cave.layers.block[index];
-        if (blockId && !created.has(index)) {
-          advanceObjectives(state, "block", blockId);
-          removed += 1;
+        if (blockId) {
+          const removedBlock = !created.has(index);
+          advanceObjectives(state, "block", blockId, { normalBlock: countsForDdungColorGoal(state.cave, index), removed: removedBlock });
+          if (removedBlock) removed += 1;
         }
         const itemId = state.cave.layers.item[index];
         if (itemId) {
@@ -1053,7 +1098,10 @@ export function createGameEngine(getProject) {
           state.cave.layers.item[index] = null;
         }
         state.cave.playtestPieces[index] = created.get(index) ?? null;
-        if (!created.has(index)) state.cave.layers.block[index] = null;
+        if (!created.has(index)) {
+          state.cave.layers.block[index] = null;
+          if (state.cave.livePieceIds) state.cave.livePieceIds[index] = null;
+        }
       });
       if (convertedBoxes.length) captureFrame?.("철 상자 → 일반 상자", convertedBoxes, "match");
       for (const piece of created.values()) newPieces.add(piece);
@@ -1075,6 +1123,24 @@ export function createGameEngine(getProject) {
           cascade += 1;
           continue;
         }
+      }
+      // Live play commits this wave only. Gravity, refill and subsequent matches
+      // advance on the live clock instead of calculating a future board here.
+      if (state.liveMode) { cascade++; break; }
+      const nextSpecial = cascade < 19 ? beforeRefill?.(state) : undefined;
+      if (nextSpecial !== undefined && state.movesLeft !== 0 &&
+          state.cave.layers.block[nextSpecial] && !isBarrier(state.cave, nextSpecial) &&
+          specialEffect(state.cave, state.cave.playtestPieces[nextSpecial])) {
+        state.movesUsed++;
+        if (state.movesLeft !== null) state.movesLeft--;
+        captureFrame?.("특수 피스 발동", [nextSpecial], "match", 90);
+        newPieces.delete(state.cave.playtestPieces[nextSpecial]);
+        protectedCells.delete(nextSpecial);
+        matches = new Set([nextSpecial]);
+        runs = [];
+        preferred = [];
+        cascade++;
+        continue;
       }
       const origins = captureFrame ? new Map() : null;
       const trackMove = origins ? (from, to) => {
@@ -1116,7 +1182,7 @@ export function createGameEngine(getProject) {
     }
     applyHeatherCounterattacks(state, heatherAttacks, captureFrame);
     state.blocksRemoved += removed;
-    return { cascade, removed, terrainDamaged, terrainBroken, flowMoves, capped: matches.size > 0 };
+    return { cascade, removed, terrainDamaged, terrainBroken, flowMoves, capped: !state.liveMode && matches.size > 0 };
   }
 
   function hasPossibleSwap(cave) {
@@ -1141,8 +1207,7 @@ export function createGameEngine(getProject) {
 
   function remainingObjectiveCount(state, objective, index) {
     if (state.goalLimitations[index]) return 0;
-    if (isDdungSource(state.cave.externalSource) && ddungUsesBoardCount(ddungObjectiveType(objective)) &&
-        objective.countMode === "auto-map") return countObjectiveAssets(state.cave, objective);
+    if (isDdungBoardObjective(state.cave, objective)) return countObjectiveAssets(state.cave, objective);
     const progress = state.objectiveProgress[index];
     return Math.max(0, progress.target - progress.current);
   }
@@ -1155,7 +1220,7 @@ export function createGameEngine(getProject) {
     if (state.scoreTarget !== null) return { progress: removedBlocks.size, damage: 0, hitCount: hits.size };
     const terrain = goals.some(({ objective }) => objective.layer === "terrain")
       ? [...terrainHitResults(state, hits, targetedTerrain, removedBlocks, bombPanelIndex, specialHits)] : [];
-    const gimmicks = goals.some(({ objective }) => objective.layer === "gimmick")
+    const gimmicks = goals.some(({ objective }) => objective.layer === "gimmick" || includesDdungIceBag(cave, objective))
       ? [...gimmickHitResults(state, hits, removedBlocks, specialHits)] : [];
     let progress = 0;
     let damage = 0;
@@ -1163,8 +1228,10 @@ export function createGameEngine(getProject) {
       const matchesId = (id) => id && matchesObjectiveAsset(objective, id);
       const { layer } = objective;
       if (layer === "terrain" || layer === "gimmick") {
-        const relevant = layer === "terrain" ? terrain.filter((hit) => matchesId(hit.terrainId))
-          : gimmicks.filter((hit) => matchesId(hit.originId ?? hit.id));
+        const relevant = [
+          ...terrain.filter((hit) => matchesObjectiveOnLayer(cave, objective, "terrain", hit.terrainId)),
+          ...gimmicks.filter((hit) => matchesObjectiveOnLayer(cave, objective, "gimmick", hit.originId ?? hit.id)),
+        ];
         const jellyCells = objective.targetId === "ddung-jelly" ? state.ddungJellyCells : null;
         const brokenCells = new Set(relevant.filter(({ broken }) => broken).map(({ index }) => index));
         const brokenGroups = new Set();
@@ -1183,7 +1250,9 @@ export function createGameEngine(getProject) {
           damage += damaged.slice(0, remaining - cleared).reduce((total, amount) => total + amount, 0);
         }
       } else if (layer === "block" || layer === "item") {
-        const cells = layer === "block" ? [...removedBlocks] : clearableCells;
+        const cells = isDdungColorObjective(cave, objective)
+          ? clearableCells.filter((index) => countsForDdungColorGoal(cave, index))
+          : layer === "block" ? [...removedBlocks] : clearableCells;
         const count = cells.filter((index) => matchesId(cave.layers[layer][index])).length;
         progress += Math.min(remaining, count);
         if (layer === "block" && count < remaining) {
@@ -1619,6 +1688,7 @@ export function createGameEngine(getProject) {
     const pieces = cave.playtestPieces;
     [blocks[first], blocks[second]] = [blocks[second], blocks[first]];
     [pieces[first], pieces[second]] = [pieces[second], pieces[first]];
+    if (cave.livePieceIds) [cave.livePieceIds[first], cave.livePieceIds[second]] = [cave.livePieceIds[second], cave.livePieceIds[first]];
   }
 
   function findPlayableAction(state) {
@@ -1634,24 +1704,34 @@ export function createGameEngine(getProject) {
     if (findPlayableAction(state)) return;
     const { cave } = state;
     const blocks = cave.layers.block;
-    const slots = blocks.flatMap((color, index) =>
-      color && color !== "ddung-dust-piece" && !isDdungTreasure(color) && !cave.playtestPieces[index] && !isSwapBlocked(cave, index) ? [index] : []);
-    const original = slots.map((index) => blocks[index]);
-    if (slots.length >= 4 && new Set(original).size >= 2) {
+    const ddung = isDdungSource(cave.externalSource);
+    const slots = blocks.flatMap((color, index) => {
+      if (!color || color === "ddung-dust-piece" || isDdungTreasure(color)) return [];
+      const movable = ddung ? !isBarrier(cave, index) && specialEffect(cave, cave.playtestPieces[index]) !== "color"
+        : !cave.playtestPieces[index] && !isSwapBlocked(cave, index);
+      return movable ? [index] : [];
+    });
+    const original = slots.map((index) => ({ block: blocks[index], piece: cave.playtestPieces[index], id: cave.livePieceIds?.[index] }));
+    const applyShuffle = (pieces) => slots.forEach((index, position) => {
+      blocks[index] = pieces[position].block;
+      cave.playtestPieces[index] = pieces[position].piece;
+      if (cave.livePieceIds) cave.livePieceIds[index] = pieces[position].id;
+    });
+    if (slots.length >= 4 && new Set(slots.map((index) => blockMatchKey(cave, index))).size >= 2) {
       for (let attempt = 0; attempt < 80; attempt += 1) {
         const shuffled = [...original];
         for (let index = shuffled.length - 1; index > 0; index -= 1) {
           const other = Math.floor(state.shuffleRandom() * (index + 1));
           [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
         }
-        slots.forEach((slot, index) => { blocks[slot] = shuffled[index]; });
-        if (findMatches(cave).size || !listPossibleSwaps(state, true).length) continue;
+        applyShuffle(shuffled);
+        if (findMatches(cave).size || !findPlayableAction(state)) continue;
         state.shuffleCount += 1;
         state.message += " · 가능한 교환이 없어 보드를 섞었습니다.";
         captureFrame?.("보드 셔플", slots, "swap", 350);
         return;
       }
-      slots.forEach((slot, index) => { blocks[slot] = original[index]; });
+      applyShuffle(original);
     }
     state.status = "stuck";
     state.message = "셔플로 가능한 교환을 만들 수 없습니다.";
@@ -1750,9 +1830,10 @@ export function createGameEngine(getProject) {
       if (!color || isExcluded(cave, index) || above < 0 || protectedCells.has(above) ||
           block[above] !== color || item[above] || (gimmick[above] && gimmick[above] !== SPAWNER_ID) ||
           (terrain[above] && terrain[above] !== "floor") || isBarrier(cave, above)) continue;
+      const normalBlock = countsForDdungColorGoal(cave, above);
       block[above] = null;
       cave.playtestPieces[above] = null;
-      advanceObjectives(state, "block", color);
+      advanceObjectives(state, "block", color, { normalBlock });
       consumed.push(above);
       changed.push(index);
       if (++state.terrainHits[index] >= cave.terrainRules[id].durability) {
@@ -1806,7 +1887,7 @@ export function createGameEngine(getProject) {
     }
   }
 
-  function playSimulationTurn(state, action, captureFrame) {
+  function playSimulationTurn(state, action, captureFrame, beforeRefill) {
     if (!action) {
       state.status = "stuck";
       state.message = "가능한 교환이나 특수 피스 발동이 없습니다.";
@@ -1817,8 +1898,9 @@ export function createGameEngine(getProject) {
     if (action.bombPanel) {
       if (!bombPanelReady(state, first)) return;
       const explosion = bombPanelHits(state, first, state.beeRandom);
-      resolveMatches(state, captureFrame, [first], [], explosion);
+      resolveMatches(state, captureFrame, [first], [], explosion, beforeRefill);
       state.message = explosion.label;
+      if (state.liveMode) return;
       if (clearConditionMet(state)) state.status = "won";
       else ensurePlayableBoard(state, captureFrame);
       return;
@@ -1847,8 +1929,15 @@ export function createGameEngine(getProject) {
     state.movesUsed += 1;
     if (state.movesLeft !== null) state.movesLeft -= 1;
     state.chocolateRemoved = false;
-    const resolved = resolveMatches(state, captureFrame, combo ? [first, second] : activation ? [first] : [], activation || combo ? [] : [second, first], combo);
-    state.message = (combo ? combo.label + " · " : "") + resolved.removed + "개 제거 · " + resolved.cascade + "연쇄 · Terrain " + resolved.terrainBroken + "개 파괴";
+    const resolved = resolveMatches(state, captureFrame, combo ? [first, second] : activation ? [first] : [],
+      activation || combo ? [] : [second, first], combo, beforeRefill);
+    if (state.liveMode) { state.liveTurns.push(resolved); return; }
+    finishSimulationTurn(state, resolved, captureFrame);
+  }
+
+  function finishSimulationTurn(state, resolved, captureFrame) {
+    const cave = state.cave;
+    state.message = resolved.removed + "개 제거 · " + resolved.cascade + "연쇄 · Terrain " + resolved.terrainBroken + "개 파괴";
     for (const [index, id] of cave.layers.gimmick.entries()) {
       if (id !== "ddung-attack-turn" || state.turnPanelsHit.has(index)) continue;
       if (state.verticalPanels.has(index)) state.verticalPanels.delete(index);
@@ -1876,6 +1965,13 @@ export function createGameEngine(getProject) {
       }
     }
     state.turnPanelsHit.clear();
+    if (state.liveMode) {
+      if (!clearConditionMet(state) && state.movesLeft !== 0) {
+        spreadDdungChocolate(state, captureFrame);
+        runDdungTurnEvent(state, captureFrame);
+      }
+      return;
+    }
     if (clearConditionMet(state)) state.status = "won";
     else if (state.movesLeft === 0) state.status = "lost";
     else {
@@ -1884,6 +1980,216 @@ export function createGameEngine(getProject) {
       if (clearConditionMet(state)) state.status = "won";
       else ensurePlayableBoard(state, captureFrame);
     }
+  }
+
+  function finishLiveTurns(state, captureFrame) {
+    const turns = state.liveTurns.splice(0);
+    for (const resolved of turns) {
+      finishSimulationTurn(state, resolved, captureFrame);
+      if (state.status !== "playing") break;
+    }
+  }
+
+  function finishLiveState(state, captureFrame) {
+    if (state.status !== "playing") return;
+    if (clearConditionMet(state)) state.status = "won";
+    else if (state.movesLeft === 0) state.status = "lost";
+    else ensurePlayableBoard(state, captureFrame);
+  }
+
+  function planLiveFalls(state, blocked) {
+    if (state.cave.flowRule === "royal") return planRoyalFalls(state.cave, blocked);
+    // Use the same spatial rules as synchronous Playtest. Only the next edge of
+    // each path is committed; a landing replans against the then-current board.
+    const cave = state.cave;
+    const plan = { ...cave, layers: Object.fromEntries(Object.entries(cave.layers).map(([k, v]) => [k, [...v]])),
+      playtestPieces: [...cave.playtestPieces], livePieceIds: [...cave.livePieceIds], liveBarriers: blocked };
+    const paths = new Map();
+    const at = new Map(cave.livePieceIds.flatMap((id, index) => id ? [[index, id]] : []));
+    const planningState = { ...state, cave: plan, random: state.random.copy() };
+    const warps = ddungWarpRoutes(cave);
+    applyGravity(plan, planningState, (from, to) => {
+      const id = at.get(from);
+      at.delete(from);
+      at.set(to, id);
+      if (!id || paths.has(id)) return;
+      const column = from % cave.width === to % cave.width;
+      const straight = column || Math.floor(from / cave.width) === Math.floor(to / cave.width);
+      const warp = warps.get(to) === from;
+      paths.set(id, { id, from, to: straight && !warp ? from + Math.sign(to - from) * (column ? cave.width : 1) : to, warp });
+    });
+    let moves = [...paths.values()].filter(({ from, to }) => !blocked.has(from) && !blocked.has(to));
+    // A chain may leave together, but it cannot move into an occupied stationary cell.
+    for (let previous = -1; previous !== moves.length;) {
+      previous = moves.length;
+      const leaving = new Set(moves.map(({ from }) => from));
+      moves = moves.filter(({ to }) => !cave.layers.block[to] || leaving.has(to));
+    }
+    if (moves.length) { state.flowTurn = planningState.flowTurn; state.random = planningState.random; }
+    return moves;
+  }
+
+  function planRoyalFalls(cave, frozen = new Set()) {
+    const blocks = cave.layers.block;
+    const directions = ddungCellGravities(cave);
+    const warps = ddungWarpRoutes(cave);
+    const sources = new Set(blockSpawnSources(cave) ?? []);
+    const order = gravityLines(cave).flat();
+    const assigned = new Set();
+    const claimed = new Set();
+    const supplied = new Set();
+    const crossTargets = [];
+    const moves = [];
+    const staticBarrier = (index) => index < 0 || isBarrier(cave, index, true);
+    const vector = (index) => GRAVITY_VECTORS[directions?.[index] || cave.gravity];
+    const above = (index) => {
+      const [dx, dy] = vector(index);
+      return warps.get(index) ?? offsetCell(cave, index, -dx, -dy);
+    };
+    const idAt = (index) => cave.livePieceIds?.[index] ?? index + 1;
+    const allocate = (from, to, target, kind) => {
+      assigned.add(from);
+      claimed.add(target);
+      claimed.add(to);
+      moves.push({ id: idAt(from), from, to, target, kind, warp: warps.get(to) === from });
+    };
+
+    // Reserve straight supply for the entire board before considering any cross
+    // donor. A temporary freeze or an open filling source means "wait for this
+    // column", not "treat it as a wall and steal a neighbour".
+    for (const target of order) {
+      if (staticBarrier(target) || frozen.has(target) || (blocks[target] && !assigned.has(target))) continue;
+      const path = [target];
+      const seen = new Set(path);
+      let cursor = target;
+      let waiting = false;
+      let found = false;
+      while (true) {
+        if (sources.has(cursor) && !blocks[cursor]) { waiting = true; break; }
+        const next = above(cursor);
+        if (next < 0 || seen.has(next) || staticBarrier(next)) break;
+        if (frozen.has(next) || supplied.has(next)) { waiting = true; break; }
+        path.push(next);
+        seen.add(next);
+        if (blocks[next] && !assigned.has(next)) {
+          allocate(next, path.at(-2), target, "straight");
+          found = true;
+          break;
+        }
+        cursor = next;
+      }
+      if (waiting) supplied.add(target);
+      else if (!found) crossTargets.push(target);
+    }
+
+    for (const target of crossTargets) {
+      if (claimed.has(target) || supplied.has(target) || frozen.has(target)) continue;
+      const levels = [];
+      const seen = new Set();
+      let cursor = target;
+      let leftOpen = true;
+      let rightOpen = true;
+      let waiting = false;
+      while (cursor >= 0 && !seen.has(cursor) && !staticBarrier(cursor)) {
+        seen.add(cursor);
+        if (frozen.has(cursor) || claimed.has(cursor) || supplied.has(cursor)) { waiting = true; break; }
+        if (blocks[cursor] && !assigned.has(cursor)) break;
+        const [dx, dy] = vector(cursor);
+        // Left/right are relative to the downward flow; rotate with custom gravity.
+        const side = [dy, -dx];
+        leftOpen &&= !frozen.has(offsetCell(cave, cursor, -side[0], -side[1]));
+        rightOpen &&= !frozen.has(offsetCell(cave, cursor, side[0], side[1]));
+        levels.push({ cell: cursor, leftOpen, rightOpen });
+        if (sources.has(cursor) && !blocks[cursor]) { waiting = true; break; }
+        if (warps.has(cursor)) break;
+        const next = above(cursor);
+        if (next < 0 || staticBarrier(next)) break;
+        cursor = next;
+      }
+      if (waiting) continue;
+      // The original collects levels upward, then examines the upper candidates
+      // first. Enter at that level; subsequent straight steps reach the target.
+      for (const level of levels.reverse()) {
+        const entry = level.cell;
+        const [dx, dy] = vector(entry);
+        const side = [dy, -dx];
+        const donor = (sign, open) => {
+          if (!open) return null;
+          const index = offsetCell(cave, entry, -dx + sign * side[0], -dy + sign * side[1]);
+          if (index < 0 || staticBarrier(index) || frozen.has(index) || assigned.has(index) ||
+              claimed.has(index) || !blocks[index]) return null;
+          return index;
+        };
+        const left = donor(-1, level.leftOpen);
+        const right = donor(1, level.rightOpen);
+        // FindCrossItemInLeftOrRightColumn accepts an ordinary left candidate
+        // immediately, but examines the right side when the left is special.
+        const chosen = left !== null && !specialEffect(cave, cave.playtestPieces?.[left])
+          ? left : right ?? left;
+        if (chosen === null) continue;
+        allocate(chosen, entry, target, "cross");
+        for (const cell of seen) claimed.add(cell);
+        break;
+      }
+    }
+
+    // A current occupant must actually leave in this batch, even when a longer
+    // straight assignment already exists. No two pieces may own the same entry.
+    let valid = moves;
+    for (let previous = -1; previous !== valid.length;) {
+      previous = valid.length;
+      const leaving = new Set(valid.map(({ from }) => from));
+      const entries = new Set();
+      valid = valid.filter(({ to }) => {
+        if (frozen.has(to) || entries.has(to) || (blocks[to] && !leaving.has(to))) return false;
+        entries.add(to);
+        return true;
+      });
+    }
+    return valid;
+  }
+
+  function settleRoyalGravity(cave, state, trackMove) {
+    const visited = new Map();
+    const ownedIds = !cave.livePieceIds;
+    if (ownedIds) cave.livePieceIds = cave.layers.block.map((block, index) => block ? index + 1 : null);
+    let moved = 0;
+    try {
+      for (let pass = 0; pass < cave.layers.block.length * Math.max(cave.width, cave.height); pass++) {
+        let moves = planRoyalFalls(cave).filter(({ id, to }) => !visited.get(id)?.has(to));
+        for (let previous = -1; previous !== moves.length;) {
+          previous = moves.length;
+          const leaving = new Set(moves.map(({ from }) => from));
+          moves = moves.filter(({ to }) => !cave.layers.block[to] || leaving.has(to));
+        }
+        if (!moves.length) break;
+        const payloads = moves.map((move) => ({ ...move, block: cave.layers.block[move.from], piece: cave.playtestPieces?.[move.from] }));
+        for (const move of payloads) {
+          cave.layers.block[move.from] = null;
+          if (cave.playtestPieces) cave.playtestPieces[move.from] = null;
+          cave.livePieceIds[move.from] = null;
+        }
+        for (const move of payloads) {
+          trackMove?.(move.from, move.to);
+          cave.layers.block[move.to] = move.block;
+          if (cave.playtestPieces) cave.playtestPieces[move.to] = move.piece;
+          cave.livePieceIds[move.to] = move.id;
+          const path = visited.get(move.id) ?? new Set([move.from]);
+          path.add(move.to);
+          visited.set(move.id, path);
+          moved++;
+        }
+      }
+    } finally { if (ownedIds) delete cave.livePieceIds; }
+    return moved;
+  }
+
+  function refillLiveSources(state, blocked) {
+    const origins = new Map();
+    state.cave.liveBarriers = blocked;
+    try { refillBlocks(state, origins, undefined, true); }
+    finally { delete state.cave.liveBarriers; }
+    return [...origins].map(([to]) => ({ from: to, to, spawned: true, id: state.cave.livePieceIds[to] }));
   }
 
   function createPlayState(cave, seedSuffix, manual = false, { scoreTarget = cave.scoreTarget ?? null, pointsPerBlock = cave.pointsPerBlock ?? 100 } = {}) {
@@ -2097,6 +2403,8 @@ export function createGameEngine(getProject) {
     isDdungSource,
     ddungObjectiveType,
     ddungUsesBoardCount,
+    isDdungBoardObjective,
+    matchesObjectiveOnLayer,
     ddungGoalLimitation,
     matchesObjectiveAsset,
     countObjectiveAssets,
@@ -2119,7 +2427,7 @@ export function createGameEngine(getProject) {
     isBarrier,
     isDdungTreasure,
     ddungMarkersAt,
-    heatherGroup,
+    terrainGroup,
     ddungJellyCells,
     terrainDurabilityAt,
     hasPossibleSwap,
@@ -2135,6 +2443,13 @@ export function createGameEngine(getProject) {
     bombPanelReady,
     ddungTurnEvents,
     playSimulationTurn,
+    clearConditionMet,
+    resolveMatches,
+    planLiveFalls,
+    refillLiveSources,
+    collectDdungTreasure,
+    finishLiveTurns,
+    finishLiveState,
     createPlayState,
     runAutoGame,
     DDUNG_COLOR_IDS,

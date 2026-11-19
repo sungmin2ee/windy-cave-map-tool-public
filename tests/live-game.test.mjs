@@ -1,0 +1,410 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createGameEngine } from '../game-engine.js';
+import { createLiveGame } from '../live-game.js';
+
+function fixture(overrides = {}) {
+  const colors = ['red', 'yellow', 'blue', 'green', 'orange', 'purple'];
+  const cave = {
+    id: 'live-test', number: 1, name: '동시 입력 검증', width: 6, height: 6,
+    gravity: 'down', flowRule: 'royal', randomSeed: 'live-regression',
+    usableBlocks: colors, blockWeights: {}, specialMatches: false,
+    layers: { terrain: Array(36).fill('floor'), block: Array.from({length: 36}, (_, i) => colors[(i % 6 + 2 * Math.floor(i / 6)) % 6]),
+      gimmick: Array(36).fill(null), item: Array(36).fill(null) },
+    initialPieceTypes: { 0: 'bomb', 35: 'horizontal' }, initialPieceDefinitions: [],
+    terrainRules: { floor: { reaction: 'none', durability: 1, blocksFlow: false } },
+    gimmickRules: {}, objectives: [{ layer: 'block', targetId: 'red', countMode: 'manual', count: 1000 }],
+    moveLimit: 25, moveLimitEnabled: true, scoreTarget: null, pointsPerBlock: 100,
+    ...overrides,
+  };
+  const project = { caves: [cave], specialPieceRules: { combos: [] } };
+  const engine = createGameEngine(() => project);
+  const state = engine.createPlayState(cave, 'test', true);
+  const frames = [];
+  const live = createLiveGame(state, engine, { effects: (batch) => frames.push(...batch) });
+  return { engine, state, live, frames, cave };
+}
+
+function settle(live, limit = 5000) {
+  let ticks = 0;
+  while (live.active && ticks++ < limit) live.tick(1 / 60);
+  assert.ok(ticks < limit, 'live board settles without an endless clock');
+}
+
+test('special taps commit immediately during another explosion, before any refill', () => {
+  const { live, state } = fixture();
+  assert.equal(live.submit({ first: 0 }), true);
+  assert.equal(state.movesUsed, 1);
+  const holes = state.cave.layers.block.filter(x => !x).length;
+  assert.ok(holes > 0);
+  assert.equal(live.canTap(35), true);
+  assert.equal(live.submit({ first: 35 }), true);
+  assert.equal(state.movesUsed, 2);
+  assert.equal(state.cave.layers.block[35], null);
+  assert.ok(state.cave.layers.block.filter(x => !x).length > holes);
+  assert.equal(live.motions.size, 0);
+  settle(live);
+});
+
+test('a stable normal swap starts immediately while another area clears', () => {
+  const { live, state } = fixture();
+  // Bottom rows: swap yellow with blue to form a new blue vertical match.
+  state.cave.layers.block[21] = 'blue';
+  state.cave.layers.block[27] = 'yellow';
+  state.cave.layers.block[28] = 'blue';
+  state.cave.layers.block[33] = 'blue';
+  live.submit({ first: 0 });
+  assert.equal(live.canSwap(27), true);
+  assert.equal(live.submit({ first: 27, second: 28 }), true);
+  assert.equal(state.movesUsed, 2);
+  assert.equal(state.cave.layers.block[27], null);
+  assert.equal(live.active, true);
+  settle(live);
+});
+
+test('falling pieces and their incoming cells are unavailable to normal swaps', () => {
+  const { live, state } = fixture();
+  live.submit({ first: 35 });
+  for (let i = 0; !live.motions.size && i < 100; i++) live.tick(1 / 60);
+  assert.ok(live.motions.size > 0);
+  const move = [...live.motions.values()].find(x => !x.spawned);
+  assert.ok(move);
+  assert.equal(live.canSwap(move.to), false);
+  assert.equal(live.canSwap(move.from, true), false);
+  const used = state.movesUsed;
+  assert.equal(live.submit({ first: move.to, second: move.to - 1 }), false);
+  assert.equal(state.movesUsed, used);
+  settle(live);
+});
+
+test('genuine empty destination can make a match; invalid empty swaps do not spend a move', () => {
+  const { live, state } = fixture();
+  state.cave.layers.block[20] = null;
+  state.cave.livePieceIds[20] = null;
+  state.cave.layers.block[19] = 'red';
+  state.cave.layers.block[14] = 'red';
+  state.cave.layers.block[26] = 'red';
+  assert.equal(live.canSwap(20, true), true);
+  live.submit({ first: 19, second: 20 });
+  assert.equal(state.movesUsed, 1);
+  assert.equal(state.cave.layers.block[20], null);
+  settle(live);
+  const invalid = fixture();
+  invalid.state.cave.layers.block[1] = null;
+  invalid.state.cave.livePieceIds[1] = null;
+  invalid.live.submit({ first: 2, second: 1 });
+  assert.equal(invalid.state.movesUsed, 0);
+});
+
+test('move exhaustion and scoring wait for active effects and cascades', () => {
+  const { live, state } = fixture({ moveLimit: 1, scoreTarget: 100, pointsPerBlock: 100 });
+  live.submit({ first: 0 });
+  assert.equal(state.movesLeft, 0);
+  assert.equal(state.status, 'playing');
+  assert.equal(live.submit({ first: 35 }), false);
+  settle(live);
+  assert.equal(state.status, 'won');
+  assert.equal(state.movesUsed, 1);
+});
+
+test('IDs stay unique through refill and the board remains immutable while idle', () => {
+  const { live, state } = fixture();
+  live.submit({ first: 0 });
+  settle(live);
+  const ids = state.cave.livePieceIds.filter(Boolean);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(ids.length, state.cave.layers.block.filter(Boolean).length);
+  const saved = JSON.stringify(state.cave.layers);
+  for (let i = 0; i < 60; i++) live.tick(1 / 60);
+  assert.equal(JSON.stringify(state.cave.layers), saved);
+});
+
+for (const gravity of ['up', 'left', 'right']) {
+  test(`${gravity} gravity settles using shared spatial rules`, () => {
+    const { live, state } = fixture({ gravity });
+    live.submit({ first: 0 });
+    settle(live);
+    assert.equal(state.cave.layers.block.filter(Boolean).length, 36);
+    assert.equal(live.motions.size, 0);
+  });
+}
+
+test('synchronous simulation still resolves a complete turn with the same goals', () => {
+  const { engine, cave } = fixture();
+  const state = engine.createPlayState(cave, 'sync', true);
+  engine.playSimulationTurn(state, { first: 0 });
+  assert.equal(state.movesUsed, 1);
+  assert.ok(state.blocksRemoved > 0);
+  assert.equal(state.cave.layers.block.filter(Boolean).length, 36);
+  assert.equal(state.liveMode, undefined);
+});
+
+test('stop cancels simulation work without advancing the board', () => {
+  const { live, state } = fixture();
+  live.submit({ first: 0 });
+  live.stop();
+  const saved = JSON.stringify(state.cave.layers);
+  live.tick(1);
+  assert.equal(live.submit({ first: 35 }), false);
+  assert.equal(JSON.stringify(state.cave.layers), saved);
+});
+
+test('special combinations spend one move and do not discard an active explosion', () => {
+  const { live, state } = fixture({ initialPieceTypes: { 0: 'bomb', 28: 'horizontal', 29: 'vertical' } });
+  live.submit({ first: 0 });
+  const removed = state.blocksRemoved;
+  assert.equal(live.submit({ first: 28, second: 29 }), true);
+  assert.equal(state.movesUsed, 2);
+  assert.ok(state.blocksRemoved > removed);
+  settle(live);
+  assert.equal(state.cave.layers.block.filter(Boolean).length, 36);
+});
+
+test('a falling special can be tapped while normal swapping of that piece remains blocked', () => {
+  const { live, state } = fixture({ initialPieceTypes: { 21: 'bomb', 35: 'horizontal' } });
+  live.submit({ first: 35 });
+  let moving;
+  for (let i = 0; i < 100 && !moving; i++) {
+    live.tick(1 / 120);
+    moving = [...live.motions.values()].find(move => move.piece?.type === 'bomb');
+  }
+  assert.ok(moving);
+  assert.equal(live.canSwap(moving.to), false);
+  assert.equal(live.canTap(moving.to), true);
+  assert.equal(live.submit({ first: moving.to }), true);
+  assert.equal(state.movesUsed, 2);
+  assert.equal(live.motions.has(moving.id), false);
+  settle(live);
+});
+
+test('an unsuccessful final move reports loss only after effects stop', () => {
+  const { live, state } = fixture({ moveLimit: 1, scoreTarget: 1000000 });
+  live.submit({ first: 0 });
+  assert.equal(state.status, 'playing');
+  settle(live);
+  assert.equal(state.status, 'lost');
+  assert.equal(state.movesLeft, 0);
+  assert.equal(state.animating, false);
+});
+
+test('invalid swapping restores the board and has no physics or turn-end side effects', () => {
+  const { live, state } = fixture();
+  const board = JSON.stringify(state.cave.layers);
+  assert.equal(live.submit({ first: 2, second: 3 }), true);
+  settle(live);
+  assert.equal(state.movesUsed, 0);
+  assert.equal(state.blocksRemoved, 0);
+  assert.equal(JSON.stringify(state.cave.layers), board);
+  assert.equal(state.message, '매치가 만들어지지 않아 교환을 되돌렸습니다.');
+});
+
+test('a remote moving reservation does not stop diagonal flow around a real wall', () => {
+  const { engine, state } = fixture();
+  state.cave.terrainRules.wall = { blocksFlow: true, reaction: 'none' };
+  state.cave.layers.terrain[14] = 'wall';
+  for (const i of [14, 20]) { state.cave.layers.block[i] = null; state.cave.livePieceIds[i] = null; }
+  const moves = engine.planLiveFalls(state, new Set([35]));
+  assert.ok(moves.some(move => move.to === 20 && [13, 15].includes(move.from)));
+});
+
+function beeGoal(count) {
+  const result = fixture({ initialPieceTypes: { 0: 'bee', 35: 'horizontal' },
+    objectives: [{ layer: 'terrain', targetId: 'ice', countMode: 'manual', count }] });
+  result.state.cave.terrainRules.ice = { reaction: 'under', durability: 1, blocksFlow: false };
+  result.state.cave.layers.terrain[31] = 'ice';
+  if (count > 1) result.state.cave.layers.terrain[32] = 'ice';
+  return result;
+}
+
+test('the last goal targeted by a bee closes input before its flight finishes', () => {
+  const { live, state, frames } = beeGoal(1);
+  assert.equal(live.submit({ first: 0 }), true);
+  assert.ok(frames.some(frame => frame.turnActor?.type === 'bee'));
+  assert.equal(state.objectiveProgress[0].current, 1);
+  assert.equal(state.status, 'playing', 'visual completion still waits for the live clock');
+  assert.equal(live.active, true);
+  assert.equal(live.canSwap(20), false);
+  assert.equal(live.canTap(35), false);
+  assert.equal(live.submit({ first: 35 }), false);
+  assert.equal(live.submit({ first: 20, second: 21 }), false);
+  assert.equal(state.movesUsed, 1);
+  settle(live);
+  assert.equal(state.status, 'won');
+  assert.equal(state.movesUsed, 1);
+});
+
+test('bee flights keep concurrent input when another goal remains', () => {
+  const { live, state } = beeGoal(2);
+  live.submit({ first: 0 });
+  assert.equal(state.objectiveProgress[0].current, 1);
+  assert.equal(live.canSwap(20), true);
+  assert.equal(live.canTap(35), true);
+  assert.equal(live.submit({ first: 35 }), true);
+  assert.equal(state.movesUsed, 2);
+  settle(live);
+});
+
+test('reaching a score target also closes input while completion effects run', () => {
+  const { live, state } = fixture({ scoreTarget: 100 });
+  live.submit({ first: 0 });
+  assert.equal(state.status, 'playing');
+  assert.equal(live.canTap(35), false);
+  assert.equal(live.submit({ first: 35 }), false);
+  settle(live);
+  assert.equal(state.status, 'won');
+  assert.equal(state.movesUsed, 1);
+});
+
+function blockedColumn(holes = [20]) {
+  const result = fixture();
+  const { cave } = result.state;
+  cave.terrainRules.wall = { blocksFlow: true, reaction: 'none' };
+  cave.layers.terrain[14] = 'wall';
+  for (const index of [14, ...holes]) {
+    cave.layers.block[index] = null;
+    cave.playtestPieces[index] = null;
+    cave.livePieceIds[index] = null;
+  }
+  return result;
+}
+
+test('royal cross flow selects the ordinary left candidate first', () => {
+  const { engine, state } = blockedColumn();
+  const cross = engine.planLiveFalls(state, new Set()).find(move => move.target === 20);
+  assert.equal(cross.from, 13);
+  assert.equal(cross.to, 20);
+  assert.equal(cross.kind, 'cross');
+});
+
+test('royal cross flow checks the right candidate when the left is special', () => {
+  const { engine, state } = blockedColumn();
+  state.cave.playtestPieces[13] = { type: 'bee' };
+  const cross = engine.planLiveFalls(state, new Set()).find(move => move.target === 20);
+  assert.equal(cross.from, 15);
+});
+
+test('a special left candidate is retained when the right has no eligible piece', () => {
+  const { engine, state } = blockedColumn();
+  state.cave.playtestPieces[13] = { type: 'bee' };
+  const cross = engine.planLiveFalls(state, new Set([15])).find(move => move.target === 20);
+  assert.equal(cross.from, 13);
+});
+
+test('straight assignments have priority over a neighbouring cross request', () => {
+  const { engine, state } = blockedColumn([19, 20]);
+  const moves = engine.planLiveFalls(state, new Set());
+  assert.ok(moves.some(move => move.from === 13 && move.to === 19 && move.kind === 'straight'));
+  assert.equal(moves.find(move => move.target === 20).from, 15);
+  assert.equal(new Set(moves.map(move => move.from)).size, moves.length);
+  assert.equal(new Set(moves.map(move => move.to)).size, moves.length);
+});
+
+test('a deep empty pocket is entered at its upper edge instead of jumping to the bottom', () => {
+  const { engine, state } = blockedColumn([20, 26, 32]);
+  const moves = engine.planLiveFalls(state, new Set());
+  const cross = moves.find(move => move.target === 32);
+  assert.equal(cross.from, 13);
+  assert.equal(cross.to, 20);
+  assert.equal(moves.filter(move => move.kind === 'cross').length, 1);
+});
+
+test('an open vertical source reserves its empty column rather than borrowing diagonally', () => {
+  const { engine, state } = fixture();
+  for (const index of [2, 8, 14, 20]) {
+    state.cave.layers.block[index] = null;
+    state.cave.livePieceIds[index] = null;
+  }
+  assert.equal(engine.planLiveFalls(state, new Set()).some(move => move.kind === 'cross'), false);
+});
+
+test('cross flow does not invent a refill source underneath a wall', () => {
+  const { engine, state } = blockedColumn();
+  const spawned = engine.refillLiveSources(state, new Set());
+  assert.equal(spawned.length, 0);
+  assert.equal(state.cave.layers.block[20], null);
+});
+
+test('a frozen vertical path waits instead of treating moving cells as a wall', () => {
+  const { engine, state } = fixture();
+  state.cave.layers.block[20] = null;
+  state.cave.livePieceIds[20] = null;
+  const moves = engine.planLiveFalls(state, new Set([14]));
+  assert.equal(moves.some(move => move.target === 20), false);
+});
+
+test('live cross motion reserves the eventual target as well as the next cell', () => {
+  const { live, state } = blockedColumn([20, 26, 32]);
+  live.submit({ first: 0 });
+  let cross;
+  for (let i = 0; i < 1000 && !cross; i++) {
+    live.tick(1 / 120);
+    cross = [...live.motions.values()].find(move => move.kind === 'cross' && move.target !== move.to);
+  }
+  assert.ok(cross);
+  assert.equal(live.canSwap(cross.target, true), false);
+  settle(live);
+  const ids = state.cave.livePieceIds.filter(Boolean);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('royal straight allocation preserves an explicit portal route', () => {
+  const { engine, state } = fixture();
+  state.cave.externalSource = { format: 'DDUNG MapInfo v68', rawMap: { size: 6, warps: '0154' } };
+  state.cave.layers.gimmick[6] = 'teleport-a';
+  state.cave.layers.gimmick[29] = 'teleport-b';
+  state.cave.layers.block[29] = null;
+  state.cave.livePieceIds[29] = null;
+  const warp = engine.planLiveFalls(state, new Set()).find(move => move.target === 29);
+  assert.equal(warp.from, 6);
+  assert.equal(warp.to, 29);
+  assert.equal(warp.warp, true);
+});
+
+test('royal allocation keeps a map cell\'s local gravity direction', () => {
+  const { engine, state } = fixture();
+  const gravitys = Array(36).fill('1');
+  gravitys[14] = '2'; // raw y=2 -> web row 3, column 2; gravity left
+  state.cave.externalSource = { format: 'DDUNG MapInfo v68', rawMap: { size: 6, gravitys: gravitys.join('') } };
+  state.cave.layers.block[20] = null;
+  state.cave.livePieceIds[20] = null;
+  const move = engine.planLiveFalls(state, new Set()).find(move => move.target === 20);
+  assert.equal(move.from, 21);
+  assert.equal(move.to, 20);
+});
+
+test('explicitly disabling cross flow leaves a pocket below a wall empty', () => {
+  const { engine, state } = blockedColumn();
+  state.cave.flowRule = 'none';
+  assert.equal(engine.planLiveFalls(state, new Set()).length, 0);
+  assert.equal(engine.refillLiveSources(state, new Set()).length, 0);
+  assert.equal(state.cave.layers.block[20], null);
+});
+
+test('when both cross candidates are special, the eligible right candidate wins', () => {
+  const { engine, state } = blockedColumn();
+  state.cave.playtestPieces[13] = { type: 'bee' };
+  state.cave.playtestPieces[15] = { type: 'bomb' };
+  assert.equal(engine.planLiveFalls(state, new Set()).find(move => move.target === 20).from, 15);
+});
+
+test('two cross requests cannot reserve the same donor twice', () => {
+  const { engine, state } = blockedColumn([20, 22]);
+  state.cave.layers.terrain[16] = 'wall';
+  state.cave.layers.block[16] = null;
+  state.cave.livePieceIds[16] = null;
+  const moves = engine.planLiveFalls(state, new Set([13, 17]));
+  assert.equal(moves.filter(move => move.from === 15).length, 1);
+  assert.equal(new Set(moves.map(move => move.to)).size, moves.length);
+});
+
+test('synchronous Playtest also fills wall pockets through the royal planner', () => {
+  const { engine, cave } = fixture();
+  cave.terrainRules.wall = { blocksFlow: true, reaction: 'none' };
+  for (const index of [14, 15]) { cave.layers.terrain[index] = 'wall'; cave.layers.block[index] = null; }
+  const state = engine.createPlayState(cave, 'wall-sync', true);
+  engine.playSimulationTurn(state, { first: 35 });
+  assert.equal(state.movesUsed, 1);
+  assert.equal(state.cave.layers.block.filter(Boolean).length, 34);
+  for (const index of [14, 15]) assert.equal(state.cave.layers.block[index], null);
+  for (const index of [20, 21]) assert.ok(state.cave.layers.block[index]);
+});

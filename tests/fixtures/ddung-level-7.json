@@ -1,0 +1,30 @@
+{
+  "version": 68,
+  "swapDuringEffects": true,
+  "mapinfos": [
+    {
+      "count": 30,
+      "special": "",
+      "mouse": false,
+      "colors": "0,1,2,3,5",
+      "objectcreate": 1,
+      "gravitys": "111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "objectpercent": "202020202000",
+      "tiles": "yyyyyyyyyyㄺㅎㄿ⑴ㄺㅎㅎyyㄺㄵㄵ⑴ㅄㅄㅎyyㄵㅄㄺ⑴ㄺㄺㅄyy⑴⑴ㄷㅅ⑴⑴⑴yyㄵㅄㄿ⑴ㄵㄺㅄyyㄿㄵㄺ⑴ㄵㅄㄺyyㄿㄵㄿ⑴ㄺㅄㄺyyyyyyyyyy",
+      "spider": false,
+      "level": 7,
+      "targets": [
+        {
+          "count": 2,
+          "type": 11
+        }
+      ],
+      "starscores": "010010000200150003002500",
+      "GravityType": 1,
+      "size": 9,
+      "starts": "100101110201120301130401140501150601160701",
+      "goals": "000107010207020307030407040507050607060707",
+      "levelclass": 0
+    }
+  ]
+}

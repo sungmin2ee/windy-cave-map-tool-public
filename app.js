@@ -1,4 +1,7 @@
-import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=10";
+import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=16";
+import { createLiveGame } from "./live-game.js?v=4";
+
+const gameEngine = createGameEngine(() => project);
 
 const {
   SPAWNER_ID,
@@ -12,6 +15,7 @@ const {
   isDdungSource,
   ddungObjectiveType,
   ddungUsesBoardCount,
+  isDdungBoardObjective,
   ddungGoalLimitation,
   matchesObjectiveAsset,
   countObjectiveAssets,
@@ -34,7 +38,8 @@ const {
   isBarrier,
   isDdungTreasure,
   ddungMarkersAt,
-  heatherGroup,
+  terrainGroup,
+  matchesObjectiveOnLayer,
   ddungJellyCells,
   terrainDurabilityAt,
   hasPossibleSwap,
@@ -64,14 +69,14 @@ const {
   SPECIAL_MATCH_SHAPES,
   PROJECT_COMBO_EFFECTS,
   allowsSquareMatches,
-} = createGameEngine(() => project);
+} = gameEngine;
 
 const COLORS = {
   red: "#ef4f5f", yellow: "#f7c73b", blue: "#35a9ff",
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.49";
+const CLIENT_VERSION = "2.7.56";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -139,7 +144,7 @@ const ASSETS = {
   ],
 };
 
-const FLOW_RULES = ["left-first", "right-first", "alternate", "seeded-random", "none"];
+const FLOW_RULES = ["royal", "none"];
 const MAX_OBJECTIVES = 4;
 const OBJECTIVE_ACTIONS = {
   block: { action: "match", label: "매치해서 제거" },
@@ -233,7 +238,7 @@ function packProjectForStorage(value) {
       if (compact.testClearMoves === 0) delete compact.testClearMoves;
       if (compact.simulationRuns === 30) delete compact.simulationRuns;
       if (compact.randomDensity === 100) delete compact.randomDensity;
-      if (compact.flowRule === "left-first") delete compact.flowRule;
+      if (compact.flowRule === "royal") delete compact.flowRule;
       if (!compact.failureBonus) delete compact.failureBonus;
       return compact;
     }),
@@ -254,7 +259,7 @@ function createCave(number, name = `Cave ${String(number).padStart(4, "0")}`) {
     moveLimit: 20, moveLimitEnabled: true, parMoves: 14, testClearMoves: 0,
     simulationRuns: 30,
     randomSeed: `CAVE-${String(number).padStart(4, "0")}`, randomDensity: 100,
-    flowRule: "left-first", terrainRules: deepCopy(DEFAULT_TERRAIN_RULES),
+    flowRule: "royal", terrainRules: deepCopy(DEFAULT_TERRAIN_RULES),
     specialMatches: true, failureBonus: true, note: "",
   };
 }
@@ -425,6 +430,7 @@ function normalizeProject(data) {
     ? normalizeGimmickRules(source.gimmickRules)
     : legacySharedRules(caves, "gimmickRules");
   const normalized = { ...metadata, specialPieceRules: normalizeSpecialPieceRules(source.specialPieceRules), version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets, terrainRules, gimmickRules };
+  normalized.swapDuringEffects = source.swapDuringEffects === true;
   bindProjectObjectRules(normalized);
   return normalized;
 }
@@ -588,9 +594,11 @@ function normalizeCave(data, index = 0, ddungProject = false, packedCatalog = {}
   const oldWaterRule = migrateWaterReaction && (!savedWater || (savedWater.reaction === "adjacent" && savedWater.durability === 1 && savedWater.blocksFlow === false));
   let goalChanged = migratedPanel || (oldWaterRule && layers.terrain.includes("ddung-water"));
   if (migrateDdungGoals) {
-    for (const objective of objectives) {
+    for (const [index, objective] of objectives.entries()) {
       const type = ddungObjectiveType(objective);
       goalChanged ||= Boolean(ddungGoalLimitation({ externalSource }, objective));
+      const savedObjective = source.objectives?.[index];
+      if (savedObjective?.countMode != null || savedObjective?.count_mode != null) continue;
       if (!ddungUsesBoardCount(type) || (type === 14 && externalSource.waterGoalNormalized)) continue;
       const previousCount = resolvedObjectiveCount({ layers }, objective);
       objective.countMode = "auto-map";
@@ -631,7 +639,7 @@ function normalizeCave(data, index = 0, ddungProject = false, packedCatalog = {}
     simulationRuns: [10, 30, 100].includes(Number(source.simulationRuns)) ? Number(source.simulationRuns) : 30,
     randomSeed: String(source.randomSeed || `CAVE-${String(index + 1).padStart(4, "0")}`),
     randomDensity: clampNumber(source.randomDensity, 100, 10, 100),
-    flowRule: FLOW_RULES.includes(source.flowRule) ? source.flowRule : "left-first",
+    flowRule: FLOW_RULES.includes(source.flowRule) ? source.flowRule : "royal",
     terrainRules,
     failureBonus: Boolean(source.failureBonus),
     note: String(source.note || ""),
@@ -791,6 +799,7 @@ function showObjectImage(element, source) {
   image.onload = () => element.classList.add("has-object-image");
   image.onerror = () => image.remove();
   image.src = source;
+  if (image.complete && image.naturalWidth) element.classList.add("has-object-image");
   element.append(image);
   return image;
 }
@@ -1762,6 +1771,10 @@ function showDdungSpecialImage(element, piece, color, fallbackImage, badge) {
   frame.append(image);
   element.append(frame);
   image.src = "./art/ddung/special-pieces.webp";
+  if (image.complete && image.naturalWidth) {
+    element.classList.add("has-object-image");
+    badge.hidden = true;
+  }
   return true;
 }
 
@@ -2785,8 +2798,10 @@ function validateCave(cave, palette = project.paletteAssets, scoreTarget = cave.
     if (!palette[objective.layer]?.includes(objective.targetId)) errors.push(`${label} 대상이 현재 팔레트에 없습니다.`);
     const limitation = ddungGoalLimitation(cave, objective);
     if (limitation) unsupported.push(`${label} · ${limitation}`);
-    if (target < 1 && !limitation) errors.push(`${label} 목표 수량은 1 이상이어야 합니다.`);
-    if (!limitation && objective.countMode === "auto-map" && placed < 1) errors.push(`${label} 자동 수량 목표지만 맵에 배치된 대상이 없습니다.`);
+    if (!limitation && !isDdungBoardObjective(cave, objective)) {
+      if (target < 1) errors.push(`${label} 목표 수량은 1 이상이어야 합니다.`);
+      if (objective.countMode === "auto-map" && placed < 1) errors.push(`${label} 자동 수량 목표지만 맵에 배치된 대상이 없습니다.`);
+    }
     if (!limitation && objective.layer === "block" && !cave.usableBlocks.includes(objective.targetId) && (!isDdungSource(cave.externalSource) || placed < target)) errors.push(`${label} 색상이 사용 가능 블록에서 제외되어 있습니다.`);
     if (objective.layer === "terrain" && !Object.hasOwn(DDUNG_JAM_COLORS, objective.targetId) &&
         cave.terrainRules?.[objective.targetId]?.reaction === "none") errors.push(`${label} 목표는 제거 불가 규칙입니다. Terrain 반응을 같은 칸 또는 인접 매치로 바꾸세요.`);
@@ -2822,26 +2837,36 @@ function issueHtml(validation) {
   return errorHtml + warningHtml + unsupportedHtml;
 }
 
-function renderSimulationGrid(cave, interactive = false, remainingTargets = [], damage = playtestState?.cave === cave ? playtestState : null) {
+function renderSimulationGrid(cave, interactive = false, remainingTargets = [], damage = playtestState?.cave === cave ? playtestState : null, available = null) {
   const grid = $("simulationGrid");
+  const live = damage?.liveSession;
   grid.style.setProperty("--board-columns", cave.width);
   grid.style.setProperty("--board-rows", cave.height);
   grid.style.gridTemplateColumns = `repeat(${cave.width}, var(--cell-size))`;
-  grid.innerHTML = "";
+  const cells = document.createDocumentFragment();
   for (let index = 0; index < cave.width * cave.height; index += 1) {
     const cell = document.createElement(interactive ? "button" : "div");
-    const readyBomb = interactive && bombPanelReady(playtestState, index);
-    const canActivate = readyBomb || (interactive && !isBarrier(cave, index) && specialEffect(cave, cave.playtestPieces[index]));
-    const canSwap = interactive && playtestState.paused && cave.layers.block[index] && !isSwapBlocked(cave, index);
+    const readyBomb = interactive && !available && bombPanelReady(playtestState, index) && (!live || live.canSwap(index, true));
+    const canActivate = readyBomb || (interactive &&
+      (!available || available.has(index)) &&
+      (!live || live.canTap(index)) && playtestSpecialAt(cave, index));
+    const canSwap = interactive && (!available || available.has(index)) &&
+      playtestState.paused && (live ? live.canSwap(index, true) : cave.layers.block[index] && !isSwapBlocked(cave, index));
     const selected = canSwap && playtestState.selectedIndex === index;
     cell.className = `map-cell${canActivate || canSwap ? " playable" : ""}${selected ? " selected" : ""}`;
     cell.type = interactive ? "button" : undefined;
     applyCellVisual(cell, cave, index, damage);
+    if (live) {
+      const motion = live.motions.get(cave.livePieceIds[index]);
+      if (motion) cell.classList.add("live-piece-moving");
+      cell.dataset.pieceId = cave.livePieceIds[index] ?? "";
+      cell.dataset.pieceState = motion ? "falling" : live.blockedCells().has(index) ? "resolving" : "steady";
+    }
     if (isDdungSource(cave.externalSource) && cave.layers.terrain[index] === "pit") cell.classList.add("ddung-board-gap");
     if (interactive && [playtestState.hint?.first, playtestState.hint?.second].includes(index)) cell.classList.add("hinted");
-    const targets = remainingTargets.filter(({ objective }) =>
-      matchesObjectiveAsset(objective, cave.layers[objective.layer][index]) &&
-      (objective.layer !== "gimmick" || !playtestState.activatedGimmicks.has(index)));
+    const targets = remainingTargets.filter(({ objective }) => Object.entries(cave.layers).some(([layer, values]) =>
+      matchesObjectiveOnLayer(cave, objective, layer, values[index]) &&
+      (layer !== "gimmick" || !playtestState.activatedGimmicks.has(index))));
     if (targets.length) {
       cell.classList.add("remaining-target");
       cell.title = targets.map(({ objective }) => objectiveLabel(objective)).join(", ");
@@ -2863,7 +2888,7 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
       const boxDurability = ddungBoxDurability(cave, index) ||
         ddungGimmickDurability(cave, index) ||
         cave.gimmickRules?.[cave.layers.gimmick[index]]?.durability;
-      const hpIndex = terrainId === "ddung-heather-large" ? heatherGroup(cave, index)[0] : index;
+      const hpIndex = terrainGroup(cave, index)[0];
       const durability = boxDurability || (rule && (rule.reaction !== "none" || Object.hasOwn(DDUNG_JAM_COLORS, terrainId)) ? terrainDurabilityAt(cave, hpIndex, rule) : 0);
       if (durability) {
         const hits = boxDurability ? damage.gimmickHits[ddungGimmickGroup(cave, index)[0]] : damage.terrainHits[hpIndex];
@@ -2887,7 +2912,7 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
     if (interactive) {
       cell.disabled ||= !(canActivate || canSwap);
       const piece = cave.playtestPieces[index];
-      if (piece && !canActivate && !isBarrier(cave, index)) {
+      if (piece && !specialEffect(cave, piece) && !isBarrier(cave, index)) {
         cell.title = [cell.title, "발동 효과가 연결되지 않은 특수 피스"].filter(Boolean).join(" · ");
       }
       if (canActivate) {
@@ -2896,9 +2921,35 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
         cell.setAttribute("aria-label", cellDescription(cave, index));
         cell.setAttribute("aria-pressed", String(selected));
       }
-      if (!cell.disabled) bindPlaytestCellInput(cell, index, canSwap);
+      if (live && !cell.hasAttribute("aria-label")) cell.setAttribute("aria-label", cellDescription(cave, index));
+      if (!live && !cell.disabled) bindPlaytestCellInput(cell, index, canSwap);
     }
-    grid.appendChild(cell);
+    // Image load handlers mutate classes/badges after rendering. Compare the
+    // requested visual, not that asynchronously mutated DOM, so unchanged
+    // blocks retain their decoded images across every live-board update.
+    cell.simulationVisualMarkup = cell.innerHTML;
+    cells.appendChild(cell);
+  }
+  if (live && grid.dataset.liveBoard === String(liveBoardSerial)) {
+    const existing = [...grid.querySelectorAll(":scope > .map-cell:not(.live-piece-actor)")];
+    [...cells.children].forEach((fresh, index) => {
+      const cell = existing[index];
+      if (!cell) return;
+      for (const attribute of [...cell.attributes]) if (!fresh.hasAttribute(attribute.name)) cell.removeAttribute(attribute.name);
+      for (const attribute of fresh.attributes) cell.setAttribute(attribute.name, attribute.value);
+      if (cell.simulationVisualMarkup !== fresh.simulationVisualMarkup) {
+        cell.replaceChildren(...fresh.childNodes);
+        cell.simulationVisualMarkup = fresh.simulationVisualMarkup;
+      }
+      cell.disabled = interactive ? fresh.disabled : true;
+    });
+  } else if (live) {
+    grid.replaceChildren(cells);
+    grid.dataset.liveBoard = String(liveBoardSerial);
+    if (interactive) [...grid.children].forEach((cell, index) => bindPlaytestCellInput(cell, index, true));
+  } else {
+    delete grid.dataset.liveBoard;
+    grid.replaceChildren(cells);
   }
 }
 
@@ -2998,7 +3049,7 @@ function objectiveProgressHtml(state) {
     const image = editorGoalArt(objective);
     const label = (image ? `<img class="editor-goal-art" alt="" src="${escapeHtml(image)}">` : "") + escapeHtml(objectiveLabel(objective));
     if (state.goalLimitations[index]) return `<div class="objective-progress-row"><span>${label}</span><span></span><b>판정 미지원</b></div>`;
-    const percent = Math.min(100, Math.round(progress.current / Math.max(1, progress.target) * 100));
+    const percent = progress.target === 0 ? 100 : Math.min(100, Math.round(progress.current / progress.target * 100));
     return `<div class="objective-progress-row"><span>${label}</span><i style="--progress:${percent}%"></i><b>${Math.min(progress.current, progress.target)} / ${progress.target}</b></div>`;
   }).join("")}</div>`;
 }
@@ -3244,11 +3295,14 @@ function animateBeeFlights(grid, cave, flights, duration) {
       showObjectImage(sprite, source).addEventListener("error", showDefault, { once: true });
     } else showDefault();
     grid.append(sprite);
-    sprite.animate([
+    const animation = sprite.animate([
       { transform: "translate(0, 0) scale(0.8)", opacity: 1 },
       { transform: `translate(${x * 0.5}px, ${y * 0.5 - lift}px) scale(1.14)`, offset: 0.5 },
       { transform: `translate(${x}px, ${y}px) scale(0.8)`, opacity: 1 },
     ], { delay: order * stagger, duration: duration - order * stagger, fill: "forwards", easing: "ease-in-out" });
+    // Live rendering retains the board nodes between waves. The flight owns its
+    // lifetime; waiting for the next board replacement leaves a bee on its target.
+    animation.finished.then(() => sprite.remove(), () => sprite.remove());
   }
 }
 
@@ -3269,12 +3323,13 @@ function animateDdungTurnActor(grid, { type, index }, duration) {
     sprite.style.left = `${board.width - width}px`;
     sprite.style.top = `${y - target.height * 0.45}px`;
     grid.appendChild(sprite);
-    sprite.animate([
+    const animation = sprite.animate([
       { transform: "translateX(0)", opacity: 0, offset: 0 },
       { opacity: 1, offset: 0.12 },
       { opacity: 1, offset: 0.84 },
       { transform: `translateX(${width - board.width}px)`, opacity: 0, offset: 1 },
     ], options);
+    animation.finished.then(() => sprite.remove(), () => sprite.remove());
     return;
   }
 
@@ -3288,56 +3343,63 @@ function animateDdungTurnActor(grid, { type, index }, duration) {
   sprite.style.top = `${y - target.height * 0.48}px`;
   grid.append(thread, sprite);
   const raised = `translateY(-${lift}px)`;
-  sprite.animate([
+  const animation = sprite.animate([
     { transform: raised, opacity: 0, offset: 0 },
     { transform: "translateY(0)", opacity: 1, offset: 0.48 },
     { transform: "translateY(0)", opacity: 1, offset: 0.62 },
     { transform: raised, opacity: 0, offset: 1 },
   ], options);
+  const removeActor = () => { sprite.remove(); thread.remove(); };
+  animation.finished.then(removeActor, removeActor);
   thread.animate([
     { transform: "scaleY(0)", offset: 0 },
     { transform: "scaleY(1)", offset: 0.48 },
     { transform: "scaleY(1)", offset: 0.62 },
     { transform: "scaleY(0)", offset: 1 },
   ], options);
-  cell.querySelector(".cell-block")?.animate([
+  const blockAnimation = cell.querySelector(".cell-block")?.animate([
     { transform: "translateY(0)", opacity: 1, offset: 0 },
     { transform: "translateY(0)", opacity: 1, offset: 0.62 },
     { transform: raised, opacity: 0, offset: 1 },
   ], options);
+  // The web-animation fill must not hide a replacement block after the spider leaves.
+  blockAnimation?.finished.then(() => blockAnimation.cancel(), () => {});
 }
 
 function playtestIsVisible() {
   return document.body.dataset.puzzlePlayer !== undefined || $("simulationDialog").open;
 }
 
-async function showPlaytestFrames(state, frames) {
+function animateFrameMotions(grid, cave, motions, duration, revealDelay = 0) {
+  const gravityOffset = { down: [0, -18], up: [0, 18], left: [18, 0], right: [-18, 0] };
+  const directions = motions.some(({ spawned }) => spawned) ? ddungCellGravities(cave) : null;
+  for (const { from, to, spawned } of motions) {
+    const cell = grid.children[to];
+    if (!cell || !grid.children[from]) continue;
+    const start = grid.children[from].getBoundingClientRect();
+    const end = cell.getBoundingClientRect();
+    const [spawnX, spawnY] = spawned ? gravityOffset[directions?.[from] || cave.gravity] : [0, 0];
+    cell.querySelectorAll(".cell-block, .initial-piece-badge").forEach((visual) => visual.animate([
+      { transform: `translate(${start.left - end.left + spawnX}px, ${start.top - end.top + spawnY}px)`, opacity: spawned || revealDelay ? 0 : 1 },
+      { transform: "translate(0, 0)", opacity: 1 },
+    ], { duration, delay: revealDelay, fill: "backwards", easing: "ease-out" }));
+  }
+}
+
+function playtestFrameDuration(kind, delay, speed) {
+  return (kind === "fall" || kind === "refill" ? delay * (4 / 3) : delay) / speed;
+}
+
+async function showPlaytestFrames(state, turn, frames) {
   for (const frame of frames) {
-    if (playtestState !== state || !playtestIsVisible()) return;
+    if (state.animationTurn !== turn || playtestState !== state || !playtestIsVisible()) return;
     renderSimulationGrid(frame.cave, false, [], frame);
     const grid = $("simulationGrid");
     $("playtestFrameStatus").textContent = frame.label;
-    const delay = frame.delay / (Number($("playtestSpeed").value) || 1);
-    for (const index of frame.cells) {
-      const cell = grid.children[index];
-      cell?.classList.add("playtest-frame-" + frame.kind);
-      if (frame.kind === "match") cell?.querySelector(".cell-block")?.animate(
-        [{ opacity: 1 }, { opacity: 0.35 }, { opacity: 1 }], { duration: delay });
-    }
-    const gravityOffset = { down: [0, -18], up: [0, 18], left: [18, 0], right: [-18, 0] };
-    for (const { from, to, spawned } of frame.motions) {
-      const cell = grid.children[to];
-      if (!cell) continue;
-      const visuals = cell.querySelectorAll(".cell-block, .initial-piece-badge");
-      const start = grid.children[from].getBoundingClientRect();
-      const end = cell.getBoundingClientRect();
-      const [spawnX, spawnY] = spawned
-        ? gravityOffset[ddungCellGravities(frame.cave)?.[from] || frame.cave.gravity] : [0, 0];
-      visuals.forEach((visual) => visual.animate([
-        { transform: `translate(${start.left - end.left + spawnX}px, ${start.top - end.top + spawnY}px)`, opacity: spawned ? 0 : 1 },
-        { transform: "translate(0, 0)", opacity: 1 },
-      ], { duration: delay, easing: "ease-out" }));
-    }
+    const speed = Number($("playtestSpeed").value) || 1;
+    const delay = playtestFrameDuration(frame.kind, frame.delay, speed);
+    for (const index of frame.cells) grid.children[index]?.classList.add("playtest-frame-" + frame.kind);
+    animateFrameMotions(grid, frame.cave, frame.motions, delay);
     if (frame.turnActor?.type === "bee") animateBeeFlights(grid, frame.cave, frame.turnActor.flights, delay);
     else if (frame.turnActor) animateDdungTurnActor(grid, frame.turnActor, delay);
     if (frame.burst?.length) puzzleBurst?.(grid, frame.burst.map(({ index, block }) => ({ index, color: blockColor(block) })));
@@ -3345,30 +3407,197 @@ async function showPlaytestFrames(state, frames) {
   }
 }
 
+let liveBoardSerial = 0;
+
+function livePieceSprite(cave, index) {
+  const sprite = document.createElement("span");
+  sprite.className = "map-cell live-piece-actor";
+  applyCellVisual(sprite, cave, index);
+  sprite.replaceChildren(...sprite.querySelectorAll(".cell-block, .initial-piece-badge"));
+  return sprite;
+}
+
+function positionLiveSprite(sprite, cell, left = cell.offsetLeft, top = cell.offsetTop) {
+  Object.assign(sprite.style, { left: `${left}px`, top: `${top}px`,
+    width: `${cell.offsetWidth}px`, height: `${cell.offsetHeight}px` });
+}
+
+function drawLiveMotions(state) {
+  const grid = $("simulationGrid");
+  const live = state.liveSession;
+  const cells = [...grid.querySelectorAll(":scope > .map-cell:not(.live-piece-actor)")];
+  const existing = new Map([...grid.querySelectorAll("[data-live-piece]")].map((sprite) => [Number(sprite.dataset.livePiece), sprite]));
+  for (const [id, motion] of live.motions) {
+    const to = cells[motion.to];
+    const from = cells[motion.from];
+    if (!to || !from) continue;
+    let sprite = existing.get(id);
+    if (!sprite) {
+      sprite = livePieceSprite(state.cave, motion.to);
+      sprite.dataset.livePiece = id;
+      sprite.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const current = live.motions.get(id);
+        if (current && live.canTap(current.to)) playtestCell(current.to);
+      });
+      grid.append(sprite);
+    }
+    existing.delete(id);
+    sprite.dataset.liveMotion = motion.warp ? "portal" : motion.kind || (motion.spawned ? "spawn" : "straight");
+    sprite.dataset.fromCell = motion.from;
+    sprite.dataset.toCell = motion.to;
+    sprite.dataset.targetCell = motion.target ?? motion.to;
+    const gravity = ddungCellGravities(state.cave)?.[motion.to] || state.cave.gravity;
+    const offset = { down: [0, -1], up: [0, 1], left: [1, 0], right: [-1, 0] }[gravity];
+    const left = from.offsetLeft + (motion.spawned ? offset[0] * from.offsetWidth : 0);
+    const top = from.offsetTop + (motion.spawned ? offset[1] * from.offsetHeight : 0);
+    positionLiveSprite(sprite, to, left + (to.offsetLeft - left) * motion.progress,
+      top + (to.offsetTop - top) * motion.progress);
+    sprite.classList.toggle("live-special-actor", live.canTap(motion.to));
+    sprite.style.opacity = motion.warp ? String(Math.abs(motion.progress - 0.5) * 2) : "1";
+  }
+  for (const sprite of existing.values()) sprite.remove();
+  syncLiveSwapVisibility(grid);
+}
+
+function syncLiveSwapVisibility(grid) {
+  const covered = new Set([...grid.querySelectorAll(":scope > .live-swap-actor")]
+    .map((sprite) => Number(sprite.dataset.swapCell)));
+  [...grid.querySelectorAll(":scope > .map-cell:not(.live-piece-actor)")]
+    .forEach((cell, index) => cell.classList.toggle("live-swap-covered", covered.has(index)));
+}
+
+function showLiveEffects(state, frames) {
+  const grid = $("simulationGrid");
+  const speed = Number($("playtestSpeed").value) || 1;
+  for (const frame of frames) {
+    if (frame.turnActor?.type === "bee") {
+      setTimeout(() => {
+        if (playtestState === state && playtestIsVisible()) animateBeeFlights(grid, frame.cave, frame.turnActor.flights, frame.delay / speed);
+      }, frame.at / speed);
+    } else if (frame.turnActor) {
+      setTimeout(() => {
+        if (playtestState === state && playtestIsVisible()) animateDdungTurnActor(grid, frame.turnActor, frame.delay / speed);
+      }, frame.at / speed);
+    }
+    if (frame.burst?.length) {
+      for (const { index } of frame.burst) {
+        const cell = grid.children[index];
+        if (!cell) continue;
+        const sprite = livePieceSprite(frame.cave, index);
+        sprite.classList.add("live-burst-actor");
+        if (frame.at) {
+          sprite.style.visibility = "hidden";
+          setTimeout(() => { sprite.style.visibility = "visible"; }, frame.at / speed);
+        }
+        positionLiveSprite(sprite, cell);
+        grid.append(sprite);
+        const animation = sprite.animate([
+          { opacity: 1, transform: "scale(1)" }, { opacity: 0, transform: "scale(0.55)" },
+        ], { duration: frame.delay / speed, delay: frame.at / speed, fill: "both", easing: "ease-in" });
+        animation.finished.then(() => sprite.remove(), () => sprite.remove());
+      }
+      setTimeout(() => {
+        if (playtestState === state && playtestIsVisible()) puzzleBurst?.(grid,
+          frame.burst.map(({ index, block }) => ({ index, color: blockColor(block) })));
+      }, frame.at / speed);
+    }
+    if (frame.kind === "swap" && frame.motions.length) {
+      for (const { from, to } of frame.motions) {
+        if (!frame.cave.layers.block[to]) continue;
+        const source = grid.children[from];
+        const target = grid.children[to];
+        if (!source || !target) continue;
+        const sprite = livePieceSprite(frame.cave, to);
+        sprite.classList.add("live-swap-actor");
+        sprite.dataset.swapCell = to;
+        // A delayed return must not paint its first frame over the outgoing
+        // swap. Only the actor for the currently running leg is visible.
+        sprite.style.visibility = "hidden";
+        positionLiveSprite(sprite, target);
+        grid.append(sprite);
+        const animation = sprite.animate([
+          { visibility: "visible", transform: `translate(${source.offsetLeft - target.offsetLeft}px, ${source.offsetTop - target.offsetTop}px)` },
+          { visibility: "visible", transform: "translate(0, 0)" },
+        ], { duration: frame.delay / speed, delay: frame.at / speed, fill: "none", easing: "ease-in-out" });
+        const cleanup = () => { sprite.remove(); syncLiveSwapVisibility(grid); };
+        animation.finished.then(cleanup, cleanup);
+      }
+    }
+  }
+  syncLiveSwapVisibility(grid);
+}
+
+function startLivePlaytest(state, action) {
+  if (!state.liveSession) {
+    liveBoardSerial++;
+    state.liveSession = createLiveGame(state, gameEngine, {
+      effects: (frames) => showLiveEffects(state, frames),
+      changed: () => {
+        if (playtestState !== state || !playtestIsVisible()) return;
+        renderPlaytest();
+        drawLiveMotions(state);
+      },
+    });
+    renderPlaytest();
+  }
+  if (!state.liveSession.submit(action)) return;
+  if (state.liveAnimationFrame) return;
+  let previous = performance.now();
+  const tick = (now) => {
+    if (playtestState !== state || !playtestIsVisible()) {
+      state.liveSession.stop();
+      state.liveAnimationFrame = null;
+      return;
+    }
+    const seconds = Math.min((now - previous) / 1000, 0.05);
+    previous = now;
+    if (!document.hidden) state.liveSession.tick(seconds * (Number($("playtestSpeed").value) || 1));
+    drawLiveMotions(state);
+    state.liveAnimationFrame = state.liveSession.active ? requestAnimationFrame(tick) : null;
+  };
+  state.liveAnimationFrame = requestAnimationFrame(tick);
+}
+
 async function animatePlaytestTurn(state, action) {
+  if ((project.swapDuringEffects || state.liveSession) && !state.replay) {
+    startLivePlaytest(state, action);
+    return;
+  }
+  const turn = Symbol();
+  state.animationTurn = turn;
+  state.animating = true;
   const frames = [];
   const capture = (label, cells, kind, delay = 360, motions = [], turnActor = null, burst = null, cleared = []) => {
     const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
     const playtestPieces = [...state.cave.playtestPieces];
-    for (const index of cleared) {
-      layers.block[index] = null;
-      playtestPieces[index] = null;
-    }
-    frames.push({
-      cave: { ...state.cave, layers, playtestPieces },
-      terrainHits: [...state.terrainHits], gimmickHits: [...state.gimmickHits],
-      label, cells, kind, delay, motions, turnActor, burst,
-    });
+    for (const index of cleared) { layers.block[index] = null; playtestPieces[index] = null; }
+    frames.push({ cave: { ...state.cave, layers, playtestPieces },
+      terrainHits: [...state.terrainHits], gimmickHits: [...state.gimmickHits], label, cells, kind, delay, motions, turnActor, burst });
   };
-  state.animating = true;
   try {
     playSimulationTurn(state, action, capture);
-    await showPlaytestFrames(state, frames);
+    refreshPlaytestMoves(state);
+    await showPlaytestFrames(state, turn, frames);
   } finally {
-    state.animating = false;
-    if (playtestState === state && playtestIsVisible()) renderPlaytest();
+    if (state.animationTurn === turn) {
+      state.animating = false;
+      if (playtestState === state && playtestIsVisible()) renderPlaytest();
+    }
   }
 }
+
+function refreshPlaytestMoves(state) {
+  const moves = $("movesLeft") || $("playtestMovesRemaining");
+  if (moves) {
+    moves.textContent = state.movesLeft === null ? "무제한"
+      : moves.id === "movesLeft" ? state.movesLeft : `${state.movesLeft} / ${state.cave.moveLimit}`;
+  }
+  const used = $("playtestMovesUsed");
+  if (used) used.textContent = state.movesUsed;
+}
+
+
 
 async function runAnimatedPlaytest(state) {
   if (state.running) return;
@@ -3412,6 +3641,7 @@ function bindPlaytestCellInput(cell, index, canSwap) {
   let pointer = null;
   let dragged = false;
   let handledTouch = false;
+  let pointerPieceId;
   const dragThreshold = 10;
   if (canSwap) cell.classList.add("playtest-draggable");
   cell.addEventListener("pointerdown", (event) => {
@@ -3420,6 +3650,11 @@ function bindPlaytestCellInput(cell, index, canSwap) {
     dragged = false;
     if (!canSwap && event.pointerType !== "touch") return;
     pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    const state = playtestState;
+    if (state?.liveSession) {
+      if (!state.liveSession.canSwap(index) && !state.liveSession.canTap(index)) { pointer = null; return; }
+      pointerPieceId = state.cave.livePieceIds[index];
+    }
     cell.setPointerCapture(event.pointerId);
   });
   cell.addEventListener("pointermove", (event) => {
@@ -3434,46 +3669,77 @@ function bindPlaytestCellInput(cell, index, canSwap) {
     const distance = Math.max(Math.abs(dx), Math.abs(dy));
     dragged ||= distance >= dragThreshold;
     handledTouch = event.pointerType === "touch";
+    if (playtestState?.liveSession && playtestState.cave.livePieceIds[index] !== pointerPieceId) return;
     if (!dragged) {
       if (handledTouch) playtestCell(index);
       return;
     }
     if (!canSwap || distance < dragThreshold) return;
     const state = playtestState;
-    if (!state?.paused || state.status !== "playing" || state.animating) return;
+    if (!state?.paused || state.status !== "playing" || (state.animating && !state.liveSession)) return;
+    if (state.liveSession && state.cave.livePieceIds[index] !== pointerPieceId) return;
     const { width, height } = state.cave;
     const horizontal = Math.abs(dx) >= Math.abs(dy);
     const x = index % width + (horizontal ? Math.sign(dx) : 0);
     const y = Math.floor(index / width) + (horizontal ? 0 : Math.sign(dy));
     if (x >= 0 && x < width && y >= 0 && y < height) playtestSwap(state, index, y * width + x);
   });
-  cell.addEventListener("lostpointercapture", () => { pointer = null; });
+  const cancelPointer = () => { pointer = null; };
+  cell.addEventListener("pointercancel", cancelPointer);
+  cell.addEventListener("lostpointercapture", cancelPointer);
   cell.addEventListener("click", (event) => {
     if (event.pointerType === "touch" || ((handledTouch || dragged) && event.detail !== 0)) return;
+    if (event.detail !== 0 && playtestState?.liveSession && pointerPieceId !== undefined &&
+        playtestState.cave.livePieceIds[index] !== pointerPieceId) return;
     playtestCell(index);
   });
 }
 
 function playtestSwap(state, first, second) {
-  const { cave } = state;
-  if (!neighborsOf(cave, first).includes(second) ||
-      [first, second].some((index) => !cave.layers.block[index] || isSwapBlocked(cave, index))) return;
+  if (state.liveSession) { startLivePlaytest(state, { first, second }); return; }
+  if (state.animating) return;
+  const action = getPlaytestSwapAction(state.cave, first, second);
+  if (!action) return;
   state.selectedIndex = null;
   state.hint = null;
   state.comboMode = false;
-  if (canCombineSpecials(cave, first, second)) {
-    animatePlaytestTurn(state, { first, second, combo: true });
-    return;
-  }
+  animatePlaytestTurn(state, action);
+}
+
+function getPlaytestSwapAction(cave, first, second) {
+  if (!neighborsOf(cave, first).includes(second) ||
+      [first, second].some((index) => !cave.layers.block[index] || isSwapBlocked(cave, index))) return;
+  if (canCombineSpecials(cave, first, second)) return { first, second, combo: true };
   swapPlaytestBlocks(cave, first, second);
   const matches = findMatches(cave);
   swapPlaytestBlocks(cave, first, second);
-  animatePlaytestTurn(state, { first, second, invalid: !matches.has(first) && !matches.has(second) });
+  return { first, second, invalid: !matches.has(first) && !matches.has(second) };
+}
+
+function playtestSpecialAt(cave, index) {
+  return cave.layers.block[index] && !isBarrier(cave, index) && specialEffect(cave, cave.playtestPieces[index]);
 }
 
 function playtestCell(index) {
   const state = playtestState;
-  if (!state || state.status !== "playing" || state.animating) return;
+  if (!state || state.status !== "playing") return;
+  if (state.liveSession) {
+    const live = state.liveSession;
+    if (bombPanelReady(state, index) && live.canSwap(index, true)) startLivePlaytest(state, { first: index, bombPanel: true });
+    else if (live.canTap(index) && !state.comboMode) startLivePlaytest(state, { first: index });
+    else {
+      const first = state.selectedIndex;
+      if (first !== null && neighborsOf(state.cave, first).includes(index) && live.canSwap(index, true)) {
+        playtestSwap(state, first, index);
+      } else if (live.canSwap(index)) {
+        state.selectedIndex = first === index ? null : index;
+        renderPlaytest();
+        drawLiveMotions(state);
+      }
+    }
+    return;
+  }
+  if (state.animating) return;
   const cave = state.cave;
   if (bombPanelReady(state, index)) {
     state.selectedIndex = null;
@@ -3509,7 +3775,7 @@ function playtestCell(index) {
     return;
   }
 
-  if (specialEffect(cave, cave.playtestPieces[index])) {
+  if (playtestSpecialAt(cave, index)) {
     state.selectedIndex = null;
     const action = { first: index };
     animatePlaytestTurn(state, action);
@@ -3547,12 +3813,12 @@ function renderPlaytest() {
   const remainingTargets = failed && state.scoreTarget === null ? playtestRemainingTargets(state) : [];
   const movesRemaining = state.movesLeft === null ? "무제한" : `${state.movesLeft} / ${state.cave.moveLimit}`;
   const practice = state.scoreTarget === null && state.goalLimitations.some(Boolean);
-  const flowLabels = { "left-first": "왼쪽/위 우선", "right-first": "오른쪽/아래 우선", alternate: "교대", "seeded-random": "시드 랜덤", none: "우회 없음" };
+  const flowLabels = { royal: "원작 방식 · 직선 우선/후보 탐색", none: "우회 없음" };
   const result = $("simulationResult");
   result.className = `simulation-result ${state.status === "won" ? "success" : ["lost", "stuck"].includes(state.status) ? "error" : "warning"}`;
   result.innerHTML = `
     <strong>${practice ? "PLAYTEST 연습 · 클리어 판정 미지원" : state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 실패" : "PLAYTEST 진행 중"}</strong><br>
-    남은 이동 <b>${movesRemaining}</b> · 사용 ${state.movesUsed}회 · 셔플 ${state.shuffleCount}회<br>
+    남은 이동 <b id="playtestMovesRemaining">${movesRemaining}</b> · 사용 <span id="playtestMovesUsed">${state.movesUsed}</span>회 · 셔플 ${state.shuffleCount}회<br>
     ${objectiveProgressHtml(state)}
     Gravity ${state.cave.gravity} · 막힘 우회 ${flowLabels[state.cave.flowRule]}<br>
     ${failed ? `<strong>${state.status === "lost" && state.movesLeft === 0 ? "이동 횟수 소진" : escapeHtml(state.message)}</strong>` : escapeHtml(state.message)}
@@ -3704,7 +3970,11 @@ function buildDdungLevelExport(cave) {
 function exportGridTilesProfile() {
   const cave = activeCave();
   try {
-    if (cave.scoreTarget != null || cave.moveLimitEnabled === false ||
+    const goalIds = cave.objectives.map(({ targetId }) => targetId);
+    const needsWindyGoals = cave.objectives.some(({ countMode }) => countMode === "auto-map") ||
+      new Set(goalIds).size !== goalIds.length;
+    if (cave.scoreTarget != null || cave.moveLimitEnabled === false || project.swapDuringEffects ||
+        (cave.externalSource?.gridTilesTemplate && needsWindyGoals) ||
         Object.entries(project.terrainRules).some(([id, rule]) => isCustomTerrainRule(id, rule)) ||
         Object.keys(project.gimmickRules).length) {
       const payload = buildProjectExport({ ...project, caves: [cave], activeCaveId: cave.id });
@@ -3811,6 +4081,7 @@ function buildPatch(baseData) {
     assetDefinitions: project.assetDefinitions,
     terrainRules: project.terrainRules,
     gimmickRules: project.gimmickRules,
+    swapDuringEffects: project.swapDuringEffects,
     patch: {
       upsertCaves: currentCaves.filter((cave) => JSON.stringify(baseCaves.get(String(cave.id))) !== JSON.stringify(cave)),
       removeCaveIds: [...baseCaves.keys()].filter((id) => !currentIds.has(id)),
@@ -4022,7 +4293,8 @@ async function exportPatch(file) {
     }
     for (const id of payload.patch.removeCaveIds) append("삭제", baseCaves.get(id), "Cave 삭제");
     const assetsChanged = ["paletteAssets", "assetDefinitions"].some((key) => JSON.stringify(base[key]) !== JSON.stringify(payload[key]));
-    $("patchPreviewSummary").textContent = `${payload.baseContentVersion} → ${payload.contentVersion} · 추가 ${counts["추가"]} · 수정 ${counts["수정"]} · 삭제 ${counts["삭제"]}${assetsChanged ? " · 팔레트 변경" : ""}`;
+    const controlsChanged = base.swapDuringEffects !== payload.swapDuringEffects;
+    $("patchPreviewSummary").textContent = `${payload.baseContentVersion} → ${payload.contentVersion} · 추가 ${counts["추가"]} · 수정 ${counts["수정"]} · 삭제 ${counts["삭제"]}${assetsChanged ? " · 팔레트 변경" : ""}${controlsChanged ? " · 플레이 조작 변경" : ""}`;
     $("patchValidationStatus").textContent = "";
     $("patchPreviewValidate").disabled = !entries.length;
     $("patchPreviewValidate").onclick = () => validatePatchCaves(dialog, entries);
@@ -4097,6 +4369,7 @@ function applyPatchPayload(data) {
   if (data.assetDefinitions) next.assetDefinitions = data.assetDefinitions;
   if (data.terrainRules) next.terrainRules = data.terrainRules;
   if (data.gimmickRules) next.gimmickRules = data.gimmickRules;
+  if (typeof data.swapDuringEffects === "boolean") next.swapDuringEffects = data.swapDuringEffects;
   if (!next.caves.some((cave) => cave.id === next.activeCaveId)) next.activeCaveId = next.caves[0].id;
   return { project: normalizeProject(next), format: `패치 ${baseVersion} → ${next.version}`, unknownTokens: [] };
 }
@@ -4232,6 +4505,7 @@ const DDUNG_TARGETS = {
 function ddungObjective(raw, index, unknownTokens) {
   const rawType = Number(raw?.type);
   const type = Number.isInteger(rawType) && rawType > 0 ? rawType : 999;
+  const count = Number(raw?.count);
   const mapping = DDUNG_TARGETS[type];
   if (!mapping) {
     unknownTokens?.add(`ddung-target:${type}`);
@@ -4244,7 +4518,7 @@ function ddungObjective(raw, index, unknownTokens) {
     targetId,
     action: OBJECTIVE_ACTIONS[layer].action,
     countMode: ddungUsesBoardCount(type) ? "auto-map" : "manual",
-    count: raw?.count || 1,
+    count: count > 0 ? count : 1,
   });
 }
 
@@ -4384,7 +4658,7 @@ function adaptDdungMapInfo(source, index, format, unknownTokens, tileReporter) {
     simulationRuns: 10,
     randomSeed: `DDUNG-${source.level ?? index + 1}`,
     randomDensity: 100,
-    flowRule: "left-first",
+    flowRule: "royal",
     failureBonus: false,
     note: `${format} · 원본 레벨 ${source.level ?? index + 1} · 특수 타일과 목표를 웹 맵툴 자산으로 변환`,
     externalSource: {
@@ -4473,21 +4747,25 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers,
   });
   if (!tiles.length && !hasLayerTiles) throw new Error("타일 배열을 찾지 못했습니다.");
   tiles.slice(0, size).forEach((token, cellIndex) => applyCellToken(layers, cellIndex, token, tileReporter(cellIndex, width), declaredLayers));
-  const target = valueAt(source, ["target", "goal", "objective", "objectives.0"], null);
-  const rawUsable = valueAt(source, ["usableBlocks", "availableColors", "colors", "palette"], layers.block.filter(Boolean));
-  const usableBlocks = (Array.isArray(rawUsable) ? rawUsable : String(rawUsable).split(","))
-    .map((value) => normalizeAssetId("block", value, true)).filter(Boolean);
-  const targetType = normalizeColor(valueAt(source, ["targetType", "targetColor", "goalColor", "target.color", "goal.color", "objective.color", "objectives.0.color"], typeof target === "string" ? target : "purple")) || "purple";
+  const target = valueAt(source, ["target", "goal", "objective"], null);
+  const rawUsable = valueAt(source, ["usableBlocks", "availableColors", "colors", "palette"]);
+  const targetType = valueAt(source, ["targetType", "targetColor", "goalColor"], "purple");
   const targetCount = valueAt(source, ["targetCount", "goalCount", "collectCount", "target.count", "goal.count", "objective.count", "objectives.0.count"], 1);
-  const rawObjectives = valueAt(source, ["objectives", "targets", "goals"], []);
+  const rawObjectives = [source.objectives, source.targets, source.goals].find(Array.isArray);
   const collectObjectives = Object.entries(source.goals?.collect || {})
-    .filter(([color, count]) => Number(count) > 0 && usableBlocks.includes(normalizeAssetId("block", color, true)))
-    .slice(0, MAX_OBJECTIVES)
-    .map(([color, count]) => ({ layer: "block", targetId: normalizeAssetId("block", color, true), count }));
-  const objectives = Array.isArray(rawObjectives) && rawObjectives.length
+    .flatMap(([color, count]) => {
+      const targetId = normalizeAssetId("block", color, true);
+      return targetId && Number(count) > 0 ? [{ layer: "block", targetId, count: Number(count) }] : [];
+    }).slice(0, MAX_OBJECTIVES);
+  const objectives = rawObjectives
     ? rawObjectives.slice(0, MAX_OBJECTIVES).map((objective) => adaptExternalObjective(objective, targetType, targetCount))
-    : target != null || source.targetType || source.targetColor || source.goalColor
-      ? [adaptExternalObjective(target, targetType, targetCount)] : collectObjectives;
+    : collectObjectives.length ? collectObjectives
+      : target != null || source.targetType || source.targetColor || source.goalColor
+        ? [adaptExternalObjective(target, targetType, targetCount)] : [];
+  const usableBlocks = rawUsable === undefined
+    ? [...new Set([...layers.block.filter(Boolean), ...objectives.filter(({ layer }) => layer === "block").map(({ targetId }) => targetId)])]
+    : (Array.isArray(rawUsable) ? rawUsable : String(rawUsable).split(","))
+      .map((value) => normalizeAssetId("block", value, true)).filter(Boolean);
   const moveLimit = valueAt(source, ["moveLimit", "maxMoves", "moves", "turnLimit", "maxTurns", "goals.moves"], 20);
   const objectiveCount = objectives.reduce((sum, objective) => sum + objective.count, 0);
   const parMoves = valueAt(source, ["parMoves", "par", "recommendedMoves", "solutionMoves", "minMoves"], Math.max(1, Math.ceil(objectiveCount * 0.8)));
@@ -4499,12 +4777,13 @@ function adaptExternalLevel(level, index, format, unknownTokens, declaredLayers,
     specialMatches: source.specialMatches,
     excludedCells: source.excludedCells,
     width, height, gravity: valueAt(source, ["gravity", "gravityDirection", "direction"], "down"), layers,
-    flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "left-first"),
+    flowRule: valueAt(source, ["flowRule", "gravityFlowRule", "fallbackFlow"], "royal"),
     terrainRules: valueAt(source, ["terrainRules", "terrainBehavior", "terrainBehaviors"], undefined),
     gimmickRules: source.gimmickRules,
     blockWeights: source.blockWeights,
     levelSettings: source.levelSettings,
     usableBlocks, objectives, targetType, targetCount, moveLimit, moveLimitEnabled: source.moveLimitEnabled, parMoves, testClearMoves,
+    scoreTarget: Number(source.scoreTarget), pointsPerBlock: Number(source.pointsPerBlock),
     failureBonus: Boolean(valueAt(source, ["failureBonus", "useFailureBonus"], false)),
     note: valueAt(source, ["note", "description", "memo"], ""),
     externalSource: { format, sourceId: valueAt(source, ["id", "levelId", "stageId", "level"], null), goals: source.goals, gridTilesTemplate: isGridTilesProfile(source) ? deepCopy(source) : undefined },
@@ -4547,7 +4826,7 @@ function adaptImportedJson(data) {
     });
     return adaptExternalLevel(level, index, format, unknownTokens, declaredLayers, tileReporter);
   });
-  const next = normalizeProject({ version: String(data?.version || data?.gameVersion || "IMPORTED"), caves, activeCaveId: caves[0].id, assetDefinitions: data?.assetDefinitions, specialPieceRules: data?.specialPieceRules, terrainRules: data?.terrainRules, gimmickRules: data?.gimmickRules });
+  const next = normalizeProject({ version: String(data?.version || data?.gameVersion || "IMPORTED"), caves, activeCaveId: caves[0].id, assetDefinitions: data?.assetDefinitions, specialPieceRules: data?.specialPieceRules, terrainRules: data?.terrainRules, gimmickRules: data?.gimmickRules, swapDuringEffects: data?.swapDuringEffects });
   return { project: next, format, unknownTokens: [...unknownTokens], unknownTiles };
 }
 
@@ -5047,7 +5326,7 @@ function updateRule(event) {
     $("testClearMoves").value = cave.testClearMoves || "";
   }
   cave.simulationRuns = [10, 30, 100].includes(Number($("simulationRuns").value)) ? Number($("simulationRuns").value) : 30;
-  cave.flowRule = FLOW_RULES.includes($("flowRule").value) ? $("flowRule").value : "left-first";
+  cave.flowRule = FLOW_RULES.includes($("flowRule").value) ? $("flowRule").value : "royal";
   cave.failureBonus = $("failureBonus").checked;
   syncLegacyTarget(cave);
   renderDifficultySummary(cave); persist();
@@ -5145,6 +5424,7 @@ function openProjectSpecialRules() {
   const dialog = $("projectRulesDialog");
   const form = $("projectRulesForm");
   const rules = normalizeSpecialPieceRules(project.specialPieceRules);
+  $("swapDuringEffects").checked = project.swapDuringEffects;
   const types = new Map([...specialTypeOptions(activeCave())].map(([id, definition]) => [id, definition.name || id]));
   for (const cave of project.caves) {
     for (const definition of cave.initialPieceDefinitions || []) {
@@ -5283,6 +5563,7 @@ function openProjectSpecialRules() {
     }
     snapshot();
     project.specialPieceRules = next;
+    project.swapDuringEffects = $("swapDuringEffects").checked;
     for (const cave of project.caves) cave.testClearMoves = 0;
     dialog.close();
     renderAll();

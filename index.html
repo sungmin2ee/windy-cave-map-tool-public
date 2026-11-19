@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>3-Match Puzzle Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=25" />
+    <link rel="stylesheet" href="./styles.css?v=27" />
     <style>
     .object-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
     .asset-visual { position: relative; }
@@ -402,13 +402,10 @@
 
             <label class="field-label spaced" for="flowRule">막힘 우회 흐름</label>
             <select class="field" id="flowRule">
-              <option value="left-first">왼쪽 통로 우선</option>
-              <option value="right-first">오른쪽 통로 우선</option>
-              <option value="alternate">좌우 교대</option>
-              <option value="seeded-random">시드 랜덤</option>
+              <option value="royal">원작 방식 · 직선 우선</option>
               <option value="none">옆으로 흐르지 않음</option>
             </select>
-            <small class="rule-help">중력 방향이 아래/위면 좌우, 왼쪽/오른쪽이면 위아래 통로를 뜻합니다.</small>
+            <small class="rule-help">직선 낙하를 먼저 배정하고, 남은 빈칸의 위쪽·좌우 후보를 검사합니다. 이미 이동 중이거나 배정된 블록은 가져오지 않습니다.</small>
 
             <div class="field-row">
               <label>
@@ -750,9 +747,14 @@
       </form>
     </dialog>
     <dialog id="projectRulesDialog" class="simulation-dialog" aria-labelledby="projectRulesTitle">
-      <div class="dialog-header"><h2 id="projectRulesTitle">프로젝트 설정 · 특수 피스 규칙</h2></div>
+      <div class="dialog-header"><h2 id="projectRulesTitle">프로젝트 설정</h2></div>
       <form id="projectRulesForm">
         <div class="project-rules-body">
+          <fieldset>
+            <legend>플레이 조작</legend>
+            <label class="check-field"><input id="swapDuringEffects" type="checkbox"> 블록이 사라지는 중에도 교환 허용</label>
+            <p>다른 칸에서 소멸·낙하가 진행돼도 멈춘 블록은 바로 교환해요. 이동 중인 블록과 도착 예정 칸은 잠그고, 발동 가능한 특수 피스는 리필을 기다리지 않고 발동해요.</p>
+          </fieldset>
           <fieldset>
             <legend>매치 모양별 특수 피스 생성</legend>
             <p>각 레벨의 ‘매치로 특수 피스 생성’이 켜져 있을 때 적용됩니다.</p>
@@ -892,8 +894,8 @@
         <label id="playtestSpeedControl" hidden>재생 속도
           <select id="playtestSpeed">
             <option value="0.5">0.5×</option>
-            <option value="1">1×</option>
-            <option value="1.5" selected>1.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.5">1.5×</option>
             <option value="2">2×</option>
           </select>
         </label>
@@ -1067,7 +1069,7 @@
         <form method="dialog"><button class="button">닫기</button></form>
       </div>
     </dialog>
-    <script type="module" src="./app.js?v=186"></script>
+    <script type="module" src="./app.js?v=206"></script>
   </body>
 </html>
 
