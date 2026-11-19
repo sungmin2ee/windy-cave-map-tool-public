@@ -134,6 +134,8 @@ export function createGameEngine(getProject) {
         .map(([, cell]) => cell.group)).size;
     }
     const primaryCount = cave.layers[objective.layer].filter((id, index) => matchesObjectiveAsset(objective, id) &&
+      (objective.layer !== "block" || specialEffect(cave,
+        cave.playtestPieces ? cave.playtestPieces[index] : initialPieceAt(cave, index)) !== "color") &&
       (objective.layer !== "terrain" || terrainGroup(cave, index)[0] === index) &&
       (objective.layer !== "gimmick" || ddungGimmickGroup(cave, index)[0] === index)).length;
     return primaryCount + (includesDdungIceBag(cave, objective)
@@ -191,7 +193,11 @@ export function createGameEngine(getProject) {
 
   function blockMatchKey(cave, index) {
     const color = cave.layers.block[index];
-    return isDdungSource(cave.externalSource) && String(cave.playtestPieces?.[index]?.type) === "6"
+    const piece = cave.playtestPieces ? cave.playtestPieces[index] : initialPieceAt(cave, index);
+    // A color bomb has no match color, even though the block layer retains
+    // its former color for serialization and replacement artwork.
+    if (specialEffect(cave, piece) === "color") return null;
+    return isDdungSource(cave.externalSource) && String(piece?.type) === "6"
       ? `seal:${color}` : color;
   }
 
@@ -1090,7 +1096,8 @@ export function createGameEngine(getProject) {
         const blockId = state.cave.layers.block[index];
         if (blockId) {
           const removedBlock = !created.has(index);
-          advanceObjectives(state, "block", blockId, { normalBlock: countsForDdungColorGoal(state.cave, index), removed: removedBlock });
+          advanceObjectives(state, "block", blockId, { normalBlock: countsForDdungColorGoal(state.cave, index),
+            removed: removedBlock && specialEffect(state.cave, state.cave.playtestPieces[index]) !== "color" });
           if (removedBlock) removed += 1;
         }
         const itemId = state.cave.layers.item[index];
@@ -1188,6 +1195,8 @@ export function createGameEngine(getProject) {
 
   function hasPossibleSwap(cave) {
     const blocks = cave.layers.block;
+    const board = cave.playtestPieces ? cave : { ...cave,
+      playtestPieces: blocks.map((_, index) => initialPieceAt(cave, index)) };
     for (let index = 0; index < blocks.length; index += 1) {
       if (!blocks[index] || isSwapBlocked(cave, index)) continue;
       const x = index % cave.width;
@@ -1195,11 +1204,13 @@ export function createGameEngine(getProject) {
       if (x < cave.width - 1) candidates.push(index + 1);
       if (index + cave.width < blocks.length) candidates.push(index + cave.width);
       for (const other of candidates) {
-        if (!blocks[other] || blocks[other] === blocks[index] || isSwapBlocked(cave, other)) continue;
-        [blocks[index], blocks[other]] = [blocks[other], blocks[index]];
-        const matches = findMatches(cave);
+        if (!blocks[other] || isSwapBlocked(cave, other)) continue;
+        if (canCombineSpecials(board, index, other)) return true;
+        if (blockMatchKey(board, index) === blockMatchKey(board, other)) continue;
+        swapPlaytestBlocks(board, index, other);
+        const matches = findMatches(board);
         const possible = matches.has(index) || matches.has(other);
-        [blocks[index], blocks[other]] = [blocks[other], blocks[index]];
+        swapPlaytestBlocks(board, index, other);
         if (possible) return true;
       }
     }
@@ -1217,7 +1228,7 @@ export function createGameEngine(getProject) {
     const { cave } = state;
     const clearableCells = [...hits].filter((index) => !isBarrier(cave, index) && !isDdungTreasure(cave.layers.block[index]));
     const removedBlocks = new Set(clearableCells.filter((index) => cave.layers.block[index] && !created.has(index) &&
-      blockMatchKey(cave, index) === cave.layers.block[index]));
+      !(isDdungSource(cave.externalSource) && String(cave.playtestPieces[index]?.type) === "6")));
     if (state.scoreTarget !== null) return { progress: removedBlocks.size, damage: 0, hitCount: hits.size };
     const terrain = goals.some(({ objective }) => objective.layer === "terrain")
       ? [...terrainHitResults(state, hits, targetedTerrain, removedBlocks, bombPanelIndex, specialHits)] : [];
@@ -1253,12 +1264,12 @@ export function createGameEngine(getProject) {
       } else if (layer === "block" || layer === "item") {
         const cells = isDdungColorObjective(cave, objective)
           ? clearableCells.filter((index) => countsForDdungColorGoal(cave, index))
-          : layer === "block" ? [...removedBlocks] : clearableCells;
+          : layer === "block" ? [...removedBlocks].filter(index => specialEffect(cave, cave.playtestPieces[index]) !== "color") : clearableCells;
         const count = cells.filter((index) => matchesId(cave.layers[layer][index])).length;
         progress += Math.min(remaining, count);
         if (layer === "block" && count < remaining) {
           damage += clearableCells.filter((index) => matchesId(cave.layers.block[index]) &&
-            blockMatchKey(cave, index) !== cave.layers.block[index]).length;
+            isDdungSource(cave.externalSource) && String(cave.playtestPieces[index]?.type) === "6").length;
         }
       }
     }
@@ -1597,7 +1608,14 @@ export function createGameEngine(getProject) {
         specialHits.add(index);
         const x = index % cave.width;
         const y = Math.floor(index / cave.width);
-        const color = cave.layers.block[index];
+        let color = cave.layers.block[index];
+        if (effect === "color" && !override) {
+          // A tap/blast chooses a playable color; exchanging with a neighbour
+          // uses the partner color in specialComboHits instead.
+          const colors = cave.usableBlocks.filter(id => cave.layers.block.some((block, cell) =>
+            block === id && blockMatchKey(cave, cell) === id && !isExcluded(cave, cell)));
+          color = colors.length ? colors[Math.min(colors.length - 1, Math.floor(beeRandom() * colors.length))] : null;
+        }
         const definition = effect === "script" && projectSpecialDefinition(cave, String(cave.playtestPieces[index].type));
         const commands = override ?? (effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }]);
         for (const { op, radius = 1, cells } of commands) {
@@ -1629,7 +1647,7 @@ export function createGameEngine(getProject) {
             const dy = Math.abs(Math.floor(other / cave.width) - y);
             const affected = (op === "row" && dy === 0) || (op === "column" && dx === 0) ||
               (op === "cross" && (dx === 0 || dy === 0)) || (op === "area" && dx <= radius && dy <= radius) ||
-              (op === "color" && color && cave.layers.block[other] === color);
+              (op === "color" && color && blockMatchKey(cave, other) === color);
             if (affected && !isExcluded(cave, other) && !protectedCells.has(other)) addSpecialHit(other, wave);
           }
         }

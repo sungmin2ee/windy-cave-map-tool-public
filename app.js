@@ -1,5 +1,5 @@
-import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=18";
-import { createLiveGame } from "./live-game.js?v=7";
+import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=19";
+import { createLiveGame } from "./live-game.js?v=8";
 
 const gameEngine = createGameEngine(() => project);
 
@@ -76,7 +76,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.59";
+const CLIENT_VERSION = "2.7.61";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -778,7 +778,8 @@ function getAsset(layer, id, cave = activeCave()) {
   const iceArt = id === "ddung-octo" ? "./art/ddung/ice-bag.webp" :
     id === "ddung-frost" ? "./art/ddung/frost-3.webp" : null;
   const exitArt = layer === "gimmick" && id === "exit" ? "./art/ddung/exit.webp" : null;
-  const image = definition?.image || exitArt || iceArt || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
+  const dustArt = layer === "block" && id === "ddung-dust-piece" ? "./art/ddung/goal-dust.webp" : null;
+  const image = definition?.image || exitArt || iceArt || dustArt || (gimmickArt ? `./art/ddung/${gimmickArt}.webp` :
     itemArt ? `./art/ddung/item-${id === "ddung-bomb-panel" ? "bomb" : id}.webp` : original ? `./art/ddung/${id}.webp` : null);
   return { visual: { terrain: "▦", block: "◆", gimmick: "◈", item: "●" }[layer],
     ...known, id, name: definition?.name || known?.name || id, image, panelMark: panel && "AQZY1234r".includes(panel[0]) ? panel[2] : null };
@@ -2840,6 +2841,11 @@ function issueHtml(validation) {
 function renderSimulationGrid(cave, interactive = false, remainingTargets = [], damage = playtestState?.cave === cave ? playtestState : null, available = null) {
   const grid = $("simulationGrid");
   const live = damage?.liveSession;
+  if (live) {
+    const view = live.presentation();
+    cave = view.cave;
+    damage = { ...damage, ...view };
+  }
   grid.style.setProperty("--board-columns", cave.width);
   grid.style.setProperty("--board-rows", cave.height);
   grid.style.gridTemplateColumns = `repeat(${cave.width}, var(--cell-size))`;
@@ -3275,6 +3281,8 @@ function animateBeeFlights(grid, cave, flights, duration) {
     const sprite = document.createElement("span");
     const fallback = document.createElement("span");
     sprite.className = "playtest-turn-actor playtest-bee-flight";
+    sprite.dataset.beeFrom = from;
+    sprite.dataset.beeTo = to;
     sprite.setAttribute("aria-hidden", "true");
     sprite.style.left = `${start.left - board.left - grid.clientLeft + (start.width - size) / 2}px`;
     sprite.style.top = `${start.top - board.top - grid.clientTop + (start.height - size) / 2}px`;

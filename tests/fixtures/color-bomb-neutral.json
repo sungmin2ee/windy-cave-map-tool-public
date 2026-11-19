@@ -1,0 +1,128 @@
+{
+  "version": "live-test",
+  "swapDuringEffects": true,
+  "caves": [
+    {
+      "id": "color-bomb-neutral",
+      "number": 1,
+      "name": "5색 블록 무색 매치 검증",
+      "width": 4,
+      "height": 4,
+      "gravity": "down",
+      "flowRule": "royal",
+      "randomSeed": "live-regression",
+      "usableBlocks": [
+        "red",
+        "yellow",
+        "blue",
+        "green"
+      ],
+      "specialMatches": false,
+      "layers": {
+        "terrain": [
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor",
+          "floor"
+        ],
+        "block": [
+          "red",
+          "red",
+          "red",
+          "blue",
+          "blue",
+          "green",
+          "yellow",
+          "green",
+          "yellow",
+          "blue",
+          "green",
+          "yellow",
+          "green",
+          "yellow",
+          "blue",
+          "red"
+        ],
+        "gimmick": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "item": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "initialPieceTypes": {
+        "1": 5
+      },
+      "initialPieceDefinitions": [],
+      "objectives": [
+        {
+          "layer": "block",
+          "targetId": "red",
+          "countMode": "manual",
+          "count": 1000
+        }
+      ],
+      "moveLimit": 25,
+      "parMoves": 1,
+      "pointsPerBlock": 100,
+      "generatedBlockArt": "ddung",
+      "terrainRules": {
+        "floor": {
+          "reaction": "none",
+          "durability": 1,
+          "blocksFlow": false
+        }
+      },
+      "gimmickRules": {},
+      "externalSource": {
+        "format": "DDUNG MapInfo v68"
+      }
+    }
+  ],
+  "specialPieceRules": {
+    "combos": [],
+    "allowSquare": false
+  }
+}

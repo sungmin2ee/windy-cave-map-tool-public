@@ -31,6 +31,72 @@ function settle(live, limit = 5000) {
   assert.ok(ticks < limit, 'live board settles without an endless clock');
 }
 
+function colorBombBoard(type = 'rainbow', extra = {}) {
+  const { cave: base } = fixture();
+  return fixture({ width: 3, height: 3, initialPieceTypes: { 1: type },
+    layers: { terrain: Array(9).fill('floor'),
+      block: ['red', 'red', 'red', 'blue', 'green', 'yellow', 'yellow', 'blue', 'green'],
+      gimmick: Array(9).fill(null), item: Array(9).fill(null) },
+    objectives: base.objectives, ...extra });
+}
+
+test('color bombs never join a normal match using their serialized color', () => {
+  for (const [type, extra] of [['rainbow', {}], [5, { externalSource: { format: 'DDUNG MapInfo v68' } }]]) {
+    const { engine, state, cave } = colorBombBoard(type, extra);
+    assert.equal(engine.findMatches(state.cave).size, 0);
+    assert.equal(engine.findMatches(cave).size, 0, 'editor board also excludes initial color bombs');
+    engine.resolveMatches(state);
+    assert.equal(engine.specialEffect(state.cave, state.cave.playtestPieces[1]), 'color');
+    assert.equal(state.blocksRemoved, 0, 'settling does not spontaneously trigger the color bomb');
+  }
+});
+
+test('a color bomb exchange is playable without a normal match and prevents an unnecessary shuffle', () => {
+  const { engine, state, live } = colorBombBoard();
+  const before = structuredClone(state.cave.layers.block);
+  assert.equal(engine.hasPossibleSwap(state.cave), true);
+  assert.deepEqual(state.cave.layers.block, before);
+  assert.equal(state.cave.playtestPieces[1].type, 'rainbow');
+  engine.finishLiveState(state);
+  assert.equal(state.shuffleCount, 0);
+  assert.equal(live.submit({ first: 1, second: 4 }), true);
+  assert.equal(state.movesUsed, 1);
+  assert.equal(state.cave.layers.block.includes('green'), false, 'partner green is selected, not hidden red');
+  assert.equal(state.cave.layers.block[0], 'red');
+  assert.equal(state.objectiveProgress[0].current, 0, 'color bomb does not count as its hidden red color');
+});
+
+test('automatic color-goal counts exclude color bombs in editor data and runtime data', () => {
+  const { engine, cave, state } = colorBombBoard('rainbow', {
+    objectives: [{ layer: 'block', targetId: 'red', countMode: 'auto-map', count: 0 }],
+  });
+  assert.equal(engine.countObjectiveAssets(cave, cave.objectives[0]), 2);
+  assert.equal(state.objectiveProgress[0].target, 2);
+});
+
+test('standalone color bombs select a color instead of using their hidden layer color', () => {
+  const { state, live } = colorBombBoard();
+  state.beeRandom = () => .4;
+  assert.equal(live.submit({ first: 1 }), true);
+  // usable order: red, yellow, blue, green -> .4 selects yellow.
+  assert.equal(state.cave.layers.block[5], null);
+  assert.equal(state.cave.layers.block[6], null);
+  assert.equal(state.cave.layers.block[0], 'red');
+  assert.equal(state.cave.layers.block[2], 'red');
+});
+
+test('a board with no normal matches or special actions still shuffles', () => {
+  const { engine, state } = colorBombBoard(null);
+  state.cave.layers.block = ['red', 'yellow', 'green', 'yellow', 'green', 'red', 'green', 'red', 'yellow'];
+  assert.equal(engine.findMatches(state.cave).size, 0);
+  assert.equal(engine.hasPossibleSwap(state.cave), false);
+  const before = state.shuffleCount;
+  engine.finishLiveState(state);
+  assert.equal(state.shuffleCount, before + 1);
+  assert.equal(engine.findMatches(state.cave).size, 0);
+  assert.ok(engine.findPlayableAction(state));
+});
+
 test('special taps commit immediately during another explosion, before any refill', () => {
   const { live, state } = fixture();
   assert.equal(live.submit({ first: 0 }), true);
@@ -529,4 +595,41 @@ test('a completed goal cannot be changed to failure by a turn-end hazard before 
   assert.equal(state.status, 'won');
   assert.equal(state.clearBonus.generated, 5);
   assert.equal(state.movesUsed, 1);
+});
+
+test('bee impact HP is displayed at its flight destination on arrival, not at takeoff', () => {
+  const { live, state, frames } = fixture({ initialPieceTypes: { 0: 'bee' },
+    objectives: [{ layer: 'terrain', targetId: 'ice', countMode: 'manual', count: 2 }] });
+  state.cave.terrainRules.ice = { reaction: 'under', durability: 2, blocksFlow: false };
+  state.cave.layers.terrain[29] = 'ice';
+  state.cave.terrainRules.stone = { reaction: 'under', durability: 3, blocksFlow: false };
+  state.cave.layers.terrain[6] = 'stone';
+  live.submit({ first: 0 });
+  const flight = frames.flatMap(f => f.turnActor?.flights ?? [])[0];
+  assert.deepEqual([flight.from, flight.to], [0, 29]);
+  const impact = frames.find(f => f.kind === 'match' && f.cells.includes(29));
+  assert.ok(impact.at > 0);
+  assert.equal(state.terrainHits[29], 1, 'rule state commits for input safety');
+  assert.equal(live.presentation().terrainHits[29], 0, 'visible HP waits for the bee');
+  while (live.clock < (impact.at - 40) / 1000) live.tick(1 / 120);
+  assert.equal(live.presentation().terrainHits[29], 0);
+  while (live.clock < (impact.at + 10) / 1000) live.tick(1 / 120);
+  assert.equal(live.presentation().terrainHits[29], 1);
+  assert.equal(state.terrainHits[6], 0, 'the block below the launch site is not hit');
+  assert.equal(live.presentation().terrainHits[6], 0);
+  settle(live);
+});
+
+test('a bee-destroyed obstacle keeps its artwork until arrival without restoring logical occupancy', () => {
+  const { live, state, frames } = fixture({ initialPieceTypes: { 0: 'bee' },
+    objectives: [{ layer: 'terrain', targetId: 'ice', countMode: 'manual', count: 2 }] });
+  state.cave.terrainRules.ice = { reaction: 'under', durability: 1, blocksFlow: false };
+  state.cave.layers.terrain[29] = 'ice';
+  live.submit({ first: 0 });
+  assert.equal(state.cave.layers.terrain[29], null);
+  assert.equal(live.presentation().cave.layers.terrain[29], 'ice');
+  const impact = frames.find(f => f.kind === 'match' && f.cells.includes(29));
+  while (live.clock < (impact.at + 10) / 1000) live.tick(1 / 120);
+  assert.equal(live.presentation().cave.layers.terrain[29], null);
+  settle(live);
 });

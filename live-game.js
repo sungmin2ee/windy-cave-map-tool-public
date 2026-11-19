@@ -9,6 +9,7 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
   const motions = new Map();
   const locks = new Map();
   const speeds = new Map();
+  const pendingDamage = new Map();
   let clock = 0;
   let dirty = false;
   let active = false;
@@ -69,6 +70,8 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
 
   function captureOperation(operation) {
     const frames = [];
+    const before = { ...cave, layers: { ...cave.layers, terrain: [...cave.layers.terrain], gimmick: [...cave.layers.gimmick] } };
+    const beforeHits = { terrain: [...state.terrainHits], gimmick: [...state.gimmickHits] };
     const capture = (label, cells, kind, delay = 320, moves = [], turnActor = null, burst = null, cleared = []) => {
       frames.push({ label, cells: [...cells], kind, delay, motions: moves, turnActor, burst, cleared,
         cave: { ...cave, layers: Object.fromEntries(Object.entries(cave.layers).map(([k, v]) => [k, [...v]])),
@@ -95,6 +98,28 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
         }
         if (frame.label === "보드 셔플") globalUntil = until;
         delay += frame.delay;
+      }
+      // Damage is committed for rule/input decisions now, but a remote hit is
+      // painted only when its flight reaches the impact frame. Keep old HP and
+      // obstacle art in the presentation until then; never defer the game state.
+      for (const layer of ["terrain", "gimmick"]) {
+        const hits = layer === "terrain" ? state.terrainHits : state.gimmickHits;
+        for (let index = 0; index < cave.layers[layer].length; index++) {
+          if (before.layers[layer][index] === cave.layers[layer][index] && beforeHits[layer][index] === hits[index]) continue;
+          const group = layer === "terrain" ? engine.terrainGroup(before, index) : engine.ddungGimmickGroup(before, index);
+          const rule = layer === "terrain" ? before.terrainRules?.[before.layers.terrain[index]] : before.gimmickRules?.[before.layers.gimmick[index]];
+          const adjacent = ["adjacent", "adjacent-only", "splash"].includes(rule?.reaction);
+          const touched = new Set(group);
+          if (adjacent) for (const cell of group) for (const neighbor of engine.neighborsOf(before, cell)) touched.add(neighbor);
+          const impact = frames.find(frame => frame.kind === "match" && frame.cells.some(cell => touched.has(cell)));
+          const until = clock + (impact?.at ?? 0) / 1000;
+          if (until > clock) {
+            const key = `${layer}:${index}`;
+            const previous = pendingDamage.get(key);
+            pendingDamage.set(key, { layer, index, value: previous?.value ?? before.layers[layer][index],
+              hits: previous?.hits ?? beforeHits[layer][index], until: Math.max(until, previous?.until ?? 0) });
+          }
+        }
       }
       effects(frames);
       state.message = state.clearBonus ? (frames[0].label.startsWith("클리어 보너스") ? frames[0].label : `클리어 보너스 · ${frames[0].label}`) : engine.clearConditionMet(state) ? "목표 달성 · 마무리 중입니다."
@@ -189,6 +214,7 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
 
   function step(dt) {
     clock += dt;
+    for (const [key, view] of pendingDamage) if (view.until <= clock) { pendingDamage.delete(key); dirty = true; }
     for (const [index, until] of locks) if (until <= clock) { locks.delete(index); dirty = true; }
     for (const [id, motion] of motions) {
       motion.speed = Math.min(20, motion.speed + 30 * dt);
@@ -222,6 +248,18 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
     submit, tick, canTap, canSwap, blockedCells, fallBlockedCells, motions,
     get active() { return active; },
     get clock() { return clock; },
-    stop() { stopped = true; active = false; state.animating = false; motions.clear(); locks.clear(); },
+    presentation() {
+      const view = { cave, terrainHits: state.terrainHits, gimmickHits: state.gimmickHits };
+      if (!pendingDamage.size) return view;
+      view.cave = { ...cave, layers: { ...cave.layers, terrain: [...cave.layers.terrain], gimmick: [...cave.layers.gimmick] } };
+      view.terrainHits = [...state.terrainHits];
+      view.gimmickHits = [...state.gimmickHits];
+      for (const pending of pendingDamage.values()) {
+        view.cave.layers[pending.layer][pending.index] = pending.value;
+        view[pending.layer === "terrain" ? "terrainHits" : "gimmickHits"][pending.index] = pending.hits;
+      }
+      return view;
+    },
+    stop() { stopped = true; active = false; state.animating = false; motions.clear(); locks.clear(); pendingDamage.clear(); },
   };
 }

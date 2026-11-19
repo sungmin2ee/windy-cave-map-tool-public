@@ -1,0 +1,38 @@
+{
+  "version": 68,
+  "mapinfos": [
+    {
+      "count": 20,
+      "special": "",
+      "mouse": false,
+      "colors": "0,1,3,4,5",
+      "objectcreate": 1,
+      "gravitys": "111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "objectpercent": "202020202000",
+      "tiles": "yy.....yyVy..?..yVVy^.?.^yVVy..?..yVyy.....yyWW.....WWWW..^..WWWW.....WWWW.....WW",
+      "spider": false,
+      "level": 78,
+      "targets": [
+        {
+          "count": 22,
+          "type": 8
+        },
+        {
+          "count": 6,
+          "type": 9
+        },
+        {
+          "count": 3,
+          "type": 22
+        }
+      ],
+      "starscores": "010040000200800003012000",
+      "warps": "03058385",
+      "GravityType": 1,
+      "size": 9,
+      "starts": "000000010100020200030300040400050500060600070700080800",
+      "goals": "000208010308020408030508040608",
+      "levelclass": 0
+    }
+  ]
+}
