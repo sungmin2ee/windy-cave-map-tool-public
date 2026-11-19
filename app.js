@@ -1,5 +1,6 @@
 import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=19";
 import { createLiveGame } from "./live-game.js?v=8";
+import { runAutoPlayBatch, summarizeBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
 
 const gameEngine = createGameEngine(() => project);
 
@@ -76,7 +77,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.64";
+const CLIENT_VERSION = "2.7.66";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -652,7 +653,7 @@ function normalizeCave(data, index = 0, ddungProject = false, packedCatalog = {}
     objectives, targetType, targetCount, moveLimit, moveLimitEnabled: source.moveLimitEnabled !== false,
     parMoves: clampNumber(source.parMoves, Math.min(moveLimit, estimatedPar), 1, 999),
     testClearMoves: goalChanged ? 0 : clampNumber(source.testClearMoves, 0, 0, 999),
-    simulationRuns: [10, 30, 100].includes(Number(source.simulationRuns)) ? Number(source.simulationRuns) : 30,
+    simulationRuns: validAutoPlayRuns(source.simulationRuns) ? Number(source.simulationRuns) : 30,
     randomSeed: String(source.randomSeed || `CAVE-${String(index + 1).padStart(4, "0")}`),
     randomDensity: clampNumber(source.randomDensity, 100, 10, 100),
     flowRule: FLOW_RULES.includes(source.flowRule) ? source.flowRule : "royal",
@@ -3028,11 +3029,15 @@ function readValidationBaseline(cave) {
 }
 
 function showSimulation(playMode, dialogAlreadyOpen = false) {
+  cancelAutoPlayBatch();
   const cave = activeCave();
   const validation = validateCave(cave);
   const blocked = validation.errors.length > 0 || validation.unsupported.length > 0;
   $("simulationTitle").textContent = cave.name;
   const canPractice = playMode && !validation.errors.length;
+  $("autoPlayBatchControls").hidden = !canPractice;
+  $("autoPlayBatchSummary").hidden = true;
+  $("autoPlayRuns").value = String(cave.simulationRuns);
   $("playtestGuide").hidden = !canPractice;
   $("playtestResetButton").hidden = !canPractice;
   $("playtestSpeedControl").hidden = !canPractice;
@@ -3289,34 +3294,72 @@ function runBatchSimulation(cave, runs) {
   return summarizeBatch(results);
 }
 
-function summarizeBatch(results) {
-  const runs = results.length;
-  const wins = results.filter((result) => result.status === "won");
-  const moves = wins.map((result) => result.moves).sort((a, b) => a - b);
-  const average = moves.length ? moves.reduce((sum, value) => sum + value, 0) / moves.length : 0;
-  const percentile = (ratio) => moves.length ? moves[Math.min(moves.length - 1, Math.floor((moves.length - 1) * ratio))] : 0;
-  const clearRate = Math.round(wins.length / runs * 100);
-  const label = clearRate >= 80 ? "Easy" : clearRate >= 55 ? "Normal" : clearRate >= 30 ? "Hard" : clearRate > 0 ? "Expert" : "미클리어";
-  return {
-    runs,
-    examples: ["lost", "stuck"].map((status) => results.find((result) => result.status === status)).filter(Boolean),
-    wins: wins.length,
-    lost: results.filter((result) => result.status === "lost").length,
-    stuck: results.filter((result) => result.status === "stuck").length,
-    limited: results.filter((result) => result.status === "limit").length,
-    shuffles: results.reduce((total, result) => total + (result.shuffles || 0), 0),
-    clearRate,
-    average: Number(average.toFixed(1)),
-    median: percentile(0.5),
-    p90: percentile(0.9),
-    label,
-  };
+let autoPlayBatchJob = null;
+
+function cancelAutoPlayBatch() {
+  autoPlayBatchJob = null;
+  $("startAutoPlayBatch").disabled = false;
+  $("cancelAutoPlayBatch").hidden = true;
+  $("autoPlayRuns").disabled = false;
+}
+
+async function startAutoPlayBatch(event) {
+  event.preventDefault();
+  const input = $("autoPlayRuns");
+  if (!input.reportValidity() || !validAutoPlayRuns(input.value) || autoPlayBatchJob) return;
+  const cave = deepCopy(activeCave());
+  const validation = validateCave(cave);
+  const summary = $("autoPlayBatchSummary");
+  summary.hidden = false;
+  if (validation.errors.length || validation.unsupported.length) {
+    summary.textContent = "맵 오류 또는 판정 미지원 목표를 먼저 확인하세요. 자동 성공 확률을 계산할 수 없습니다.";
+    return;
+  }
+  const job = {};
+  autoPlayBatchJob = job;
+  // Every batch starts from the editor board; a partially played board is not reused.
+  playtestState = null;
+  cave.randomSeed = `${cave.randomSeed}|auto-${crypto.randomUUID()}`;
+  const runs = Number(input.value);
+  $("startAutoPlayBatch").disabled = true;
+  input.disabled = true;
+  $("cancelAutoPlayBatch").hidden = false;
+  for (const id of ["playtestPauseButton", "playtestHintButton", "playtestComboButton", "playtestResetButton", "usePlaytestResultButton"]) $(id).hidden = true;
+  renderSimulationGrid(cave, false);
+  summary.textContent = `자동 플레이 0 / ${runs}회 · 계산 중`;
+  try {
+    const batch = await runAutoPlayBatch(cave, runs, runAutoGame, {
+      isCanceled: () => autoPlayBatchJob !== job || !$("simulationDialog").open,
+      onProgress: (done) => { summary.textContent = `자동 플레이 ${done} / ${runs}회 · 계산 중`; },
+    });
+    if (!batch || autoPlayBatchJob !== job) return;
+    summary.innerHTML = `<strong>성공 확률 ${batch.clearRate}% · ${batch.wins} / ${batch.runs}회 성공</strong><br>` +
+      `실패 ${batch.lost + batch.stuck}회 · 테스트 상한 도달 ${batch.limited}회 · 성공한 판 평균 ${batch.average || "-"}회 이동<br>` +
+      `대표 플레이: 1번째 판 (성공·실패와 관계없이 선택)<br><small>편집 중인 초기 보드부터 각기 다른 시드로 실행한 자동 플레이 결과입니다. 실제 유저의 성공 확률과는 다를 수 있습니다.</small>`;
+    startBatchReplay(cave, validation, batch.representative);
+  } catch (error) {
+    if (autoPlayBatchJob === job) {
+      console.error(error);
+      summary.textContent = "자동 플레이 계산 중 오류가 발생했습니다. 다시 실행해 주세요.";
+    }
+  } finally {
+    if (autoPlayBatchJob === job) {
+      cancelAutoPlayBatch();
+      if (!playtestState) {
+        playtestState = createPlayState(cave, `playtest-${crypto.randomUUID()}`, true);
+        playtestState.validation = validation;
+        renderPlaytest();
+      }
+      $("playtestResetButton").hidden = false;
+    }
+  }
 }
 
 function startBatchReplay(cave, validation, example) {
   playtestState = createPlayState(cave, `batch-${example.runIndex}`);
   playtestState.validation = validation;
   playtestState.replay = { cave, example };
+  playtestState.message = "자동 테스트 대표 플레이를 재생합니다.";
   $("playtestGuide").hidden = false;
   $("playtestResetButton").hidden = false;
   $("playtestSpeedControl").hidden = false;
@@ -3690,6 +3733,12 @@ async function runAnimatedPlaytest(state) {
       // Keep the settled board available for clicks before the next automatic turn.
       await new Promise((resolve) => setTimeout(resolve, 900 / (Number($("playtestSpeed").value) || 1)));
       if (playtestState !== state || !$("simulationDialog").open || state.paused || state.status !== "playing") break;
+      if (state.replay && state.cave.moveLimitEnabled === false && state.movesUsed >= AUTO_UNLIMITED_TURN_LIMIT) {
+        state.status = "limit";
+        state.message = `자동 테스트 ${AUTO_UNLIMITED_TURN_LIMIT}턴 상한에 도달했습니다.`;
+        renderPlaytest();
+        break;
+      }
       if (!state.animating) await animatePlaytestTurn(state, chooseAutoAction(state));
     }
   } finally {
@@ -3704,8 +3753,7 @@ function togglePlaytestPause() {
   state.comboMode = false;
   state.hint = null;
   state.selectedIndex = null;
-  state.message = state.paused ? "교환할 인접 블록 두 개를 클릭하세요." : "자동 플레이 중입니다.";
-  $("playtestPauseButton").textContent = state.paused ? "자동 플레이 시작" : "직접 플레이로 전환";
+  state.message = state.paused ? "대표 플레이를 일시정지했습니다." : "대표 플레이를 재생합니다.";
   if (!state.animating) renderPlaytest();
   if (!state.paused) runAnimatedPlaytest(state);
 }
@@ -3901,7 +3949,7 @@ function renderPlaytest() {
   const result = $("simulationResult");
   result.className = `simulation-result ${state.status === "won" ? "success" : ["lost", "stuck"].includes(state.status) ? "error" : "warning"}`;
   result.innerHTML = `
-    <strong>${practice ? "PLAYTEST 연습 · 클리어 판정 미지원" : state.status === "won" ? "PLAYTEST 성공" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 실패" : "PLAYTEST 진행 중"}</strong><br>
+    <strong>${practice ? "PLAYTEST 연습 · 클리어 판정 미지원" : state.status === "won" ? "PLAYTEST 성공" : state.status === "limit" ? "PLAYTEST 테스트 상한 도달" : ["lost", "stuck"].includes(state.status) ? "PLAYTEST 실패" : "PLAYTEST 진행 중"}</strong><br>
     남은 이동 <b id="playtestMovesRemaining">${movesRemaining}</b> · 사용 <span id="playtestMovesUsed">${state.movesUsed}</span>회 · 셔플 ${state.shuffleCount}회<br>
     ${objectiveProgressHtml(state)}
     Gravity ${state.cave.gravity} · 막힘 우회 ${flowLabels[state.cave.flowRule]}<br>
@@ -3913,13 +3961,14 @@ function renderPlaytest() {
   $("usePlaytestResultButton").hidden = state.status !== "won";
   const pause = $("playtestPauseButton");
   pause.hidden = state.status !== "playing";
-  $("playtestHintButton").hidden = !state.paused || state.status !== "playing";
+  $("playtestHintButton").hidden = Boolean(state.replay) || !state.paused || state.status !== "playing";
   const comboButton = $("playtestComboButton");
   comboButton.hidden = !state.paused || state.status !== "playing" || Boolean(state.replay);
   comboButton.setAttribute("aria-pressed", Boolean(state.comboMode));
   comboButton.textContent = state.comboMode ? "조합 취소" : "특수 피스 조합";
-  pause.textContent = state.paused ? "자동 플레이 시작" : "직접 플레이로 전환";
-  renderSimulationGrid(state.cave, state.status === "playing", remainingTargets);
+  pause.hidden = !state.replay || state.status !== "playing";
+  pause.textContent = state.paused ? "대표 플레이 재생" : "대표 플레이 일시정지";
+  renderSimulationGrid(state.cave, state.status === "playing" && !state.replay, remainingTargets);
 }
 
 function resetPlaytest() {
@@ -4094,6 +4143,18 @@ function exportProject() {
   toast("프로젝트 JSON을 내보냈습니다.");
 }
 
+let levelPreviewSession = null;
+
+function disposeLevelPreview() {
+  if (!levelPreviewSession) return;
+  const { mapUrl, receive, timeout } = levelPreviewSession;
+  levelPreviewSession = null;
+  window.removeEventListener("message", receive);
+  clearTimeout(timeout);
+  $("levelPreviewFrameSlot").replaceChildren();
+  URL.revokeObjectURL(mapUrl);
+}
+
 function openLevelDemo() {
   const cave = activeCave();
   const { errors, unsupported } = validateCave(cave);
@@ -4102,25 +4163,45 @@ function openLevelDemo() {
     toast(issue);
     return;
   }
-  const preview = crypto.randomUUID();
   const payload = structuredClone(buildProjectExport({ ...project, caves: [cave], activeCaveId: cave.id }));
-  const url = new URL("./host-demo.html", location.href);
-  url.searchParams.set("preview", preview);
-  const tab = window.open(url, "_blank");
-  if (!tab) {
-    toast("브라우저에서 팝업을 허용한 뒤 다시 시도하세요.");
-    return;
+  disposeLevelPreview();
+  const dialog = $("levelPreviewDialog");
+  const status = $("levelPreviewStatus");
+  const requestId = crypto.randomUUID();
+  const mapUrl = URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: "application/json" }));
+  const url = new URL("./play.html", location.href);
+  url.search = new URLSearchParams({ map: mapUrl, level: cave.id, previewMap: "1", embed: "1", requestId, resultOrigin: location.origin });
+  const frame = document.createElement("iframe");
+  frame.title = `${cave.name} 플레이 미리보기`;
+  frame.allow = "autoplay";
+  const timeout = setTimeout(() => {
+    if (levelPreviewSession?.requestId === requestId) status.textContent = "불러오기가 지연되고 있어요. 다시 시작을 눌러 주세요.";
+  }, 30000);
+  function receive(event) {
+    const data = event.data;
+    if (event.origin !== location.origin || event.source !== frame.contentWindow ||
+        data?.version !== 1 || data.requestId !== requestId) return;
+    if (data.type === "windy-cave:puzzle-ready") {
+      clearTimeout(timeout);
+      status.textContent = "목표와 이동 횟수를 확인하고 플레이하세요.";
+    } else if (data.type === "windy-cave:puzzle-error") {
+      clearTimeout(timeout);
+      status.textContent = `미리보기를 불러오지 못했어요. ${data.message || "다시 시작을 눌러 주세요."}`;
+    } else if (data.type === "windy-cave:puzzle-result") {
+      clearTimeout(timeout);
+      if (data.outcome === "cancelled") dialog.close();
+      else if (["won", "lost"].includes(data.outcome)) {
+        status.textContent = `${data.outcome === "won" ? "클리어" : "실패"} · 사용한 이동 ${data.movesUsed}회 · 별 ${data.stars}개 · 점수 ${data.score}`;
+      }
+    }
   }
-
-  const timeout = setTimeout(() => window.removeEventListener("message", passLevel), 15000);
-  function passLevel(event) {
-    if (event.origin !== location.origin || event.source !== tab ||
-        event.data?.type !== "windy-cave:preview-ready" || event.data.preview !== preview) return;
-    clearTimeout(timeout);
-    window.removeEventListener("message", passLevel);
-    tab.postMessage({ type: "windy-cave:preview-map", preview, project: payload }, location.origin);
-  }
-  window.addEventListener("message", passLevel);
+  levelPreviewSession = { requestId, mapUrl, receive, timeout };
+  window.addEventListener("message", receive);
+  $("levelPreviewTitle").textContent = `${cave.name} · 플레이 미리보기`;
+  status.textContent = "현재 레벨을 불러오는 중이에요.";
+  frame.src = url.href;
+  $("levelPreviewFrameSlot").replaceChildren(frame);
+  if (!dialog.open) dialog.showModal();
 }
 
 function describePatchChanges(previous, cave) {
@@ -5093,7 +5174,7 @@ const EDITOR_GUIDE_STEPS = [
   ["settings", "clearMode", "클리어 목표 설정", "미션 또는 목표 점수를 정하세요. 이동 횟수를 제한하려면 체크하고 최대 이동 횟수를 입력하세요.", ["goals"]],
   ["settings", "difficultyButton", "난이도로 보드 생성", "현재 보드 모양, 클리어 목표, 이동 횟수 설정으로 후보를 만들고 자동 플레이로 비교해요.", ["difficulty"]],
   ["settings", "randomizeButton", "자동 배치", "시드와 밀도를 정한 뒤 ‘랜덤 채우기’를 누르면 미리보기 보드가 바로 바뀌어요. 적용한 난이도 후보를 쓰려면 그대로 다음으로 넘어가세요.", ["auto"]],
-  ["board", "previewLevelButton", "플레이 미리보기", "현재 레벨을 새 탭에서 플레이해 보드, 목표, 이동 횟수를 확인하세요."],
+  ["board", "previewLevelButton", "플레이 미리보기", "현재 페이지의 팝업에서 플레이해 보드, 목표, 이동 횟수를 확인하세요."],
 ];
 
 function bindEditorGuide() {
@@ -5269,6 +5350,9 @@ function bindInputs() {
   $("validateButton").addEventListener("click", () => showSimulation(false));
   $("playButton").addEventListener("click", () => showSimulation(true));
   $("previewLevelButton").addEventListener("click", openLevelDemo);
+  $("closeLevelPreview").addEventListener("click", () => $("levelPreviewDialog").close());
+  $("restartLevelPreview").addEventListener("click", openLevelDemo);
+  $("levelPreviewDialog").addEventListener("close", disposeLevelPreview);
   $("themeEditorButton").addEventListener("click", () => {
     $("themePackStatus").textContent = "";
     renderThemeEditor();
@@ -5284,6 +5368,13 @@ function bindInputs() {
   $("closeSimulationFooterButton").addEventListener("click", () => $("simulationDialog").close());
   $("playtestResetButton").addEventListener("click", resetPlaytest);
   $("playtestPauseButton").addEventListener("click", togglePlaytestPause);
+  $("autoPlayBatchControls").addEventListener("submit", startAutoPlayBatch);
+  $("cancelAutoPlayBatch").addEventListener("click", () => {
+    cancelAutoPlayBatch();
+    showSimulation(true, true);
+    toast("자동 플레이 계산을 중단했습니다.");
+  });
+  $("simulationDialog").addEventListener("close", cancelAutoPlayBatch);
   $("playtestHintButton").addEventListener("click", showPlaytestHint);
   $("playtestComboButton").addEventListener("click", togglePlaytestCombo);
   $("usePlaytestResultButton").addEventListener("click", usePlaytestResult);
@@ -5417,7 +5508,7 @@ function updateRule(event) {
     $("parMoves").value = cave.parMoves;
     $("testClearMoves").value = cave.testClearMoves || "";
   }
-  cave.simulationRuns = [10, 30, 100].includes(Number($("simulationRuns").value)) ? Number($("simulationRuns").value) : 30;
+  cave.simulationRuns = validAutoPlayRuns($("simulationRuns").value) ? Number($("simulationRuns").value) : 30;
   cave.flowRule = FLOW_RULES.includes($("flowRule").value) ? $("flowRule").value : "royal";
   cave.failureBonus = $("failureBonus").checked;
   syncLegacyTarget(cave);

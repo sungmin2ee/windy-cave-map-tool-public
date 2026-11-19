@@ -315,6 +315,19 @@ h2 { font-size: 16px; margin-top: 3px; }
   max-height: 92dvh;
 }
 #simulationDialog .dialog-footer { flex-wrap: wrap; }
+.auto-play-batch-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 16px; }
+.auto-play-batch-controls[hidden] { display: none; }
+.auto-play-batch-controls label { display: grid; gap: 6px; }
+.auto-play-batch-controls input { width: 120px; }
+.auto-play-batch-controls small { flex-basis: 100%; color: var(--muted); }
+#levelPreviewDialog { width: min(1100px, 96vw); height: min(980px, 92dvh); max-height: 92dvh; }
+#levelPreviewDialog[open] { display: flex; flex-direction: column; }
+#levelPreviewDialog .dialog-header { gap: 12px; flex-wrap: wrap; flex-shrink: 0; }
+#levelPreviewTitle { margin: 0; font-size: 20px; }
+#levelPreviewStatus { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+.level-preview-actions { display: flex; gap: 8px; margin-left: auto; }
+#levelPreviewFrameSlot { display: flex; flex: 1; min-height: 0; }
+#levelPreviewFrameSlot iframe { flex: 1; width: 100%; min-width: 0; height: 100%; border: 0; background: #171d34; }
 .simulation-grid {
   --cell-size: clamp(27px, min(calc((min(94vw, 1140px) - 32px) / var(--board-columns, 10) - 3px), calc(58dvh / var(--board-rows, 10) - 3px)), 76px);
   display: grid;

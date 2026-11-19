@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>3-Match Puzzle Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=27" />
+    <link rel="stylesheet" href="./styles.css?v=29" />
     <style>
     .object-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
     .asset-visual { position: relative; }
@@ -419,11 +419,7 @@
             </div>
 
             <label class="field-label spaced" for="simulationRuns">자동 검증 횟수</label>
-            <select class="field" id="simulationRuns">
-              <option value="10">10회 · 빠름</option>
-              <option value="30">30회 · 권장</option>
-              <option value="100">100회 · 정밀</option>
-            </select>
+            <input class="field" id="simulationRuns" type="number" min="1" max="1000" step="1" value="30" />
             <small class="rule-help">서로 다른 파생 시드로 휴리스틱 플레이를 반복해 클리어율과 Moves 분포를 계산합니다.</small>
 
               <button id="regionItemButton" class="button ghost" type="button">구역 아이템 랜덤 배치</button>
@@ -884,13 +880,22 @@
         <button class="icon-button" id="closeSimulationButton">×</button>
       </div>
       <div id="simulationResult" class="simulation-result"></div>
-      <div id="playtestGuide" class="playtest-guide" hidden>인접 칸으로 드래그해 블록이나 특수 피스를 교환하세요. 일반 블록은 두 칸을 차례로 클릭해도 교환할 수 있고, 특수 피스는 클릭하면 바로 발동합니다. 자동 플레이 시작 버튼으로 모드를 바꿀 수 있습니다.</div>
+      <div id="playtestGuide" class="playtest-guide" hidden>인접 칸으로 드래그해 교환하거나 특수 피스를 클릭해 발동하세요. 자동 플레이는 편집 중인 초기 보드부터 입력한 횟수만큼 실행한 뒤 대표 한 판을 재생합니다.</div>
+      <form id="autoPlayBatchControls" class="auto-play-batch-controls" hidden>
+        <label for="autoPlayRuns">자동 플레이 횟수
+          <input class="field" id="autoPlayRuns" type="number" min="1" max="1000" step="1" value="30" required />
+        </label>
+        <button class="button primary" id="startAutoPlayBatch" type="submit">자동 플레이</button>
+        <button class="button" id="cancelAutoPlayBatch" type="button" hidden>계산 중단</button>
+        <small>1~1000회 · 성공 확률 계산 후 대표 한 판 재생</small>
+      </form>
+      <div id="autoPlayBatchSummary" class="simulation-result" role="status" hidden></div>
       <p id="playtestFrameStatus" role="status" style="min-height:1.3em;margin:4px 0;"></p>
       <div id="simulationGrid" class="simulation-grid"></div>
       <div class="dialog-footer">
         <button class="button" id="playtestHintButton" hidden>힌트</button>
         <button class="button" id="playtestComboButton" aria-pressed="false" hidden>특수 피스 조합</button>
-        <button class="button" id="playtestPauseButton" hidden>자동 플레이 시작</button>
+        <button class="button" id="playtestPauseButton" hidden>대표 플레이 일시정지</button>
         <label id="playtestSpeedControl" hidden>재생 속도
           <select id="playtestSpeed">
             <option value="0.5">0.5×</option>
@@ -919,7 +924,7 @@
         <details style="margin-block: .65rem;">
           <summary style="cursor: pointer; font-weight: 700;">보드 편집</summary>
           <ul>
-            <li>왼쪽에서 클리어 방식과 이동 횟수를 설정한 뒤 <strong>플레이 미리보기</strong>를 누르면 현재 레벨을 새 탭에서 플레이합니다. 맵 크기, 중력, 별 점수와 생성 방식은 <strong>고급 레벨 설정</strong>에 있어요.</li>
+            <li>왼쪽에서 클리어 방식과 이동 횟수를 설정한 뒤 <strong>플레이 미리보기</strong>를 누르면 현재 페이지의 팝업에서 플레이합니다. 닫으면 편집 화면으로 돌아옵니다. 맵 크기, 중력, 별 점수와 생성 방식은 <strong>고급 레벨 설정</strong>에 있어요.</li>
             <li>오른쪽에서 <strong>Terrain / Block / Gimmick / Item</strong> 레이어를 선택한 뒤 <strong>오브젝트 만들기</strong>로 등록하거나, 가져온 오브젝트를 선택합니다. <strong>브러시</strong>로 클릭·드래그해 배치하고 <strong>채우기</strong>, <strong>지우개</strong>, <strong>실행 취소</strong>로 편집합니다.</li>
             <li>셀에 마우스를 올리면 속성을 볼 수 있습니다. <strong>칸 속성</strong>으로 초기 특수 피스의 색·종류를 편집하거나 해제할 수 있습니다. <strong>칸 비활성화</strong>는 해당 칸을 보드에서 제외하며, 다시 누르면 빈 칸으로 복원합니다.</li>
             <li><strong>Gimmick</strong> 탭에는 새 프로젝트와 가져온 프로젝트 모두에서 <strong>Spawner</strong>가 기본으로 표시됩니다. 보드에 배치한 스포너는 <strong>지우개</strong>로 제거할 수 있습니다.</li>
@@ -940,7 +945,7 @@
         <details style="margin-block: .65rem;">
           <summary style="cursor: pointer; font-weight: 700;">플레이와 검증</summary>
           <ul>
-            <li><strong>Playtest</strong>를 열면 직접 플레이합니다. 인접 블록 두 개를 클릭해 교환하거나 특수 피스를 클릭해 발동하세요. <strong>자동 플레이 시작</strong>을 누르면 현재 보드에서 자동으로 진행하고, <strong>직접 플레이로 전환</strong>을 누르면 이어서 직접 조작할 수 있습니다. 발동에는 이동 1회를 사용합니다. 클리어 기록은 <strong>이 기록을 난이도에 사용</strong>으로 반영할 수 있습니다.</li>
+            <li><strong>Playtest</strong>를 열면 직접 플레이합니다. 자동 플레이 횟수(1~1000회)를 입력하고 <strong>자동 플레이</strong>를 누르면 초기 보드부터 지정한 횟수만큼 실행하고 성공 확률을 표시합니다. 성공·실패와 관계없이 첫 번째 판을 대표로 재생하며 일시정지와 다시 재생을 할 수 있습니다. 직접 플레이하려면 창을 닫고 플레이 미리보기를 다시 여세요. 클리어 기록은 <strong>이 기록을 난이도에 사용</strong>으로 반영할 수 있습니다.</li>
             <li><strong>매치로 특수 피스 생성</strong>을 켜면 가로 4매치에서 세로 줄 폭탄, 세로 4매치에서 가로 줄 폭탄이 생깁니다. 5매치는 같은 색 제거 피스, T/L자 매치는 주변 3×3 폭탄, 2×2 매치는 목표 칸으로 날아가는 벌을 만듭니다. 일자 3매치는 블록만 제거합니다. 기존 레벨에서 꺼져 있다면 Playtest 버튼 옆에서 켤 수 있습니다.</li>
             <li>오른쪽 오브젝트 패널의 <strong>특수 타입 관리</strong>에서 현재 Cave의 특수 타입 이름과 발동 효과를 설정합니다. 효과는 해당 Cave에서 같은 타입을 사용하는 모든 피스에 적용됩니다. <strong>칸 속성</strong>에서 블록 색과 등록된 특수 타입을 선택해 배치합니다.</li>
             <li>직접 작성한 스크립트를 선택하면 여러 효과를 조합할 수 있습니다. 예를 들어 <code>[{"op":"row"},{"op":"offsets","cells":[[-1,-1],[1,1]]}]</code>는 피스의 가로 한 줄과 대각선 두 칸을 터뜨립니다. Playtest와 자동 플레이에서 같은 효과가 적용됩니다. 스크립트는 지원 명령을 담은 JSON 배열입니다.</li>
@@ -1069,7 +1074,20 @@
         <form method="dialog"><button class="button">닫기</button></form>
       </div>
     </dialog>
-    <script type="module" src="./app.js?v=215"></script>
+    <dialog id="levelPreviewDialog" class="simulation-dialog" aria-labelledby="levelPreviewTitle">
+      <div class="dialog-header">
+        <div>
+          <h2 id="levelPreviewTitle">플레이 미리보기</h2>
+          <p id="levelPreviewStatus" role="status"></p>
+        </div>
+        <div class="level-preview-actions">
+          <button class="button" id="restartLevelPreview" type="button">다시 시작</button>
+          <button class="button" id="closeLevelPreview" type="button">닫기</button>
+        </div>
+      </div>
+      <div id="levelPreviewFrameSlot"></div>
+    </dialog>
+    <script type="module" src="./app.js?v=217"></script>
   </body>
 </html>
 

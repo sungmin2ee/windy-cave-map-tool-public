@@ -2,6 +2,20 @@
 
 Verified in the local browser against the working tree, using actual clicks and mouse drags. These checks do not establish timing equivalence with an Android Royal Match runtime.
 
+## In-page player preview, client 2.7.66
+
+Clicked Play Preview on a filled ordinary level with a 500-point goal. The editor stayed on its original URL and opened a modal containing the actual player iframe, with matching level name, 20 moves, and 0/500 points. Used the player's hint and clicked its suggested pair; observed 19 moves and 300/500 points. The modal's Restart restored 20 moves. The player's Quit closed the modal, and reopening followed by the modal's Close returned to the editor. Both close paths removed the iframe. Undid both temporary map edits and confirmed the blank original board and mission mode were restored. Browser error log empty; existing 55 tests passed. Screenshots: `../analysis-tools/preview-popup.jpg` and `../analysis-tools/preview-popup-playing.jpg`.
+
+Preview passes the current single-level JSON and theme through a same-origin Blob URL. Host messages require matching origin, iframe source, protocol version, and run ID. Closing removes the iframe, listener and timeout and revokes the Blob URL; reopening or restarting creates a fresh session.
+
+## Repeated automatic Playtest, client 2.7.65
+
+In the editor's Verification Tools → Editor Playtest, entered 7 runs on an ordinary filled board with a 500-point goal. The batch showed 7/7 wins and 100%; the first game's animated replay finished with 1700 points and 1 used move, matching the successful batch result. Changed the goal to 999999 with 2 moves and ran 3 games: 0/3 wins and 0%, with the representative replay ending in move exhaustion after 2 moves. Batch statistics remained visible during and after replay. Screenshots: `../analysis-tools/auto-play-batch-success.jpg` and `../analysis-tools/auto-play-batch-failure.jpg`.
+
+Restarted the representative game and paused it; the button changed to resume. Started 1000 games, observed 10/1000 progress, canceled, and confirmed editable run count, enabled start button and restored manual board. Zero runs failed native input validation without starting a batch; a subsequent 2-run batch completed correctly. Browser error log was empty. Undid all four editor test changes, restoring the blank ordinary Cave 0001, mission mode, 20 moves and no goals.
+
+The batch uses fresh derived seeds, restarts each game from the editor board, keeps the first result regardless of success, and yields between games. Cancellation discards partial statistics. Unlimited-move replay uses the same 100-turn test cap as the calculation. Core and batch tests passed 55/55; syntax and whitespace checks passed. Probability keeps one decimal place so 1 success in 1000 games displays as 0.1%.
+
 ## Collection gimmicks, client 2.7.64
 
 Compared the Unity source `TreasurePiece.cs` and `WinningConditions.collectTreasure`: hats and bags are non-matching falling pieces collected at exit coordinates. This was a source comparison, not a new Unity playthrough.
