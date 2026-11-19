@@ -2,6 +2,10 @@
 
 Verified in the local browser against the working tree, using actual clicks and mouse drags. These checks do not establish timing equivalence with an Android Royal Match runtime.
 
+## Level list navigation, client 2.7.62
+
+With the guide closed, selected Cave 0001 from the level list: Board Edit became the selected tab, the matching level title and board became visible, and the board editor scrolled to 52px below the top of the viewport. Repeated using the level-number jump with the same result. With the guide open on step 1, selecting the level retained the Level List tab and step 1 until Next. Closed the guide and selected the level again to confirm normal navigation resumed. Browser warning/error log empty; JS syntax and whitespace checks passed. Screenshot: `../analysis-tools/level-list-board-navigation.jpg`.
+
 | Case | Observed result |
 |---|---|
 | Player, `live-board.json`: tap corner bomb, then bottom row special during removal | Remaining moves changed 25 → 24 → 23. Burst actors were still present, and no falling actors had started when the second special committed. |

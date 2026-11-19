@@ -76,7 +76,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.61";
+const CLIENT_VERSION = "2.7.62";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -952,7 +952,12 @@ function renderCaveList() {
     const button = document.createElement("button");
     button.className = `cave-item${cave.id === project.activeCaveId ? " active" : ""}`;
     button.innerHTML = `<span class="cave-number">${String(cave.number).padStart(4, "0")}</span><strong>${escapeHtml(cave.name)}</strong>`;
-    button.addEventListener("click", () => { project.activeCaveId = cave.id; undoStack = []; redoStack = []; renderAll(); persist(); });
+    button.addEventListener("click", () => {
+      project.activeCaveId = cave.id;
+      undoStack = []; redoStack = [];
+      renderAll(); persist();
+      revealSelectedCave();
+    });
     list.appendChild(button);
   });
 }
@@ -2103,6 +2108,7 @@ function jumpToCave() {
   $("caveList").querySelector(".active")?.scrollIntoView({ block: "nearest" });
   $("caveJumpStatus").textContent = `Cave ${number}번으로 이동했습니다.`;
   persist();
+  revealSelectedCave();
 }
 
 function switchCave(delta) {
@@ -4978,6 +4984,14 @@ function importProject(file) {
   };
   reader.onerror = () => toast("파일을 열 수 없습니다. 파일 앱에 저장된 JSON을 다시 선택하세요.");
   reader.readAsText(file);
+}
+
+function revealSelectedCave() {
+  // Guided level selection stays on its step until the user presses Next.
+  if (!$("editorGuide").hidden) return;
+  selectEditorTab("board");
+  $("editorTab-board").focus({ preventScroll: true });
+  $("boardEditor").scrollIntoView({ block: "start", inline: "nearest" });
 }
 
 function selectEditorTab(id, guideGroups) {
