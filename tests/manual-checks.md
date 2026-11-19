@@ -2,6 +2,22 @@
 
 Verified in the local browser against the working tree, using actual clicks and mouse drags. These checks do not establish timing equivalence with an Android Royal Match runtime.
 
+## Collection gimmicks, client 2.7.64
+
+Compared the Unity source `TreasurePiece.cs` and `WinningConditions.collectTreasure`: hats and bags are non-matching falling pieces collected at exit coordinates. This was a source comparison, not a new Unity playthrough.
+
+The browser now lists both under Gimmick and neither under Item. Placed both into an ordinary blank level: both original images decoded. Added the bag as a goal using the selected-object button; the goal displayed category Gimmick, exit collection, and automatic quantity 1. Undid all three test edits and confirmed zero placed images and no goals remained. Screenshots: `../analysis-tools/collection-gimmick-palette.jpg` and `../analysis-tools/collection-gimmick-goal.jpg`.
+
+Legacy item slots and collection objectives remain compatible with existing JSON. Play state converts these slots into falling pieces on ordinary maps too. Theme packs migrate their collection artwork into the Gimmick category while retaining legacy object-image definitions. The core suite passed 51/51, including exit collection, normal-match/explosion exclusion, automatic target counting, and JSON round trips. JS syntax and whitespace checks passed.
+
+## Artwork on ordinary levels, client 2.7.63
+
+Built-in block, special-piece and mapped gimmick artwork is available independently of a level's external-source metadata. Object-image overrides and applied theme artwork retain priority.
+
+In the browser, duplicated a blank ordinary Cave 0001 without DDUNG source metadata and placed red/red/blue pieces. Set the middle piece to bee through the cell inspector. The palette's six default color images and all three placed images decoded successfully; the bee used `special-pieces.webp`. Uploaded the existing blue image into the Red theme slot, applied the theme, and duplicated the test level again: the red cell retained the custom data image, while the bee and blue cell retained their built-in images. Screenshots outside the repository: `../analysis-tools/new-level-default-images.jpg` and `../analysis-tools/new-level-themed-images.jpg`.
+
+The in-app browser does not support the New Level button's native `prompt()`, so this browser check used ordinary blank-level duplication rather than that dialog. The shared artwork resolver is used by both creation paths. Native confirmation dialogs also required user assistance during test cleanup. JS syntax, whitespace checks, and existence of the 12 relevant default artwork files passed.
+
 ## Level list navigation, client 2.7.62
 
 With the guide closed, selected Cave 0001 from the level list: Board Edit became the selected tab, the matching level title and board became visible, and the board editor scrolled to 52px below the top of the viewport. Repeated using the level-number jump with the same result. With the guide open on step 1, selecting the level retained the Level List tab and step 1 until Next. Closed the guide and selected the level again to confirm normal navigation resumed. Browser warning/error log empty; JS syntax and whitespace checks passed. Screenshot: `../analysis-tools/level-list-board-navigation.jpg`.

@@ -40,6 +40,48 @@ function colorBombBoard(type = 'rainbow', extra = {}) {
     objectives: base.objectives, ...extra });
 }
 
+function collectionGimmickBoard({ exit = 32, countMode = 'manual', special = 0 } = {}) {
+  const { cave: base } = fixture();
+  const layers = structuredClone(base.layers);
+  layers.item[14] = 'ddung-treasure-1';
+  layers.gimmick[exit] = 'exit';
+  return fixture({ layers, initialPieceTypes: { [special]: 'bomb' },
+    objectives: [{ layer: 'item', targetId: 'ddung-treasure-1', countMode, count: 1 }] });
+}
+
+test('ordinary maps use falling collection pieces and collect them only at the exit', () => {
+  const { engine, state, live } = collectionGimmickBoard({ exit: 20 });
+  state.clearBonusEnabled = false;
+  assert.equal(state.cave.layers.item[14], null);
+  assert.equal(state.cave.layers.block[14], 'ddung-treasure-1');
+  assert.equal(engine.collectDdungTreasure(state), 0);
+  state.cave.layers.block[20] = null;
+  state.cave.livePieceIds[20] = null;
+  assert.equal(live.submit({ first: 0 }), true);
+  settle(live);
+  assert.equal(state.objectiveProgress[0].current, 1);
+  assert.equal(state.status, 'won');
+  assert.equal(state.cave.layers.block.includes('ddung-treasure-1'), false);
+});
+
+test('collection gimmicks are not normal matches or destructible bomb targets', () => {
+  const { engine, state, live } = collectionGimmickBoard({ special: 13 });
+  assert.equal(engine.findMatches(state.cave).has(14), false);
+  assert.equal(live.submit({ first: 13 }), true);
+  assert.equal(state.cave.layers.block[14], 'ddung-treasure-1', 'nearby explosion keeps the collection piece');
+  assert.equal(state.objectiveProgress[0].current, 0);
+});
+
+test('collection goal counts survive item-to-falling-piece conversion and JSON round trips', () => {
+  const { engine, cave, state } = collectionGimmickBoard({ countMode: 'auto-map' });
+  assert.equal(engine.countObjectiveAssets(cave, cave.objectives[0]), 1);
+  assert.equal(engine.countObjectiveAssets(state.cave, state.cave.objectives[0]), 1);
+  assert.equal(state.objectiveProgress[0].target, 1);
+  const reloaded = engine.createPlayState(JSON.parse(JSON.stringify(cave)), 'reload', true);
+  assert.equal(reloaded.objectiveProgress[0].target, 1);
+  assert.equal(reloaded.cave.layers.block[14], 'ddung-treasure-1');
+});
+
 test('color bombs never join a normal match using their serialized color', () => {
   for (const [type, extra] of [['rainbow', {}], [5, { externalSource: { format: 'DDUNG MapInfo v68' } }]]) {
     const { engine, state, cave } = colorBombBoard(type, extra);

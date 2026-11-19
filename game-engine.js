@@ -128,6 +128,10 @@ export function createGameEngine(getProject) {
   }
 
   function countObjectiveAssets(cave, objective) {
+    if (objective.layer === "item" && isDdungTreasure(objective.targetId)) {
+      return cave.layers.block.filter((id, index) => id === objective.targetId ||
+        cave.layers.item[index] === objective.targetId).length;
+    }
     if (objective.layer === "terrain" && objective.targetId === "ddung-jelly") {
       const cells = ddungJellyCells(cave);
       if (cells.size) return new Set([...cells].filter(([index]) => cave.layers.terrain[index] === "ddung-jelly")
@@ -2275,7 +2279,7 @@ export function createGameEngine(getProject) {
     const copy = deepCopy(cave);
     copy.layers.block.forEach((id, index) => {
       const item = copy.layers.item[index];
-      if (usesDdungGeneration(copy) && isDdungTreasure(item)) {
+      if (isDdungTreasure(item)) {
         copy.layers.block[index] = item;
         copy.layers.item[index] = null;
       }
@@ -2312,7 +2316,7 @@ export function createGameEngine(getProject) {
       ddungEventRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|ddung-events`),
       treasureMisses: 0,
       treasureGoals: copy.objectives.flatMap((objective, index) =>
-        usesDdungGeneration(copy) && objective.layer === "item" && isDdungTreasure(objective.targetId)
+        objective.layer === "item" && isDdungTreasure(objective.targetId)
           ? [{ index, targetId: objective.targetId }] : []),
       terrainHits: Array(copy.width * copy.height).fill(0),
       ddungJellyCells: ddungJellyCells(copy),

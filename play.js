@@ -4,7 +4,7 @@ import {
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
   readThemePack, THEME_PACK_FORMAT,
-} from "./app.js?v=213";
+} from "./app.js?v=215";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.webp",
@@ -135,7 +135,8 @@ function renderPuzzleGoals(state) {
     icon.setAttribute("aria-hidden", "true");
     icon.textContent = asset?.visual || "◆";
     if (asset?.color) icon.style.color = asset.color;
-    const artwork = puzzleArtwork?.goals?.[objective.targetId] || puzzleArtwork?.layers[objective.layer]?.[objective.targetId];
+    const artwork = puzzleArtwork?.goals?.[objective.targetId] || puzzleArtwork?.layers[objective.layer]?.[objective.targetId] ||
+      puzzleArtwork?.layers.gimmick?.[objective.targetId];
     showObjectImage(icon, artwork || PUZZLE_GOAL_IMAGES[objective.targetId] || asset?.image);
 
     const count = document.createElement("strong");
