@@ -1,5 +1,5 @@
-import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=16";
-import { createLiveGame } from "./live-game.js?v=5";
+import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=18";
+import { createLiveGame } from "./live-game.js?v=7";
 
 const gameEngine = createGameEngine(() => project);
 
@@ -76,7 +76,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.58";
+const CLIENT_VERSION = "2.7.59";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -3396,9 +3396,11 @@ async function showPlaytestFrames(state, turn, frames) {
     renderSimulationGrid(frame.cave, false, [], frame);
     const grid = $("simulationGrid");
     $("playtestFrameStatus").textContent = frame.label;
+    refreshPlaytestMoves({ ...state, clearBonus: frame.clearBonus });
     const speed = Number($("playtestSpeed").value) || 1;
     const delay = playtestFrameDuration(frame.kind, frame.delay, speed);
     for (const index of frame.cells) grid.children[index]?.classList.add("playtest-frame-" + frame.kind);
+    if (frame.kind === "bonus") animateBonusCells(grid, frame.cells, delay);
     animateFrameMotions(grid, frame.cave, frame.motions, delay);
     if (frame.turnActor?.type === "bee") animateBeeFlights(grid, frame.cave, frame.turnActor.flights, delay);
     else if (frame.turnActor) animateDdungTurnActor(grid, frame.turnActor, delay);
@@ -3471,6 +3473,11 @@ function showLiveEffects(state, frames) {
   const grid = $("simulationGrid");
   const speed = Number($("playtestSpeed").value) || 1;
   for (const frame of frames) {
+    if (frame.kind === "bonus") {
+      setTimeout(() => {
+        if (playtestState === state && playtestIsVisible()) animateBonusCells(grid, frame.cells, frame.delay / speed);
+      }, frame.at / speed);
+    }
     if (frame.turnActor?.type === "bee") {
       setTimeout(() => {
         if (playtestState === state && playtestIsVisible()) animateBeeFlights(grid, frame.cave, frame.turnActor.flights, frame.delay / speed);
@@ -3528,6 +3535,16 @@ function showLiveEffects(state, frames) {
   syncLiveSwapVisibility(grid);
 }
 
+function animateBonusCells(grid, cells, duration) {
+  for (const index of cells) {
+    grid.children[index]?.querySelector(".cell-block")?.animate([
+      { transform: "scale(0.65)", filter: "brightness(1.8)" },
+      { transform: "scale(1.18)", filter: "brightness(1.3)", offset: 0.65 },
+      { transform: "scale(1)", filter: "brightness(1)" },
+    ], { duration: Math.max(150, duration), easing: "ease-out" });
+  }
+}
+
 function startLivePlaytest(state, action) {
   if (!state.liveSession) {
     liveBoardSerial++;
@@ -3572,11 +3589,12 @@ async function animatePlaytestTurn(state, action) {
     const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
     const playtestPieces = [...state.cave.playtestPieces];
     for (const index of cleared) { layers.block[index] = null; playtestPieces[index] = null; }
-    frames.push({ cave: { ...state.cave, layers, playtestPieces },
+    frames.push({ cave: { ...state.cave, layers, playtestPieces }, clearBonus: state.clearBonus && { remaining: state.clearBonus.remaining },
       terrainHits: [...state.terrainHits], gimmickHits: [...state.gimmickHits], label, cells, kind, delay, motions, turnActor, burst });
   };
   try {
     playSimulationTurn(state, action, capture);
+    gameEngine.playClearBonus(state, capture);
     refreshPlaytestMoves(state);
     await showPlaytestFrames(state, turn, frames);
   } finally {
@@ -3590,8 +3608,9 @@ async function animatePlaytestTurn(state, action) {
 function refreshPlaytestMoves(state) {
   const moves = $("movesLeft") || $("playtestMovesRemaining");
   if (moves) {
-    moves.textContent = state.movesLeft === null ? "무제한"
-      : moves.id === "movesLeft" ? state.movesLeft : `${state.movesLeft} / ${state.cave.moveLimit}`;
+    const remaining = state.clearBonus?.remaining ?? state.movesLeft;
+    moves.textContent = remaining === null ? "무제한"
+      : moves.id === "movesLeft" ? remaining : `${remaining} / ${state.cave.moveLimit}`;
   }
   const used = $("playtestMovesUsed");
   if (used) used.textContent = state.movesUsed;
@@ -3811,7 +3830,8 @@ function renderPlaytest() {
   if (!state) return;
   const failed = state.status === "lost" || state.status === "stuck";
   const remainingTargets = failed && state.scoreTarget === null ? playtestRemainingTargets(state) : [];
-  const movesRemaining = state.movesLeft === null ? "무제한" : `${state.movesLeft} / ${state.cave.moveLimit}`;
+  const displayRemaining = state.clearBonus?.remaining ?? state.movesLeft;
+  const movesRemaining = displayRemaining === null ? "무제한" : `${displayRemaining} / ${state.cave.moveLimit}`;
   const practice = state.scoreTarget === null && state.goalLimitations.some(Boolean);
   const flowLabels = { royal: "원작 방식 · 직선 우선/후보 탐색", none: "우회 없음" };
   const result = $("simulationResult");

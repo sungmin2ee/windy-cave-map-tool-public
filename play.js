@@ -4,7 +4,7 @@ import {
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
   readThemePack, THEME_PACK_FORMAT,
-} from "./app.js?v=208";
+} from "./app.js?v=210";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.webp",
@@ -149,7 +149,7 @@ function renderPuzzleGoals(state) {
 
 function renderPuzzlePlayer() {
   const state = playtestState;
-  $("movesLeft").textContent = state.movesLeft ?? "무제한";
+  $("movesLeft").textContent = state.clearBonus?.remaining ?? state.movesLeft ?? "무제한";
   const scoreMode = state.scoreTarget !== null;
   $("scoreCard").hidden = !scoreMode && !rules.pointsPerGoalUnit && !rules.pointsPerMoveLeft;
   $("score").textContent = puzzleScore(state, state.status === "won");
@@ -167,9 +167,9 @@ function renderPuzzlePlayer() {
       ? "이동 횟수를 모두 사용했어요."
       : state.message;
   $("restart").hidden = embedded;
-  $("hint").hidden = !playing;
+  $("hint").hidden = !playing || Boolean(state.clearBonus);
   $("next").hidden = !won || !hasNext;
-  renderSimulationGrid(state.cave, playing);
+  renderSimulationGrid(state.cave, playing && !state.clearBonus);
   if (!playing) reportPuzzleResult(state, won ? "won" : "lost");
 
   const dialog = $("clearDialog");

@@ -453,3 +453,80 @@ test('synchronous Playtest also fills wall pockets through the royal planner', (
   for (const index of [14, 15]) assert.equal(state.cave.layers.block[index], null);
   for (const index of [20, 21]) assert.ok(state.cave.layers.block[index]);
 });
+
+test('clear bonus generates one random special per remaining move, then finishes without spending player moves', () => {
+  const { live, state, frames } = fixture({ moveLimit: 6, scoreTarget: 100 });
+  live.submit({ first: 0 });
+  for (let i = 0; i < 1000 && !state.clearBonus; i++) live.tick(1 / 120);
+  assert.ok(state.clearBonus);
+  assert.equal(state.status, 'playing', 'result waits for the bonus');
+  assert.equal(live.canSwap(35), false);
+  assert.equal(live.canTap(35), false);
+  settle(live);
+  assert.equal(state.status, 'won');
+  assert.equal(state.clearBonus.total, 5);
+  assert.equal(state.clearBonus.generated, 5);
+  assert.equal(state.clearBonus.remaining, 0);
+  assert.equal(state.clearBonus.phase, 'done');
+  assert.equal(state.movesUsed, 1);
+  assert.equal(state.movesLeft, 5, 'remaining moves for stars and host rewards are preserved');
+  const conversions = frames.filter(frame => frame.kind === 'bonus' && frame.label.includes('생성'));
+  assert.equal(conversions.length, 5);
+  for (const frame of conversions) {
+    const piece = frame.cave.playtestPieces[frame.cells[0]];
+    assert.ok(['horizontal', 'vertical', 'bomb', 'bee'].includes(piece.type));
+  }
+  const generated = state.clearBonus.generated;
+  live.tick(1);
+  assert.equal(state.clearBonus.generated, generated);
+});
+
+test('clear bonus uses multiple batches when remaining moves exceed available cells', () => {
+  const { live, state } = fixture({ moveLimit: 61, scoreTarget: 100 });
+  live.submit({ first: 0 });
+  settle(live);
+  assert.equal(state.status, 'won');
+  assert.equal(state.clearBonus.generated, 60);
+  assert.equal(state.clearBonus.remaining, 0);
+  assert.equal(state.movesUsed, 1);
+  const ids = state.cave.livePieceIds.filter(Boolean);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('zero remaining moves and unlimited-move wins skip move conversion', () => {
+  for (const settings of [{ moveLimit: 1 }, { moveLimitEnabled: false }]) {
+    const { live, state } = fixture({ ...settings, scoreTarget: 100 });
+    live.submit({ first: 0 });
+    settle(live);
+    assert.equal(state.status, 'won');
+    assert.equal(state.clearBonus, undefined);
+    assert.equal(state.movesUsed, 1);
+  }
+});
+
+test('sequential preview supports the same clear bonus while automatic simulation skips presentation', () => {
+  const { engine, cave } = fixture({ moveLimit: 6, scoreTarget: 100 });
+  const state = engine.createPlayState(cave, 'sequential-bonus', true);
+  engine.playSimulationTurn(state, { first: 0 });
+  assert.equal(state.status, 'won');
+  engine.playClearBonus(state);
+  assert.equal(state.clearBonus.generated, 5);
+  assert.equal(state.clearBonus.remaining, 0);
+  assert.equal(state.movesUsed, 1);
+  assert.equal(state.movesLeft, 5);
+  const automatic = engine.createPlayState(cave, 'automatic', false);
+  engine.playSimulationTurn(automatic, { first: 0 });
+  engine.playClearBonus(automatic);
+  assert.equal(automatic.status, 'won');
+  assert.equal(automatic.clearBonus, undefined);
+});
+
+test('a completed goal cannot be changed to failure by a turn-end hazard before its bonus', () => {
+  const { live, state } = fixture({ moveLimit: 6, scoreTarget: 100 });
+  state.cave.layers.gimmick[0] = 'ddung-bee-up';
+  live.submit({ first: 35 });
+  settle(live);
+  assert.equal(state.status, 'won');
+  assert.equal(state.clearBonus.generated, 5);
+  assert.equal(state.movesUsed, 1);
+});

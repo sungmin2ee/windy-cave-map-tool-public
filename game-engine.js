@@ -303,6 +303,7 @@ export function createGameEngine(getProject) {
   }
 
   function clearConditionMet(state) {
+    if (state.clearBonus) return true;
     if (state.scoreTarget !== null) return state.blocksRemoved * state.pointsPerBlock >= state.scoreTarget;
     return !state.goalLimitations.some(Boolean) && state.objectiveProgress.length > 0 &&
       state.objectiveProgress.every((progress, index) => {
@@ -947,7 +948,7 @@ export function createGameEngine(getProject) {
     let comboPending = combo;
     while (matches.size && cascade < 20) {
       const expanded = comboPending ?? expandSpecialHits(state, matches, protectedCells, state.beeRandom);
-      const created = comboPending ? new Map() : createdSpecials(state.cave, runs, preferred, matches);
+      const created = comboPending || state.clearBonus ? new Map() : createdSpecials(state.cave, runs, preferred, matches);
       const triggered = [...expanded.hits].some((index) => !isBarrier(state.cave, index) && specialEffect(state.cave, state.cave.playtestPieces[index]));
       matches = expanded.hits;
       const highlighted = new Set([...matches, ...expanded.targetedTerrain]);
@@ -1938,6 +1939,11 @@ export function createGameEngine(getProject) {
   function finishSimulationTurn(state, resolved, captureFrame) {
     const cave = state.cave;
     state.message = resolved.removed + "개 제거 · " + resolved.cascade + "연쇄 · Terrain " + resolved.terrainBroken + "개 파괴";
+    if (clearConditionMet(state)) {
+      state.turnPanelsHit.clear();
+      if (!state.liveMode) state.status = "won";
+      return;
+    }
     for (const [index, id] of cave.layers.gimmick.entries()) {
       if (id !== "ddung-attack-turn" || state.turnPanelsHit.has(index)) continue;
       if (state.verticalPanels.has(index)) state.verticalPanels.delete(index);
@@ -1992,9 +1998,64 @@ export function createGameEngine(getProject) {
 
   function finishLiveState(state, captureFrame) {
     if (state.status !== "playing") return;
-    if (clearConditionMet(state)) state.status = "won";
+    if (clearConditionMet(state)) {
+      if (!advanceClearBonus(state, captureFrame)) state.status = "won";
+    }
     else if (state.movesLeft === 0) state.status = "lost";
     else ensurePlayableBoard(state, captureFrame);
+  }
+
+  function advanceClearBonus(state, captureFrame) {
+    if (!state.clearBonus) {
+      if (!state.clearBonusEnabled || !(state.movesLeft > 0) || !clearConditionMet(state)) return false;
+      state.clearBonus = { total: state.movesLeft, remaining: state.movesLeft, generated: 0,
+        phase: "generate", pending: new Set(state.cave.playtestPieces.filter(piece => specialEffect(state.cave, piece))) };
+    }
+    const bonus = state.clearBonus;
+    const cave = state.cave;
+    const available = (index) => cave.layers.block[index] && !isSwapBlocked(cave, index) &&
+      !isDdungTreasure(cave.layers.block[index]) && cave.layers.block[index] !== "ddung-dust-piece";
+    if (bonus.phase === "generate" && bonus.remaining > 0) {
+      const cells = cave.layers.block.flatMap((block, index) => available(index) && !cave.playtestPieces[index] ? [index] : []);
+      if (cells.length) {
+        const index = cells[Math.floor(state.bonusRandom() * cells.length)];
+        const type = Math.floor(state.bonusRandom() * 4);
+        const definition = EDITABLE_INITIAL_PIECES[type];
+        const piece = { type: isDdungSource(cave.externalSource) ? [1, 2, 3, 8][type] : definition.id,
+          color: cave.layers.block[index], name: definition.name, symbol: definition.symbol };
+        cave.playtestPieces[index] = piece;
+        bonus.pending.add(piece);
+        bonus.generated++;
+        bonus.remaining--;
+        state.message = `클리어 보너스 · 남은 MOVE ${bonus.remaining} · 특수 피스 생성`;
+        captureFrame?.(state.message, [index], "bonus", 110);
+        return true;
+      }
+    }
+    bonus.phase = "activate";
+    const activations = cave.playtestPieces.flatMap((piece, index) => available(index) && bonus.pending.has(piece) && specialEffect(cave, piece) ? [index] : []);
+    if (activations.length) {
+      for (const index of activations) bonus.pending.delete(cave.playtestPieces[index]);
+      state.message = "클리어 보너스 · 특수 피스 발동";
+      captureFrame?.(state.message, activations, "bonus", 120);
+      resolveMatches(state, captureFrame, activations);
+      return true;
+    }
+    bonus.pending.clear();
+    if (bonus.remaining > 0 && cave.layers.block.some((block, index) => available(index) && !cave.playtestPieces[index])) {
+      bonus.phase = "generate";
+      return advanceClearBonus(state, captureFrame);
+    }
+    bonus.phase = "done";
+    state.message = "클리어!";
+    return false;
+  }
+
+  function playClearBonus(state, captureFrame) {
+    // Presentation only: batch difficulty simulations do not spend time or
+    // alter their measurements on post-clear fireworks.
+    if (state.status !== "won") return;
+    while (advanceClearBonus(state, captureFrame)) { /* each step consumes a move or a finite pending piece */ }
   }
 
   function planLiveFalls(state, blocked) {
@@ -2212,6 +2273,7 @@ export function createGameEngine(getProject) {
       cave: copy,
       movesLeft: copy.moveLimitEnabled === false ? null : copy.moveLimit,
       movesUsed: 0,
+      clearBonusEnabled: manual,
       blocksRemoved: 0,
       scoreTarget,
       pointsPerBlock,
@@ -2220,6 +2282,7 @@ export function createGameEngine(getProject) {
       status: "playing",
       message: manual ? "교환할 인접 블록 두 개를 클릭하세요." : "자동 플레이를 시작합니다.",
       random: seededRandom(`${copy.randomSeed}|${seedSuffix}`),
+      bonusRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|clear-bonus`),
       shuffleRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|shuffle`),
       shuffleCount: 0,
       sealRandom: isDdungSource(copy.externalSource) && copy.externalSource.specialColors?.length
@@ -2450,6 +2513,7 @@ export function createGameEngine(getProject) {
     collectDdungTreasure,
     finishLiveTurns,
     finishLiveState,
+    playClearBonus,
     createPlayState,
     runAutoGame,
     DDUNG_COLOR_IDS,

@@ -97,7 +97,7 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
         delay += frame.delay;
       }
       effects(frames);
-      state.message = engine.clearConditionMet(state) ? "목표 달성 · 마무리 중입니다."
+      state.message = state.clearBonus ? (frames[0].label.startsWith("클리어 보너스") ? frames[0].label : `클리어 보너스 · ${frames[0].label}`) : engine.clearConditionMet(state) ? "목표 달성 · 마무리 중입니다."
         : frames.find((frame) => frame.delay)?.label || frames[0].label;
     }
     dirty = true;
@@ -149,7 +149,8 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
       motions.set(move.id, { ...move, progress: 0, speed: speeds.get(move.id) ?? 4 });
     }
     if (moves.length) dirty = true;
-    if (moves.length) state.message = engine.clearConditionMet(state) ? "목표 달성 · 마무리 중입니다."
+    if (moves.length) state.message = state.clearBonus ? "클리어 보너스 · 블록 낙하 중"
+      : engine.clearConditionMet(state) ? "목표 달성 · 마무리 중입니다."
       : "블록 낙하 중 · 멈춘 블록은 계속 조작할 수 있어요.";
   }
 
