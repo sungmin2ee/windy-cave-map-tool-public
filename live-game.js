@@ -34,6 +34,15 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
     const result = new Set(locks.keys());
     for (const motion of motions.values()) {
       result.add(motion.from); result.add(motion.to);
+    }
+    return result;
+  }
+
+  function fallBlockedCells() {
+    // Final targets prevent two fall planners borrowing the same donor/path.
+    // They are not CurrentItem/NextItem occupancy for touch or match checks.
+    const result = blockedCells();
+    for (const motion of motions.values()) {
       if (motion.target !== undefined) result.add(motion.target);
     }
     return result;
@@ -145,10 +154,10 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
   }
 
   function advanceBoard() {
-    const blocked = blockedCells();
+    const blocked = fallBlockedCells();
     const falls = engine.planLiveFalls(state, blocked);
     if (falls.length) startMotions(falls);
-    const spawned = engine.refillLiveSources(state, blockedCells());
+    const spawned = engine.refillLiveSources(state, fallBlockedCells());
     for (const move of spawned) {
       motions.set(move.id, { ...move, progress: 0, speed: 4,
         block: cave.layers.block[move.to], piece: cave.playtestPieces[move.to] });
@@ -209,7 +218,7 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
   }
 
   return {
-    submit, tick, canTap, canSwap, blockedCells, motions,
+    submit, tick, canTap, canSwap, blockedCells, fallBlockedCells, motions,
     get active() { return active; },
     get clock() { return clock; },
     stop() { stopped = true; active = false; state.animating = false; motions.clear(); locks.clear(); },

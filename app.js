@@ -1,5 +1,5 @@
 import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=16";
-import { createLiveGame } from "./live-game.js?v=4";
+import { createLiveGame } from "./live-game.js?v=5";
 
 const gameEngine = createGameEngine(() => project);
 
@@ -76,7 +76,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.56";
+const CLIENT_VERSION = "2.7.58";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -430,7 +430,7 @@ function normalizeProject(data) {
     ? normalizeGimmickRules(source.gimmickRules)
     : legacySharedRules(caves, "gimmickRules");
   const normalized = { ...metadata, specialPieceRules: normalizeSpecialPieceRules(source.specialPieceRules), version: String(source.contentVersion || source.version || "V0001"), caves, activeCaveId, assetDefinitions, paletteAssets, terrainRules, gimmickRules };
-  normalized.swapDuringEffects = source.swapDuringEffects === true;
+  normalized.swapDuringEffects = source.swapDuringEffects !== false;
   bindProjectObjectRules(normalized);
   return normalized;
 }

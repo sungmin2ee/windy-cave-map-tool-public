@@ -34,3 +34,9 @@ Live cell reconciliation now compares the requested markup saved at render time 
 ## Invalid swap rendering, client 2.7.56
 
 Dragged the first row's yellow/blue pair in `royal-flow.json` to make an invalid swap. Outbound: only two swap actors visible, both underlying cell blocks hidden, delayed return actors hidden. Return: two visible actors, both underlying cell blocks hidden. After completion: zero swap actors, zero covered cells, original yellow/blue restored, remaining moves still 25, and the rollback message displayed. Browser error log empty; core tests 34/34 passed. Screenshot: `../analysis-tools/invalid-swap-fix.jpg` relative to repository root.
+
+## Empty destination input, client 2.7.58
+
+Input/match occupancy now excludes a motion's distant final target. Fall planning retains that reservation, while the moving piece's departure and immediate arrival cells remain protected. This supersedes the earlier blanket final-target input lock.
+
+In `empty-swap.json`, activated the corner bomb, selected cell 31, and pressed Enter on cell 32 during another piece's 20 → 26 motion targeting 32. DOM observation: 20 and 26 disabled, empty cell 32 enabled. The valid match spent the second move immediately (25 → 24 → 23), while other motions continued, then returned to an interactive settled board with 0 movement actors. Repeated with cell 33 → 32 to produce an invalid swap: 24 moves remained, rollback message displayed while two fall actors were still moving, and the board later settled. Inputs used real page controls, without mutating game state through browser evaluation. Browser error log empty. Core regression tests: 36/36 passed, including valid/invalid swaps into a distant fall target and incoming-cell protection. Screenshot: `../analysis-tools/empty-swap-fix.jpg` relative to repository root.

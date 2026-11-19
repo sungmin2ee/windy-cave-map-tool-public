@@ -4,7 +4,7 @@ import {
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
   readThemePack, THEME_PACK_FORMAT,
-} from "./app.js?v=206";
+} from "./app.js?v=208";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.webp",

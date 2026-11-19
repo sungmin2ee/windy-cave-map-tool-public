@@ -332,7 +332,7 @@ test('a frozen vertical path waits instead of treating moving cells as a wall', 
   assert.equal(moves.some(move => move.target === 20), false);
 });
 
-test('live cross motion reserves the eventual target as well as the next cell', () => {
+test('live cross motion reserves its final fall target without locking empty-cell input', () => {
   const { live, state } = blockedColumn([20, 26, 32]);
   live.submit({ first: 0 });
   let cross;
@@ -341,7 +341,11 @@ test('live cross motion reserves the eventual target as well as the next cell', 
     cross = [...live.motions.values()].find(move => move.kind === 'cross' && move.target !== move.to);
   }
   assert.ok(cross);
-  assert.equal(live.canSwap(cross.target, true), false);
+  assert.equal(live.fallBlockedCells().has(cross.target), true);
+  assert.equal(live.blockedCells().has(cross.target), false);
+  assert.equal(live.canSwap(cross.target, true), true);
+  assert.equal(live.canSwap(cross.to, true), false);
+  assert.equal(live.canSwap(cross.from, true), false);
   settle(live);
   const ids = state.cave.livePieceIds.filter(Boolean);
   assert.equal(new Set(ids).size, ids.length);
@@ -358,6 +362,47 @@ test('royal straight allocation preserves an explicit portal route', () => {
   assert.equal(warp.from, 6);
   assert.equal(warp.to, 29);
   assert.equal(warp.warp, true);
+});
+
+test('a valid swap into a distant fall target commits before the incoming piece reaches it', () => {
+  const { live, state } = blockedColumn([20, 26, 32]);
+  for (const index of [31, 33, 34]) state.cave.layers.block[index] = 'red';
+  live.submit({ first: 0 });
+  let cross;
+  for (let i = 0; i < 1000 && !cross; i++) {
+    live.tick(1 / 120);
+    cross = [...live.motions.values()].find(move => move.to === 20 && move.target === 32);
+  }
+  assert.ok(cross);
+  assert.equal(state.cave.layers.block[32], null);
+  assert.equal(live.canSwap(31), true);
+  const used = state.movesUsed;
+  assert.equal(live.submit({ first: 31, second: 32 }), true);
+  assert.equal(state.movesUsed, used + 1);
+  assert.ok(live.motions.has(cross.id), 'the other falling piece continues immediately');
+  assert.equal(state.cave.layers.block[32], null, 'match at the empty destination resolved');
+  settle(live);
+  const ids = state.cave.livePieceIds.filter(Boolean);
+  assert.equal(ids.length, new Set(ids).size);
+});
+
+test('an invalid swap into a distant target rolls back while its fall remains intact', () => {
+  const { live, state } = blockedColumn([20, 26, 32]);
+  live.submit({ first: 0 });
+  let cross;
+  for (let i = 0; i < 1000 && !cross; i++) {
+    live.tick(1 / 120);
+    cross = [...live.motions.values()].find(move => move.to === 20 && move.target === 32);
+  }
+  assert.ok(cross);
+  const used = state.movesUsed;
+  const original = state.cave.layers.block[31];
+  assert.equal(live.submit({ first: 31, second: 32 }), true);
+  assert.equal(state.movesUsed, used);
+  assert.equal(state.cave.layers.block[31], original);
+  assert.equal(state.cave.layers.block[32], null);
+  assert.ok(live.motions.has(cross.id));
+  settle(live);
 });
 
 test('royal allocation keeps a map cell\'s local gravity direction', () => {
