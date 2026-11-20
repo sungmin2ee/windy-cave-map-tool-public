@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPuzzleAudio, normalizeThemeSound } from '../puzzle-audio.js';
+import { createPuzzleAudio, normalizeThemeSound, specialSoundTypes } from '../puzzle-audio.js';
 
 function fixture() {
   const starts = [], requests = [], decoded = [];
-  const param = () => ({ setValueAtTime(){}, linearRampToValueAtTime(){}, exponentialRampToValueAtTime(){} });
+  const param = () => ({ values: [], setValueAtTime(value){this.values.push(value);}, linearRampToValueAtTime(){}, exponentialRampToValueAtTime(){} });
   class Context {
     state = 'running'; currentTime = 0; destination = {};
     resume() { this.state = 'running'; return Promise.resolve(); }
@@ -56,4 +56,30 @@ test('theme sound data accepts supported embedded audio and rejects active or ov
   assert.equal(normalizeThemeSound('javascript:alert(1)'), null);
   assert.equal(normalizeThemeSound('data:text/html;base64,UklGRg=='), null);
   assert.equal(normalizeThemeSound('data:audio/wav;base64,'+'A'.repeat(5600000)), null);
+});
+
+test('a line item and line special retain separate custom sound buffers and reset independently', async () => {
+  const { audio, starts, requests } = fixture();
+  await audio.setTheme({ boosterSounds: { row: 'item.wav' }, specialSounds: { row: 'special.wav' } });
+  audio.playSound('row'); audio.playSound('special:row'); audio.playSound('special:row');
+  assert.notEqual(starts[0].buffer, starts[1].buffer);
+  assert.equal(starts[1].buffer, starts[2].buffer);
+  assert.deepEqual(requests, ['item.wav','special.wav']);
+  await audio.setTheme({specialSounds:{}});
+  audio.playSound('special:row'); audio.playSound('row');
+  assert.equal(starts[3].kind, 'default'); assert.equal(starts[4].buffer, starts[0].buffer);
+});
+
+test('five special types have distinct defaults and respect mute', () => {
+  const { audio, starts } = fixture();
+  for (const type of ['row','column','area','fish','color']) audio.playSound(`special:${type}`);
+  assert.equal(new Set(starts.map(source => source.frequency.values[0])).size, 5);
+  audio.setMuted(true); audio.playSound('special:color');
+  assert.equal(starts.length, 5);
+});
+
+test('one frame plays each special type once while later activation waves can play again', () => {
+  const events = [{effect:'row'},{effect:'row'},{effect:'cross'},{effect:'target'},{effect:'offsets'}];
+  assert.deepEqual(specialSoundTypes(events), ['row','column','fish']);
+  assert.deepEqual(specialSoundTypes([{effect:'row'}]), ['row']);
 });

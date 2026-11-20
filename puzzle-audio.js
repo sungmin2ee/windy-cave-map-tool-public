@@ -1,7 +1,7 @@
 // Decoded sounds are cached by URL; playback never fetches a file again.
 export function createPuzzleAudio({ AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext, fetchSound = globalThis.fetch } = {}) {
   let context, resumeRequest, muted = false;
-  let settings = { volume: .45, boosterSounds: {} };
+  let settings = { volume: .45, boosterSounds: {}, specialSounds: {} };
   const loads = new Map(), buffers = new Map(), pending = new Set(), voices = new Set();
   const ensureContext = () => context ??= AudioContext ? new AudioContext() : null;
   async function load(source) {
@@ -30,7 +30,8 @@ export function createPuzzleAudio({ AudioContext = globalThis.AudioContext || gl
     const time = context.currentTime;
     const gain = context.createGain();
     gain.connect(context.destination);
-    const url = kind === 'burst' ? settings.sound : settings.boosterSounds[kind];
+    const url = kind === 'burst' ? settings.sound : kind.startsWith('special:')
+      ? settings.specialSounds[kind.slice(8)] : settings.boosterSounds[kind];
     const buffer = buffers.get(url);
     const source = buffer ? context.createBufferSource() : context.createOscillator();
     if (voices.size >= 12) { try { voices.values().next().value.stop(); } catch {} }
@@ -43,7 +44,10 @@ export function createPuzzleAudio({ AudioContext = globalThis.AudioContext || gl
       source.start();
     } else {
       const tones = { hammer: [180, 48, .25, 'triangle'], row: [280, 1250, .32, 'sawtooth'],
-        column: [1050, 160, .32, 'sawtooth'], shuffle: [330, 880, .55, 'sine'], burst: [880, 300, .23, 'triangle'] };
+        column: [1050, 160, .32, 'sawtooth'], shuffle: [330, 880, .55, 'sine'], burst: [880, 300, .23, 'triangle'],
+        'special:row': [220, 1800, .38, 'triangle'], 'special:column': [1800, 220, .38, 'triangle'],
+        'special:area': [125, 35, .45, 'triangle'], 'special:fish': [480, 1400, .3, 'sine'],
+        'special:color': [400, 2000, .65, 'sine'] };
       const [start, end, duration, shape] = tones[kind] || tones.burst;
       source.type = shape;
       source.frequency.setValueAtTime(start, time);
@@ -59,9 +63,10 @@ export function createPuzzleAudio({ AudioContext = globalThis.AudioContext || gl
     unlockAudio, playSound,
     async prepareSound(source) { await load(source); return buffers.has(source); },
     setTheme(theme = {}) {
-      settings = { ...settings, ...theme, boosterSounds: theme.boosterSounds ?? settings.boosterSounds };
+      settings = { ...settings, ...theme, boosterSounds: theme.boosterSounds ?? settings.boosterSounds,
+        specialSounds: theme.specialSounds ?? settings.specialSounds };
       settings.volume = Math.max(0, Math.min(1, Number.isFinite(settings.volume) ? settings.volume : .45));
-      return Promise.all([settings.sound, ...Object.values(settings.boosterSounds)].filter(Boolean).map(load));
+      return Promise.all([settings.sound, ...Object.values(settings.boosterSounds), ...Object.values(settings.specialSounds)].filter(Boolean).map(load));
     },
     setMuted(value) {
       muted = value;
@@ -74,4 +79,9 @@ export function createPuzzleAudio({ AudioContext = globalThis.AudioContext || gl
 export function normalizeThemeSound(value) {
   if (typeof value !== 'string' || value.length > 5600000) return null;
   return /^data:audio\/(?:wav|x-wav|wave|mpeg|mp3|ogg|mp4|aac|webm);base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : null;
+}
+
+export function specialSoundTypes(events = []) {
+  return [...new Set(events.flatMap(({ effect }) => effect === 'cross' ? ['row','column'] : [effect === 'target' ? 'fish' : effect])
+    .filter(type => ['row','column','area','fish','color'].includes(type)))];
 }

@@ -1,12 +1,12 @@
-import { createPuzzleEffects } from "./puzzle-effects.js?v=4";
-import { normalizeThemeSound } from "./puzzle-audio.js?v=1";
+import { createPuzzleEffects } from "./puzzle-effects.js?v=5";
+import { normalizeThemeSound } from "./puzzle-audio.js?v=2";
 import {
   $, adaptImportedJson, createPlayState, getAsset, normalizeObjectImage, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
   readThemePack, THEME_PACK_FORMAT,
   runAutoGame, chooseAutoAction, animatePlaytestTurn, AUTO_UNLIMITED_TURN_LIMIT,
-} from "./app.js?v=230";
+} from "./app.js?v=231";
 import { runAutoPlayBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
 
 const PUZZLE_GOAL_IMAGES = {
@@ -439,9 +439,11 @@ async function loadPuzzleArtwork(previewTheme) {
       if (burst.sound) effects.sound = puzzleArtworkUrl(burst.sound, base);
       if (Number.isFinite(burst.volume)) effects.volume = Math.max(0, Math.min(1, burst.volume));
     }
-    if (theme.boosterSounds != null && (typeof theme.boosterSounds !== "object" || Array.isArray(theme.boosterSounds))) throw new Error("아이템 효과음 목록 형식이 올바르지 않습니다.");
-    effects.boosterSounds = Object.fromEntries(Object.entries(theme.boosterSounds || {}).filter(([id]) => ["hammer","column","row","shuffle"].includes(id))
-      .map(([id, source]) => [id, previewTheme || isPack ? normalizeThemeSound(source) : puzzleArtworkUrl(source, base)]).filter(([,source]) => source));
+    for (const [category, types] of [["boosterSounds",["hammer","column","row","shuffle"]], ["specialSounds",["row","column","area","fish","color"]]]) {
+      if (theme[category] != null && (typeof theme[category] !== "object" || Array.isArray(theme[category]))) throw new Error("효과음 목록 형식이 올바르지 않습니다.");
+      effects[category] = Object.fromEntries(Object.entries(theme[category] || {}).filter(([id]) => types.includes(id))
+        .map(([id, source]) => [id, previewTheme || isPack ? normalizeThemeSound(source) : puzzleArtworkUrl(source, base)]).filter(([,source]) => source));
+    }
     await puzzleEffects.setTheme(effects);
     setPuzzleArtwork({ layers: Object.fromEntries(layers), specials, goals, boosters });
     versions.themeVersion = themeVersion;
@@ -586,7 +588,7 @@ $("soundToggle").addEventListener("click", (event) => {
   puzzleEffects.setMuted(!enabled);
 });
 
-setPuzzleView(renderPuzzlePlayer, puzzleEffects.showBurst, puzzleEffects.playBooster);
+setPuzzleView(renderPuzzlePlayer, puzzleEffects.showBurst, puzzleEffects.playBooster, puzzleEffects.playSpecial);
 $("previewAutoForm").addEventListener("submit", startPreviewBatch);
 $("previewAutoCancel").addEventListener("click", restorePreviewManual);
 $("previewAutoManual").addEventListener("click", restorePreviewManual);

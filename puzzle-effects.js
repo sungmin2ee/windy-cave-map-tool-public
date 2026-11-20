@@ -1,4 +1,4 @@
-import { createPuzzleAudio } from './puzzle-audio.js?v=1';
+import { createPuzzleAudio } from './puzzle-audio.js?v=2';
 export function createPuzzleEffects() {
   let settings = { volume: .45 };
   const audio = createPuzzleAudio();
@@ -41,6 +41,6 @@ export function createPuzzleEffects() {
   return {
     setTheme(theme) { settings = { ...settings, ...theme }; return audio.setTheme(theme); },
     setMuted: audio.setMuted, unlockAudio: audio.unlockAudio,
-    playBooster: audio.playSound, showBurst,
+    playBooster: audio.playSound, playSpecial: (type) => audio.playSound(`special:${type}`), showBurst,
   };
 }
