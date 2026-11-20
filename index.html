@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>3-Match Puzzle Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=30" />
+    <link rel="stylesheet" href="./styles.css?v=32" />
     <style>
     .object-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
     .asset-visual { position: relative; }
@@ -904,6 +904,7 @@
       <div id="autoPlayBatchSummary" class="simulation-result" role="status" hidden></div>
       <p id="playtestFrameStatus" role="status" style="min-height:1.3em;margin:4px 0;"></p>
       <div id="simulationGrid" class="simulation-grid"></div>
+      <section id="boosterControls" class="booster-controls" aria-label="플레이 아이템" hidden></section>
       <div class="dialog-footer">
         <button class="button" id="playtestHintButton" hidden>힌트</button>
         <button class="button" id="playtestComboButton" aria-pressed="false" hidden>특수 피스 조합</button>
@@ -1099,7 +1100,7 @@
       </div>
       <div id="levelPreviewFrameSlot"></div>
     </dialog>
-    <script type="module" src="./app.js?v=224"></script>
+    <script type="module" src="./app.js?v=227"></script>
   </body>
 </html>
 

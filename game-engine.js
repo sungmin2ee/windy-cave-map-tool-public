@@ -1,5 +1,11 @@
 // Board rules shared by the editor Playtest and the standalone puzzle.
 export const AUTO_UNLIMITED_TURN_LIMIT = 100;
+export const BOOSTERS = Object.freeze({
+  hammer: { name: "망치", icon: "🔨", prompt: "망치로 타격할 칸을 선택하세요." },
+  column: { name: "세로 제거", icon: "↕", prompt: "제거할 세로줄의 칸을 선택하세요." },
+  row: { name: "가로 제거", icon: "↔", prompt: "제거할 가로줄의 칸을 선택하세요." },
+  shuffle: { name: "뒤섞기", icon: "⤨", prompt: "움직일 수 있는 블록을 뒤섞습니다." },
+});
 
 export function createGameEngine(getProject) {
   const SPAWNER_ID = "spawner";
@@ -1751,6 +1757,12 @@ export function createGameEngine(getProject) {
 
   function ensurePlayableBoard(state, captureFrame) {
     if (findPlayableAction(state)) return;
+    if (shuffleBoard(state, captureFrame)) return;
+    state.status = "stuck";
+    state.message = "셔플로 가능한 교환을 만들 수 없습니다.";
+  }
+
+  function shuffleBoard(state, captureFrame) {
     const { cave } = state;
     const blocks = cave.layers.block;
     const ddung = isDdungSource(cave.externalSource);
@@ -1761,29 +1773,103 @@ export function createGameEngine(getProject) {
       return movable ? [index] : [];
     });
     const original = slots.map((index) => ({ block: blocks[index], piece: cave.playtestPieces[index], id: cave.livePieceIds?.[index] }));
-    const applyShuffle = (pieces) => slots.forEach((index, position) => {
-      blocks[index] = pieces[position].block;
-      cave.playtestPieces[index] = pieces[position].piece;
-      if (cave.livePieceIds) cave.livePieceIds[index] = pieces[position].id;
-    });
+    const put = (index, piece) => {
+      blocks[index] = piece?.block ?? null;
+      cave.playtestPieces[index] = piece?.piece ?? null;
+      if (cave.livePieceIds) cave.livePieceIds[index] = piece?.id ?? null;
+    };
+    const applyShuffle = (pieces) => slots.forEach((index, position) => put(index, pieces[position]));
     if (slots.length >= 4 && new Set(slots.map((index) => blockMatchKey(cave, index))).size >= 2) {
       for (let attempt = 0; attempt < 80; attempt += 1) {
-        const shuffled = [...original];
+        let shuffled = [...original];
         for (let index = shuffled.length - 1; index > 0; index -= 1) {
           const other = Math.floor(state.shuffleRandom() * (index + 1));
           [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
         }
-        applyShuffle(shuffled);
+        if (attempt < 16) applyShuffle(shuffled);
+        else {
+          // On large boards a wholly random permutation almost always starts
+          // with matches. Place from the same pool while rejecting local matches.
+          for (const index of slots) put(index, null);
+          const pool = shuffled;
+          shuffled = [];
+          for (const index of slots) {
+            const tried = new Set();
+            let chosen = -1;
+            for (let candidate = 0; candidate < pool.length; candidate++) {
+              const piece = pool[candidate];
+              const key = `${piece.block}:${piece.piece?.type ?? ""}`;
+              if (tried.has(key)) continue;
+              tried.add(key);
+              put(index, piece);
+              if (!findMatches(cave).has(index)) { chosen = candidate; break; }
+            }
+            if (chosen < 0) break;
+            shuffled.push(pool.splice(chosen, 1)[0]);
+          }
+          if (shuffled.length !== slots.length) continue;
+        }
         if (findMatches(cave).size || !findPlayableAction(state)) continue;
+        if (!shuffled.some((piece, i) => piece.block !== original[i].block || piece.piece !== original[i].piece)) continue;
         state.shuffleCount += 1;
-        state.message += " · 가능한 교환이 없어 보드를 섞었습니다.";
-        captureFrame?.("보드 셔플", slots, "swap", 350);
-        return;
+        state.message = "움직일 수 있는 블록을 뒤섞었습니다.";
+        const motions = shuffled.map((piece, position) => ({ from: slots[original.indexOf(piece)], to: slots[position] }));
+        captureFrame?.("보드 셔플", slots, "shuffle", 900, motions,
+          { type: "booster", booster: "shuffle", cells: slots });
+        return true;
       }
       applyShuffle(original);
     }
-    state.status = "stuck";
-    state.message = "셔플로 가능한 교환을 만들 수 없습니다.";
+    return false;
+  }
+
+  function canUseBooster(state, type) {
+    return Boolean(Object.hasOwn(BOOSTERS, type) && state.status === "playing" &&
+      state.movesLeft !== 0 && !clearConditionMet(state) && state.boosters?.[type] > 0);
+  }
+
+  function canTargetBooster(state, type, index) {
+    if (!canUseBooster(state, type) || type === "shuffle" || !Number.isInteger(index) ||
+        index < 0 || index >= state.cave.width * state.cave.height || isExcluded(state.cave, index)) return false;
+    const { cave } = state;
+    const terrain = cave.terrainRules?.[cave.layers.terrain[index]];
+    return Boolean(cave.layers.block[index] && !isDdungTreasure(cave.layers.block[index]) ||
+      terrain && terrain.reaction !== "none" || ddungGimmickDurability(cave, index) ||
+      cave.gimmickRules?.[cave.layers.gimmick[index]]?.reaction && cave.gimmickRules[cave.layers.gimmick[index]].reaction !== "none");
+  }
+
+  function playBooster(state, type, index, captureFrame) {
+    if (!canUseBooster(state, type)) return false;
+    if (type === "shuffle") {
+      if (!shuffleBoard(state, captureFrame)) {
+        state.message = "현재 보드는 뒤섞을 수 없습니다. 아이템은 사용하지 않았어요.";
+        return false;
+      }
+    } else {
+      if (!canTargetBooster(state, type, index)) return false;
+      const { cave } = state;
+      const cells = type === "hammer" ? [index] : Array.from({ length: type === "row" ? cave.width : cave.height }, (_, n) =>
+        type === "row" ? Math.floor(index / cave.width) * cave.width + n : n * cave.width + index % cave.width)
+        .filter(cell => !isExcluded(cave, cell));
+      const expanded = expandSpecialHits(state, new Set(cells), new Set(), state.beeRandom, new Set(), new Map(), true);
+      for (const cell of cells) {
+        const rule = cave.terrainRules?.[cave.layers.terrain[cell]];
+        if (rule && rule.reaction !== "none") expanded.targetedTerrain.add(cell);
+      }
+      expanded.directOnly = type === "hammer" && expanded.hits.size === 1;
+      expanded.label = `${BOOSTERS[type].name} 아이템`;
+      captureFrame?.(`${BOOSTERS[type].name} 준비`, [...expanded.hits], "booster", type === "hammer" ? 380 : 440, [],
+        { type: "booster", booster: type, index, cells, holdCells: [...expanded.hits] });
+      resolveMatches(state, captureFrame, cells, [], expanded);
+    }
+    state.boosters[type]--;
+    state.boostersUsed[type]++;
+    state.selectedBooster = null;
+    if (!state.liveMode) {
+      if (clearConditionMet(state)) state.status = "won";
+      else ensurePlayableBoard(state, captureFrame);
+    }
+    return true;
   }
 
   function chooseAutoAction(state) {
@@ -1943,6 +2029,7 @@ export function createGameEngine(getProject) {
   }
 
   function playSimulationTurn(state, action, captureFrame, beforeRefill) {
+    if (action?.booster) return playBooster(state, action.booster, action.first, captureFrame);
     if (!action) {
       state.status = "stuck";
       state.message = "가능한 교환이나 특수 피스 발동이 없습니다.";
@@ -2328,6 +2415,10 @@ export function createGameEngine(getProject) {
       cave: copy,
       movesLeft: copy.moveLimitEnabled === false ? null : copy.moveLimit,
       movesUsed: 0,
+      boosters: Object.fromEntries(Object.keys(BOOSTERS).map(type => [type,
+        Number.isInteger(copy.boosters?.[type]) && copy.boosters[type] >= 0 ? Math.min(999, copy.boosters[type]) : 3])),
+      boostersUsed: Object.fromEntries(Object.keys(BOOSTERS).map(type => [type, 0])),
+      selectedBooster: null,
       clearBonusEnabled: manual,
       blocksRemoved: 0,
       scoreTarget,
@@ -2565,6 +2656,9 @@ export function createGameEngine(getProject) {
     ddungTurnEvents,
     isEventOnlyGimmick,
     playSimulationTurn,
+    canUseBooster,
+    canTargetBooster,
+    playBooster,
     clearConditionMet,
     resolveMatches,
     planLiveFalls,

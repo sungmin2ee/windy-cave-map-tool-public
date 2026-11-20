@@ -131,7 +131,10 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
   function submit(action) {
     if (!action || !acceptsInput()) return false;
     const { first, second } = action;
-    if (second === undefined) {
+    if (action.booster) {
+      if (active || !engine.canUseBooster(state, action.booster) ||
+          action.booster !== "shuffle" && !engine.canTargetBooster(state, action.booster, first)) return false;
+    } else if (second === undefined) {
       if (action.bombPanel) {
         if (blockedCells().has(first) || !engine.bombPanelReady(state, first)) return false;
       } else if (!canTap(first)) return false;
@@ -151,9 +154,11 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
     active = true;
     waves = 0;
     const used = state.movesUsed;
-    captureOperation((capture) => engine.playSimulationTurn(state, action, capture));
+    let accepted;
+    captureOperation((capture) => { accepted = engine.playSimulationTurn(state, action, capture); });
+    if (action.booster && accepted === false) { active = false; changed(); return false; }
     if (action.invalid) state.message = "매치가 만들어지지 않아 교환을 되돌렸습니다.";
-    physics ||= state.movesUsed !== used || Boolean(action.bombPanel);
+    physics ||= state.movesUsed !== used || Boolean(action.bombPanel) || Boolean(action.booster);
     state.animating = true;
     changed();
     return true;

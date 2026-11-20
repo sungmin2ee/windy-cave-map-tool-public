@@ -467,3 +467,23 @@ h2 { font-size: 16px; margin-top: 3px; }
 #simulationGrid .live-piece-moving > .initial-piece-badge,
 #simulationGrid .live-swap-covered > .cell-block,
 #simulationGrid .live-swap-covered > .initial-piece-badge { visibility: hidden; opacity: 0; }
+.booster-controls { width: min(100%, 440px); margin: 16px auto 8px; }
+.booster-controls[hidden] { display: none; }
+.booster-buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.booster-button { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-height: 80px; padding: 10px 4px; border: 1px solid #545476; border-radius: 14px; background: linear-gradient(155deg, #34304f, #211f34); color: #f4f2ff; cursor: pointer; font: inherit; font-size: 12px; }
+.booster-icon { height: 30px; font-size: 28px; line-height: 30px; color: #d7c4ff; }
+.booster-count { position: absolute; top: -6px; right: -3px; min-width: 22px; padding: 2px 4px; border-radius: 12px; background: #f6d576; color: #302740; font-size: 12px; }
+.booster-button[aria-pressed="true"] { outline: 2px solid #c3a2ff; background: #4d366c; }
+.booster-button:disabled { opacity: .45; cursor: default; }
+.booster-button:focus-visible { outline: 3px solid #c3a2ff; outline-offset: 3px; }
+.booster-instructions { display: flex; justify-content: center; align-items: center; gap: 8px; min-height: 40px; margin-top: 8px; color: #bcb5d3; font-size: 12px; text-align: center; }
+.booster-instructions .button { flex: 0 0 auto; min-height: 36px; padding: 5px 10px; font-size: 12px; }
+#simulationGrid .booster-target { outline: 1px solid #cfb5ff; outline-offset: -2px; cursor: crosshair; }
+.booster-effect { position: absolute; z-index: 12; pointer-events: none; box-sizing: border-box; }
+.booster-hammer { line-height: 1; transform-origin: 65% 80%; filter: drop-shadow(0 3px 5px #0009); }
+.booster-impact-ring { border: 4px solid #ffe9a6; border-radius: 50%; box-shadow: 0 0 18px #ffbf4d, inset 0 0 12px #fff2; }
+.booster-beam { border-radius: 8px; background: #fff8d7; box-shadow: 0 0 8px #fff, 0 0 22px #c890ff, 0 0 34px #995cff; }
+.booster-beam-row { transform-origin: left center; }
+.booster-beam-column { transform-origin: center top; }
+.booster-line-spark { width: 18px; height: 18px; border-radius: 50%; background: #fffbe4; box-shadow: 0 0 12px 5px #f2c3ff, 0 0 24px 10px #9969ff; }
+#simulationGrid > .booster-piece-actor { pointer-events: none; will-change: transform; }

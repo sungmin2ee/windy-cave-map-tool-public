@@ -1,6 +1,7 @@
-import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=23";
+import { AUTO_UNLIMITED_TURN_LIMIT, BOOSTERS, createGameEngine } from "./game-engine.js?v=26";
+import { animateBoosterEffect } from "./booster-effects.js?v=1";
 import { populateDifficultyGoals } from "./difficulty-goals.js?v=4";
-import { createLiveGame } from "./live-game.js?v=8";
+import { createLiveGame } from "./live-game.js?v=9";
 import { runAutoPlayBatch, summarizeBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
 
 const gameEngine = createGameEngine(() => project);
@@ -80,7 +81,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.73";
+const CLIENT_VERSION = "2.7.75";
 const DUST_ID = "ddung-dust-piece";
 const isFallingGimmick = (id) => id === DUST_ID || isDdungTreasure(id);
 const objectStorageLayer = (layer, id) => id === DUST_ID ? "block" : isDdungTreasure(id) ? "item" : layer;
@@ -2954,7 +2955,74 @@ function issueHtml(validation) {
   return errorHtml + warningHtml + unsupportedHtml;
 }
 
+function renderBoosterControls(state, interactive) {
+  const bar = $("boosterControls");
+  if (!bar) return;
+  bar.hidden = !state || !interactive || Boolean(state.replay || state.previewAuto || state.clearBonus);
+  if (bar.hidden) return;
+  if (!bar.dataset.bound) {
+    bar.dataset.bound = "true";
+    const buttons = document.createElement("div");
+    buttons.className = "booster-buttons";
+    for (const [type, { name, icon }] of Object.entries(BOOSTERS)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "booster-button";
+      button.dataset.booster = type;
+      button.innerHTML = `<span class="booster-icon" aria-hidden="true">${icon}</span><span>${name}</span><strong class="booster-count"></strong>`;
+      button.addEventListener("click", () => selectPlaytestBooster(type));
+      buttons.append(button);
+    }
+    const instructions = document.createElement("div");
+    instructions.className = "booster-instructions";
+    const help = document.createElement("span");
+    help.id = "boosterHelp";
+    help.setAttribute("role", "status");
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.id = "cancelBooster";
+    cancel.className = "button ghost";
+    cancel.textContent = "선택 취소";
+    cancel.addEventListener("click", () => {
+      if (!playtestState) return;
+      playtestState.selectedBooster = null;
+      renderPlaytest();
+    });
+    instructions.append(help, cancel);
+    bar.append(buttons, instructions);
+  }
+  const busy = Boolean(state.animating || state.liveSession?.active);
+  for (const button of bar.querySelectorAll("[data-booster]")) {
+    const type = button.dataset.booster;
+    const count = state.boosters[type];
+    button.querySelector(".booster-count").textContent = count;
+    button.disabled = busy || !gameEngine.canUseBooster(state, type);
+    button.setAttribute("aria-pressed", String(state.selectedBooster === type));
+    button.setAttribute("aria-label", `${BOOSTERS[type].name} · ${count}개 남음`);
+    button.title = `${BOOSTERS[type].prompt} 이동 횟수는 줄어들지 않습니다.`;
+  }
+  $("boosterHelp").textContent = busy ? "블록 움직임이 끝나면 아이템을 사용할 수 있어요."
+    : state.selectedBooster ? BOOSTERS[state.selectedBooster].prompt : "아이템은 이동 횟수를 사용하지 않아요.";
+  $("cancelBooster").hidden = !state.selectedBooster;
+}
+
+function selectPlaytestBooster(type) {
+  const state = playtestState;
+  if (!state || state.replay || state.previewAuto || state.animating || state.liveSession?.active || !gameEngine.canUseBooster(state, type)) return;
+  state.selectedIndex = null;
+  state.hint = null;
+  state.comboMode = false;
+  if (type === "shuffle") {
+    state.selectedBooster = null;
+    animatePlaytestTurn(state, { booster: type });
+  } else {
+    state.selectedBooster = state.selectedBooster === type ? null : type;
+    renderPlaytest();
+  }
+}
+
 function renderSimulationGrid(cave, interactive = false, remainingTargets = [], damage = playtestState?.cave === cave ? playtestState : null, available = null) {
+  renderBoosterControls(playtestState, interactive || Boolean(playtestState?.animating));
   const grid = $("simulationGrid");
   const live = damage?.liveSession;
   if (live) {
@@ -3044,6 +3112,12 @@ function renderSimulationGrid(cave, interactive = false, remainingTargets = [], 
         cell.setAttribute("aria-pressed", String(selected));
       }
       if (live && !cell.hasAttribute("aria-label")) cell.setAttribute("aria-label", cellDescription(cave, index));
+      if (playtestState.selectedBooster) {
+        const targetable = !playtestState.animating && gameEngine.canTargetBooster(playtestState, playtestState.selectedBooster, index);
+        cell.disabled = !targetable;
+        cell.classList.toggle("booster-target", targetable);
+        cell.setAttribute("aria-label", `${BOOSTERS[playtestState.selectedBooster].name} 사용 · ${cellDescription(cave, index)}`);
+      }
       if (!live && !cell.disabled) bindPlaytestCellInput(cell, index, canSwap);
     }
     // Image load handlers mutate classes/badges after rendering. Compare the
@@ -3567,8 +3641,11 @@ async function showPlaytestFrames(state, turn, frames) {
     const delay = playtestFrameDuration(frame.kind, frame.delay, speed);
     for (const index of frame.cells) grid.children[index]?.classList.add("playtest-frame-" + frame.kind);
     if (frame.kind === "bonus") animateBonusCells(grid, frame.cells, delay);
-    animateFrameMotions(grid, frame.cave, frame.motions, delay);
-    if (frame.turnActor?.type === "bee") animateBeeFlights(grid, frame.cave, frame.turnActor.flights, delay);
+    if (frame.kind !== "shuffle") animateFrameMotions(grid, frame.cave, frame.motions, delay);
+    if (frame.turnActor?.type === "booster") animateBoosterEffect(grid, frame, delay, {
+      makePiece: (index) => livePieceSprite(frame.cave, index), syncVisibility: () => syncLiveSwapVisibility(grid),
+    });
+    else if (frame.turnActor?.type === "bee") animateBeeFlights(grid, frame.cave, frame.turnActor.flights, delay);
     else if (frame.turnActor) animateDdungTurnActor(grid, frame.turnActor, delay);
     if (frame.burst?.length) puzzleBurst?.(grid, frame.burst.map(({ index, block }) => ({ index, color: blockColor(block) })));
     await new Promise((resolve) => setTimeout(resolve, delay));
@@ -3644,7 +3721,15 @@ function showLiveEffects(state, frames) {
         if (playtestState === state && playtestIsVisible()) animateBonusCells(grid, frame.cells, frame.delay / speed);
       }, frame.at / speed);
     }
-    if (frame.turnActor?.type === "bee") {
+    if (frame.turnActor?.type === "booster") {
+      const show = () => {
+        if (playtestState === state && playtestIsVisible()) animateBoosterEffect(grid, frame, frame.delay / speed, {
+          makePiece: (index) => livePieceSprite(frame.cave, index), syncVisibility: () => syncLiveSwapVisibility(grid), holdBlocks: true,
+        });
+      };
+      if (frame.at) setTimeout(show, frame.at / speed);
+      else show();
+    } else if (frame.turnActor?.type === "bee") {
       setTimeout(() => {
         if (playtestState === state && playtestIsVisible()) animateBeeFlights(grid, frame.cave, frame.turnActor.flights, frame.delay / speed);
       }, frame.at / speed);
@@ -3750,6 +3835,7 @@ async function animatePlaytestTurn(state, action) {
   const turn = Symbol();
   state.animationTurn = turn;
   state.animating = true;
+  renderBoosterControls(state, true);
   const frames = [];
   const capture = (label, cells, kind, delay = 360, motions = [], turnActor = null, burst = null, cleared = []) => {
     const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
@@ -3838,6 +3924,7 @@ function bindPlaytestCellInput(cell, index, canSwap) {
     if (!event.isPrimary || (event.pointerType !== "touch" && event.button !== 0)) return;
     handledTouch = false;
     dragged = false;
+    if (playtestState?.selectedBooster) return;
     if (!canSwap && event.pointerType !== "touch") return;
     pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
     const state = playtestState;
@@ -3852,6 +3939,13 @@ function bindPlaytestCellInput(cell, index, canSwap) {
     dragged ||= Math.max(Math.abs(event.clientX - pointer.x), Math.abs(event.clientY - pointer.y)) >= dragThreshold;
   });
   cell.addEventListener("pointerup", (event) => {
+    if (playtestState?.selectedBooster) {
+      if (event.isPrimary && (event.pointerType === "touch" || event.button === 0)) {
+        handledTouch = true;
+        playtestCell(index);
+      }
+      return;
+    }
     if (pointer?.id !== event.pointerId) return;
     const dx = event.clientX - pointer.x;
     const dy = event.clientY - pointer.y;
@@ -3913,6 +4007,14 @@ function playtestSpecialAt(cave, index) {
 function playtestCell(index) {
   const state = playtestState;
   if (!state || state.status !== "playing") return;
+  if (state.selectedBooster) {
+    if (!state.animating && !state.liveSession?.active && gameEngine.canTargetBooster(state, state.selectedBooster, index)) {
+      const booster = state.selectedBooster;
+      state.selectedBooster = null;
+      animatePlaytestTurn(state, { booster, first: index });
+    }
+    return;
+  }
   if (state.liveSession) {
     const live = state.liveSession;
     if (bombPanelReady(state, index) && live.canSwap(index, true)) startLivePlaytest(state, { first: index, bombPanel: true });

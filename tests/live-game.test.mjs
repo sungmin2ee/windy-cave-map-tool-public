@@ -49,6 +49,142 @@ function collectionGimmickBoard({ exit = 32, countMode = 'manual', special = 0 }
     objectives: [{ layer: 'item', targetId: 'ddung-treasure-1', countMode, count: 1 }] });
 }
 
+for (const [booster, target, hit] of [
+  ['hammer', 20, [20]], ['row', 14, [12,13,14,15,16,17]], ['column', 14, [2,8,14,20,26,32]],
+]) test(`${booster} booster hits only its intended cells, consumes one item and no moves`, () => {
+  const { engine, state, live, frames } = fixture();
+  const before = [...state.cave.layers.block];
+  assert.equal(live.submit({ booster, first: target }), true);
+  assert.equal(state.movesUsed, 0);
+  assert.equal(state.movesLeft, 25);
+  assert.equal(state.boosters[booster], 2);
+  assert.equal(state.boostersUsed[booster], 1);
+  assert.equal(state.liveTurns.length, 0, 'items do not advance turn events');
+  const approach = frames.find(frame => frame.turnActor?.booster === booster);
+  const impact = frames.find(frame => frame.label.endsWith(' 아이템'));
+  assert.equal(approach.kind, 'booster');
+  assert.deepEqual(approach.turnActor.cells, hit);
+  assert.ok(impact.at >= approach.delay, 'the removal effect starts after the tool approach');
+  assert.equal(approach.cave.layers.block[target], before[target], 'pre-hit artwork remains available for the approach');
+  for (let cell=0; cell<36; cell++) assert.equal(state.cave.layers.block[cell], hit.includes(cell) ? null : before[cell]);
+  assert.equal(live.submit({ booster, first: target }), false, 'busy items cannot be consumed twice');
+  assert.equal(state.boosters[booster], 2);
+  settle(live);
+  assert.equal(state.movesUsed, 0);
+  assert.equal(state.movesLeft, 25);
+});
+
+test('hammer damages covering ice before removing dust and counts its goal only on destruction', () => {
+  const { cave: base, engine } = fixture();
+  const layers = structuredClone(base.layers);
+  layers.terrain[14] = 'ddung-ice';
+  layers.block[14] = 'ddung-dust-piece';
+  const { state, live } = fixture({ layers, terrainRules: engine.DEFAULT_TERRAIN_RULES,
+    objectives: [{ layer: 'block', targetId: 'ddung-dust-piece', countMode: 'manual', count: 100 }] });
+  assert.equal(live.submit({ booster: 'hammer', first: 14 }), true);
+  assert.equal(state.terrainHits[14], 1);
+  assert.equal(state.cave.layers.block[14], 'ddung-dust-piece');
+  assert.equal(state.objectiveProgress[0].current, 0);
+  settle(live);
+  assert.equal(live.submit({ booster: 'hammer', first: 14 }), true);
+  assert.equal(state.cave.layers.terrain[14], null);
+  assert.equal(state.cave.layers.block[14], 'ddung-dust-piece');
+  settle(live);
+  const dust = state.cave.layers.block.indexOf('ddung-dust-piece');
+  assert.equal(live.submit({ booster: 'hammer', first: dust }), true);
+  assert.equal(state.objectiveProgress[0].current, 1);
+  assert.equal(state.boosters.hammer, 0);
+  assert.equal(state.movesUsed, 0);
+});
+
+test('shuffle booster preserves locked pieces, specials and block quantities without spending moves', () => {
+  const { cave: base, engine } = fixture();
+  const layers = structuredClone(base.layers);
+  layers.terrain[14] = 'ddung-ice';
+  const { state, live, frames } = fixture({ layers, terrainRules: engine.DEFAULT_TERRAIN_RULES });
+  const original = [...state.cave.layers.block];
+  const ids = [...state.cave.livePieceIds];
+  const specials = [...state.cave.playtestPieces];
+  assert.equal(live.submit({ booster: 'shuffle' }), true);
+  assert.notDeepEqual(state.cave.layers.block, original);
+  assert.deepEqual([...state.cave.layers.block].sort(), [...original].sort());
+  for (const cell of [0,14,35]) {
+    assert.equal(state.cave.layers.block[cell], original[cell]);
+    assert.equal(state.cave.livePieceIds[cell], ids[cell]);
+    assert.equal(state.cave.playtestPieces[cell], specials[cell]);
+  }
+  assert.equal(engine.findMatches(state.cave).size, 0);
+  assert.ok(engine.findPlayableAction(state));
+  assert.equal(state.boosters.shuffle, 2);
+  const shuffle = frames.find(frame => frame.kind === 'shuffle');
+  assert.equal(shuffle.turnActor.booster, 'shuffle');
+  assert.equal(shuffle.delay, 900);
+  assert.equal(new Set(shuffle.motions.map(m => m.to)).size, shuffle.motions.length);
+  for (const { from, to } of shuffle.motions) {
+    assert.ok(![0,14,35].includes(from) && ![0,14,35].includes(to));
+    assert.equal(state.cave.livePieceIds[to], ids[from]);
+    assert.equal(state.cave.layers.block[to], original[from]);
+  }
+  assert.equal(live.submit({ first: 1, second: 2 }), false, 'input stays blocked throughout the shuffle');
+  live.tick(.25);
+  assert.equal(live.submit({ first: 1, second: 2 }), false);
+  settle(live);
+  assert.equal(state.movesUsed, 0);
+  assert.equal(state.movesLeft, 25);
+});
+
+test('invalid, depleted and impossible item actions consume nothing', () => {
+  const { state, live, engine } = fixture({ boosters: { hammer: 1, row: 0, column: 2, shuffle: 3 } });
+  assert.equal(live.submit({ booster: 'hammer', first: -1 }), false);
+  assert.equal(live.submit({ booster: 'row', first: 14 }), false);
+  assert.equal(live.submit({ booster: 'unknown', first: 14 }), false);
+  assert.equal(state.boosters.hammer, 1);
+  state.cave.layers.block.fill('red');
+  assert.equal(engine.playBooster(state, 'shuffle'), false);
+  assert.equal(state.boosters.shuffle, 3);
+  assert.equal(state.movesUsed, 0);
+});
+
+test('sequential preview resolves an item win without spending a move', () => {
+  const { cave, engine } = fixture({ objectives: [{ layer: 'block', targetId: 'blue', countMode: 'manual', count: 1 }] });
+  const state = engine.createPlayState(cave, 'item-win', true);
+  assert.equal(engine.playSimulationTurn(state, { booster: 'hammer', first: 2 }), true);
+  assert.equal(state.status, 'won');
+  assert.equal(state.objectiveProgress[0].current, 1);
+  assert.equal(state.movesUsed, 0);
+  assert.equal(state.movesLeft, 25);
+  assert.equal(state.boosters.hammer, 2);
+});
+
+test('a row item preserves indestructible walls and ordinary floor terrain', () => {
+  const { cave: base, engine } = fixture();
+  const layers = structuredClone(base.layers);
+  layers.terrain[15] = 'wall';
+  layers.block[15] = null;
+  const { state, live } = fixture({ layers, terrainRules: engine.DEFAULT_TERRAIN_RULES });
+  assert.equal(live.submit({ booster: 'row', first: 14 }), true);
+  assert.equal(state.cave.layers.terrain[15], 'wall');
+  assert.equal(state.cave.layers.terrain[14], 'floor');
+});
+
+test('large-board shuffles retain every piece and produce an animated playable permutation', () => {
+  const { engine, cave: base } = fixture();
+  const colors = base.usableBlocks;
+  const cave = { ...base, width: 20, height: 20, initialPieceTypes: {},
+    layers: { terrain: Array(400).fill('floor'), item: Array(400).fill(null), gimmick: Array(400).fill(null),
+      block: Array.from({length:400}, (_, i) => colors[(i % 20 + 2 * Math.floor(i / 20)) % colors.length]) } };
+  const state = engine.createPlayState(cave, 'large-shuffle', true);
+  const live = createLiveGame(state, engine);
+  const original = [...state.cave.layers.block];
+  assert.equal(live.submit({ booster: 'shuffle' }), true);
+  assert.deepEqual([...state.cave.layers.block].sort(), [...original].sort());
+  assert.notDeepEqual(state.cave.layers.block, original);
+  assert.equal(engine.findMatches(state.cave).size, 0);
+  assert.ok(engine.findPlayableAction(state));
+  assert.equal(new Set(state.cave.livePieceIds).size, 400);
+  assert.equal(state.movesUsed, 0);
+});
+
 test('collection goals refill requested kinds up to two on board and stop at quota', () => {
   const { engine, state } = fixture({ objectives: [
     { layer: 'item', targetId: 'ddung-treasure-1', countMode: 'manual', count: 3 },
