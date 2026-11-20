@@ -49,6 +49,57 @@ function collectionGimmickBoard({ exit = 32, countMode = 'manual', special = 0 }
     objectives: [{ layer: 'item', targetId: 'ddung-treasure-1', countMode, count: 1 }] });
 }
 
+function specialMatchSwap(type = 'horizontal', specialStartsInMatch = false) {
+  const { cave: base } = fixture();
+  const layers = structuredClone(base.layers);
+  [12,13,15,20].forEach(index => layers.block[index] = 'red');
+  layers.block[14] = 'blue';
+  return fixture({ layers, specialMatches: true,
+    initialPieceTypes: type ? { [specialStartsInMatch ? 14 : 20]: type } : {} });
+}
+
+for (const type of ['horizontal','vertical','bomb','bee']) test(`swapping a ${type} into a four-match activates it without generating another special`, () => {
+  const { live, state, frames } = specialMatchSwap(type);
+  assert.equal(live.submit({first:20,second:14}), true);
+  assert.equal(state.movesUsed, 1);
+  assert.equal(state.cave.playtestPieces.some(Boolean), false);
+  assert.equal(frames.some(frame => frame.label === '특수 피스 생성'), false);
+  assert.ok(frames.flatMap(frame => frame.specialVisuals).some(event => event?.index === 14));
+  for (const index of [12,13,14,15]) assert.equal(state.cave.layers.block[index], null);
+});
+
+test('moving a special out of a completed match also activates it and removes the matched blocks', () => {
+  const { live, state, frames } = specialMatchSwap('horizontal', true);
+  assert.equal(live.submit({first:14,second:20}), true);
+  assert.equal(state.cave.playtestPieces.some(Boolean), false);
+  assert.equal(frames.some(frame => frame.label === '특수 피스 생성'), false);
+  assert.ok(frames.flatMap(frame => frame.specialVisuals).some(event => event?.index === 20));
+  for (const index of [12,13,14,15,18,19,20,21,22,23]) assert.equal(state.cave.layers.block[index], null);
+});
+
+test('ordinary four-matches still generate their configured special piece', () => {
+  const { live, state, frames } = specialMatchSwap(null);
+  assert.equal(live.submit({first:20,second:14}), true);
+  assert.equal(state.cave.playtestPieces[14]?.type, 'vertical');
+  assert.equal(frames.some(frame => frame.label === '특수 피스 생성'), true);
+});
+
+for (const [shape, cells, source, target] of [
+  ['five', [12,13,14,15,16], 20, 14],
+  ['square', [12,13,18,19], 25, 19],
+  ['tee', [1,7,12,13,14], 19, 13],
+]) test(`a ${shape} recipe consumes the moved special without leaving a replacement`, () => {
+  const { cave: base } = fixture();
+  const layers = structuredClone(base.layers);
+  [...cells, source].forEach(index => layers.block[index] = 'red');
+  layers.block[target] = 'blue';
+  const { live, state, frames } = fixture({ layers, specialMatches: true, initialPieceTypes: { [source]: 'bomb' } });
+  assert.equal(live.submit({first: source, second: target}), true);
+  assert.equal(state.cave.playtestPieces.some(Boolean), false);
+  assert.equal(frames.some(frame => frame.label === '특수 피스 생성'), false);
+  for (const index of cells) assert.equal(state.cave.layers.block[index], null);
+});
+
 for (const [type,effect] of [['horizontal','row'],['vertical','column'],['bomb','area'],['rainbow','color'],['bee','fish']]) {
   test(`${type} emits its own presentation event at the actual activation cell`, () => {
     const { state, live, frames } = fixture({ initialPieceTypes: {14:type} });

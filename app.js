@@ -1,4 +1,4 @@
-import { AUTO_UNLIMITED_TURN_LIMIT, BOOSTERS, createGameEngine } from "./game-engine.js?v=27";
+import { AUTO_UNLIMITED_TURN_LIMIT, BOOSTERS, createGameEngine } from "./game-engine.js?v=28";
 import { createPuzzleAudio, normalizeThemeSound, specialSoundTypes } from "./puzzle-audio.js?v=2";
 import { animateSpecialEffects } from "./special-effects.js?v=1";
 import { animateBoosterEffect, setBoosterImage } from "./booster-effects.js?v=2";
@@ -87,7 +87,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.79";
+const CLIENT_VERSION = "2.7.80";
 const DUST_ID = "ddung-dust-piece";
 const isFallingGimmick = (id) => id === DUST_ID || isDdungTreasure(id);
 const objectStorageLayer = (layer, id) => id === DUST_ID ? "block" : isDdungTreasure(id) ? "item" : layer;

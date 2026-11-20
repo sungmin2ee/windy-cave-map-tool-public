@@ -975,7 +975,7 @@ export function createGameEngine(getProject) {
     }
   }
 
-  function resolveMatches(state, captureFrame, activation = [], preferred = [], combo = null, beforeRefill) {
+  function resolveMatches(state, captureFrame, activation = [], preferred = [], combo = null, beforeRefill, noGenerationAt = []) {
     let runs = [];
     let matches = findMatches(state.cave, runs, state.liveBlockedCells);
     activation.forEach((index) => matches.add(index));
@@ -990,7 +990,8 @@ export function createGameEngine(getProject) {
     let comboPending = combo;
     while (matches.size && cascade < 20) {
       const expanded = comboPending ?? expandSpecialHits(state, matches, protectedCells, state.beeRandom);
-      const created = comboPending || state.clearBonus ? new Map() : createdSpecials(state.cave, runs, preferred, matches);
+      const created = comboPending || state.clearBonus ? new Map()
+        : createdSpecials(state.cave, runs, preferred, matches, cascade === 0 ? noGenerationAt : []);
       const triggered = [...expanded.hits].some((index) => !isBarrier(state.cave, index) && specialEffect(state.cave, state.cave.playtestPieces[index]));
       matches = expanded.hits;
       const highlighted = new Set([...matches, ...expanded.targetedTerrain]);
@@ -1344,8 +1345,10 @@ export function createGameEngine(getProject) {
         const matches = findMatches(cave, runs);
         const valid = matches.has(first) || matches.has(second);
         if (valid && !firstOnly) {
+          const movedSpecials = [first, second].filter((index) => specialEffect(cave, cave.playtestPieces[index]));
+          movedSpecials.forEach((index) => matches.add(index));
           const expanded = expandSpecialHits(state, matches, new Set(), state.beeRandom.copy());
-          const created = createdSpecials(cave, runs, [second, first], matches);
+          const created = createdSpecials(cave, runs, [second, first], matches, movedSpecials.length ? [first, second] : []);
           candidates.push({ first, second, score: scoreAutoMove(state, expanded, goals, created) });
         }
         swapPlaytestBlocks(cave, first, second);
@@ -1703,7 +1706,7 @@ export function createGameEngine(getProject) {
     return { hits, targetedTerrain, specialHits, beeFlights, impactAt, visuals };
   }
 
-  function createdSpecials(cave, runs, preferred, hits) {
+  function createdSpecials(cave, runs, preferred, hits, noGenerationAt = []) {
     const result = new Map();
     if (!cave.specialMatches) return result;
     const reserved = new Set();
@@ -1712,6 +1715,12 @@ export function createGameEngine(getProject) {
       const type = shape === "custom" ? customType
         : Object.hasOwn(generation || {}, shape) ? generation[shape] : SPECIAL_MATCH_SHAPES[shape][1];
       if (cells.some((index) => reserved.has(index))) return;
+      // Consuming an existing special activates it; the same recipe must not
+      // leave a replacement special behind, including at its vacated swap cell.
+      if (cells.some((index) => noGenerationAt.includes(index) || specialEffect(cave, cave.playtestPieces[index]))) {
+        cells.forEach((cell) => reserved.add(cell));
+        return;
+      }
       if (!type) {
         if (shape === "custom") cells.forEach((cell) => reserved.add(cell));
         return;
@@ -2082,8 +2091,10 @@ export function createGameEngine(getProject) {
     state.movesUsed += 1;
     if (state.movesLeft !== null) state.movesLeft -= 1;
     state.chocolateRemoved = false;
-    const resolved = resolveMatches(state, captureFrame, combo ? [first, second] : activation ? [first] : [],
-      activation || combo ? [] : [second, first], combo, beforeRefill);
+    const movedSpecials = activation || combo ? []
+      : [first, second].filter((index) => specialEffect(cave, cave.playtestPieces[index]));
+    const resolved = resolveMatches(state, captureFrame, combo ? [first, second] : activation ? [first] : movedSpecials,
+      activation || combo ? [] : [second, first], combo, beforeRefill, movedSpecials.length ? [first, second] : []);
     if (state.liveMode) { state.liveTurns.push(resolved); return; }
     finishSimulationTurn(state, resolved, captureFrame);
   }

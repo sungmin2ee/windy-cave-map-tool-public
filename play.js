@@ -6,7 +6,7 @@ import {
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
   readThemePack, THEME_PACK_FORMAT,
   runAutoGame, chooseAutoAction, animatePlaytestTurn, AUTO_UNLIMITED_TURN_LIMIT,
-} from "./app.js?v=231";
+} from "./app.js?v=232";
 import { runAutoPlayBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
 
 const PUZZLE_GOAL_IMAGES = {
