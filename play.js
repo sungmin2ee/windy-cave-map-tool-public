@@ -5,7 +5,7 @@ import {
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
   readThemePack, THEME_PACK_FORMAT,
   runAutoGame, chooseAutoAction, animatePlaytestTurn, AUTO_UNLIMITED_TURN_LIMIT,
-} from "./app.js?v=227";
+} from "./app.js?v=229";
 import { runAutoPlayBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
 
 const PUZZLE_GOAL_IMAGES = {
@@ -424,10 +424,11 @@ async function loadPuzzleArtwork(previewTheme) {
       : (value) => puzzleArtworkUrl(value, base);
     if (expectedVersion && expectedVersion !== themeVersion) throw new Error("요청한 테마 버전과 다릅니다.");
     const burst = previewTheme || isPack ? null : theme.effects?.blockBurst;
-    const [layers, specials, goals, background, particle] = await Promise.all([
+    const [layers, specials, goals, boosters, background, particle] = await Promise.all([
       Promise.all(["block", "terrain", "gimmick", "item"].map(async (layer) => [layer, await puzzleArtworkImages(theme[layer], imageUrl)])),
       puzzleArtworkImages(theme.specials, imageUrl),
       puzzleArtworkImages(theme.goals, imageUrl),
+      puzzleArtworkImages(theme.boosters, imageUrl),
       theme.background == null ? null : usableImage(imageUrl(theme.background)),
       burst?.particle ? usableImage(imageUrl(burst.particle)) : null,
     ]);
@@ -438,7 +439,7 @@ async function loadPuzzleArtwork(previewTheme) {
       if (Number.isFinite(burst.volume)) effects.volume = Math.max(0, Math.min(1, burst.volume));
       puzzleEffects.setTheme(effects);
     }
-    setPuzzleArtwork({ layers: Object.fromEntries(layers), specials, goals });
+    setPuzzleArtwork({ layers: Object.fromEntries(layers), specials, goals, boosters });
     versions.themeVersion = themeVersion;
     if (background) {
       document.body.classList.add("has-puzzle-background");

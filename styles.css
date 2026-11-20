@@ -471,7 +471,13 @@ h2 { font-size: 16px; margin-top: 3px; }
 .booster-controls[hidden] { display: none; }
 .booster-buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .booster-button { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-height: 80px; padding: 10px 4px; border: 1px solid #545476; border-radius: 14px; background: linear-gradient(155deg, #34304f, #211f34); color: #f4f2ff; cursor: pointer; font: inherit; font-size: 12px; }
-.booster-icon { height: 30px; font-size: 28px; line-height: 30px; color: #d7c4ff; }
+.booster-icon { width: 34px; height: 34px; font-size: 28px; line-height: 34px; color: #d7c4ff; }
+.booster-image { width: 100%; height: 100%; object-fit: contain; display: block; }
+.booster-image[hidden], .theme-booster-default[hidden] { display: none; }
+.theme-booster-default { font-size: 40px; line-height: 1.4; text-align: center; }
+.theme-slot-actions[hidden] { display: none; }
+.booster-line-spark.custom-booster-visual { background: transparent; box-shadow: none; filter: drop-shadow(0 0 7px #dbaaff); }
+.booster-shuffle-icon { display: grid; place-items: center; filter: drop-shadow(0 0 10px #c3a2ff); }
 .booster-count { position: absolute; top: -6px; right: -3px; min-width: 22px; padding: 2px 4px; border-radius: 12px; background: #f6d576; color: #302740; font-size: 12px; }
 .booster-button[aria-pressed="true"] { outline: 2px solid #c3a2ff; background: #4d366c; }
 .booster-button:disabled { opacity: .45; cursor: default; }

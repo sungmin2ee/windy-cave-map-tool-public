@@ -1,5 +1,5 @@
 import { AUTO_UNLIMITED_TURN_LIMIT, BOOSTERS, createGameEngine } from "./game-engine.js?v=26";
-import { animateBoosterEffect } from "./booster-effects.js?v=1";
+import { animateBoosterEffect, setBoosterImage } from "./booster-effects.js?v=2";
 import { populateDifficultyGoals } from "./difficulty-goals.js?v=4";
 import { createLiveGame } from "./live-game.js?v=9";
 import { runAutoPlayBatch, summarizeBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
@@ -81,7 +81,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.75";
+const CLIENT_VERSION = "2.7.77";
 const DUST_ID = "ddung-dust-piece";
 const isFallingGimmick = (id) => id === DUST_ID || isDdungTreasure(id);
 const objectStorageLayer = (layer, id) => id === DUST_ID ? "block" : isDdungTreasure(id) ? "item" : layer;
@@ -1273,7 +1273,7 @@ function readThemePack(pack) {
     return image;
   };
   const theme = {};
-  for (const category of [...Object.keys(THEME_OBJECT_LAYERS), "specials", "goals"]) {
+  for (const category of [...Object.keys(THEME_OBJECT_LAYERS), "specials", "goals", "boosters"]) {
     const entries = pack[category];
     if (entries === undefined) continue;
     if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
@@ -1344,6 +1344,7 @@ function renderAppliedEditorTheme() {
     layers: Object.fromEntries(Object.keys(THEME_OBJECT_LAYERS).map((layer) => [layer, theme[layer]])),
     specials: theme.specials,
     goals: theme.goals,
+    boosters: theme.boosters,
   } : null;
   const background = theme?.background
     ? `linear-gradient(rgb(12 15 30 / 55%), rgb(12 15 30 / 78%)), url(${JSON.stringify(theme.background)})`
@@ -1391,6 +1392,7 @@ function renderThemeEditor() {
   const groups = [
     ...objectGroups,
     ["specials", "특수 피스", Object.entries(THEME_SPECIALS)],
+    ["boosters", "플레이 아이템", Object.entries(BOOSTERS).map(([id, { name }]) => [id, name])],
     ["goals", "현재 레벨의 목표 아이콘", goals],
     ["background", "배경", [["background", "게임 배경"]]],
   ];
@@ -1414,6 +1416,10 @@ function buildThemeSlot(category, id, name, inheritedImage) {
   title.textContent = name;
   const thumbnail = document.createElement("img");
   thumbnail.alt = "";
+  const defaultBooster = document.createElement("span");
+  defaultBooster.className = "theme-booster-default";
+  defaultBooster.setAttribute("aria-hidden", "true");
+  defaultBooster.textContent = category === "boosters" ? BOOSTERS[id]?.icon || "" : "";
   const status = document.createElement("span");
   status.setAttribute("role", "status");
   const input = document.createElement("input");
@@ -1434,7 +1440,27 @@ function buildThemeSlot(category, id, name, inheritedImage) {
   const actions = document.createElement("div");
   actions.className = "theme-slot-actions";
   actions.append(upload, reset);
-  card.append(title, thumbnail, status, input, actions);
+  const rotation = document.createElement("div");
+  rotation.className = "theme-slot-actions";
+  const rotateLeft = document.createElement("button");
+  const rotateRight = document.createElement("button");
+  for (const [button, label, degrees] of [[rotateLeft, "↶ 90°", -90], [rotateRight, "↷ 90°", 90]]) {
+    button.type = "button";
+    button.className = "button compact ghost";
+    button.textContent = label;
+    button.setAttribute("aria-label", `${name} ${degrees < 0 ? "왼쪽" : "오른쪽"}으로 90도 회전`);
+    button.title = button.getAttribute("aria-label");
+    button.addEventListener("click", () => {
+      const image = currentImage();
+      if (image) changeImage(() => rotateThemeImage(image, degrees, category === "background" ? 1500000 : 100000));
+    });
+    rotation.append(button);
+  }
+  card.append(title, defaultBooster, thumbnail, status, input, actions, rotation);
+  let working = false;
+  function currentImage() {
+    return themeSlotImage(project.editorTheme, category, id) || inheritedImage || themeSlotImage(project.appliedEditorTheme, category, id);
+  }
 
   function refresh() {
     const override = themeSlotImage(project.editorTheme, category, id);
@@ -1443,37 +1469,62 @@ function buildThemeSlot(category, id, name, inheritedImage) {
     if (image) thumbnail.src = image;
     else thumbnail.removeAttribute("src");
     thumbnail.hidden = !image;
-    reset.disabled = !override && !applied && !(inheritedImage && Object.hasOwn(THEME_OBJECT_LAYERS, category));
+    defaultBooster.hidden = category !== "boosters" || Boolean(image);
+    reset.disabled = working || (!override && !applied && !(inheritedImage && Object.hasOwn(THEME_OBJECT_LAYERS, category)));
+    upload.disabled = working;
+    rotateLeft.disabled = rotateRight.disabled = working || !image;
+    rotation.hidden = !image;
     status.textContent = override ? "교체됨" : inheritedImage ? "오브젝트 편집에서 지정" : applied ? "맵툴에 적용됨" : "기본 이미지";
   }
 
   upload.addEventListener("click", () => input.click());
   reset.addEventListener("click", () => resetThemeImage(category, id));
-  input.addEventListener("change", async () => {
-    const file = input.files[0];
-    input.value = "";
-    if (!file) return;
+  async function changeImage(transform) {
+    if (working) return;
     const currentProject = project;
     const preview = $("previewThemeButton");
+    working = true;
+    refresh();
     pendingThemeImages += 1;
     preview.disabled = $("applyEditorTheme").disabled = $("saveThemePack").disabled = $("openThemePack").disabled = true;
-    upload.disabled = reset.disabled = true;
     status.textContent = "이미지를 준비하는 중이에요.";
+    let failure;
     try {
-      const image = category === "background" ? await readArtworkImage(file, 960, 1500000) : await readArtworkImage(file, 192);
+      const image = await transform();
       if (project === currentProject) setThemeImage(category, id, image);
-      refresh();
     } catch (error) {
-      refresh();
-      status.textContent = error.message;
+      failure = error.message;
     } finally {
-      upload.disabled = false;
+      working = false;
       pendingThemeImages -= 1;
       preview.disabled = $("applyEditorTheme").disabled = $("saveThemePack").disabled = $("openThemePack").disabled = pendingThemeImages > 0;
+      refresh();
+      if (failure) status.textContent = failure;
     }
+  }
+  input.addEventListener("change", () => {
+    const file = input.files[0];
+    input.value = "";
+    if (file) changeImage(() => category === "background" ? readArtworkImage(file, 960, 1500000) : readArtworkImage(file, 192));
   });
   refresh();
   return card;
+}
+
+async function rotateThemeImage(source, degrees, maxLength) {
+  const image = new Image();
+  image.src = source;
+  await image.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalHeight;
+  canvas.height = image.naturalWidth;
+  const context = canvas.getContext("2d");
+  context.translate(canvas.width / 2, canvas.height / 2);
+  context.rotate(degrees * Math.PI / 180);
+  context.drawImage(image, -image.naturalWidth / 2, -image.naturalHeight / 2);
+  const result = normalizeObjectImage(canvas.toDataURL("image/webp", .95), maxLength);
+  if (!result) throw new Error("회전한 이미지가 너무 큽니다. 작은 이미지로 시도하세요.");
+  return result;
 }
 
 function setThemeImage(category, id, image) {
@@ -2996,6 +3047,7 @@ function renderBoosterControls(state, interactive) {
     const type = button.dataset.booster;
     const count = state.boosters[type];
     button.querySelector(".booster-count").textContent = count;
+    setBoosterImage(button.querySelector(".booster-icon"), puzzleArtwork?.boosters?.[type], BOOSTERS[type].icon);
     button.disabled = busy || !gameEngine.canUseBooster(state, type);
     button.setAttribute("aria-pressed", String(state.selectedBooster === type));
     button.setAttribute("aria-label", `${BOOSTERS[type].name} · ${count}개 남음`);
@@ -3643,7 +3695,7 @@ async function showPlaytestFrames(state, turn, frames) {
     if (frame.kind === "bonus") animateBonusCells(grid, frame.cells, delay);
     if (frame.kind !== "shuffle") animateFrameMotions(grid, frame.cave, frame.motions, delay);
     if (frame.turnActor?.type === "booster") animateBoosterEffect(grid, frame, delay, {
-      makePiece: (index) => livePieceSprite(frame.cave, index), syncVisibility: () => syncLiveSwapVisibility(grid),
+      makePiece: (index) => livePieceSprite(frame.cave, index), syncVisibility: () => syncLiveSwapVisibility(grid), images: puzzleArtwork?.boosters,
     });
     else if (frame.turnActor?.type === "bee") animateBeeFlights(grid, frame.cave, frame.turnActor.flights, delay);
     else if (frame.turnActor) animateDdungTurnActor(grid, frame.turnActor, delay);
@@ -3724,7 +3776,7 @@ function showLiveEffects(state, frames) {
     if (frame.turnActor?.type === "booster") {
       const show = () => {
         if (playtestState === state && playtestIsVisible()) animateBoosterEffect(grid, frame, frame.delay / speed, {
-          makePiece: (index) => livePieceSprite(frame.cave, index), syncVisibility: () => syncLiveSwapVisibility(grid), holdBlocks: true,
+          makePiece: (index) => livePieceSprite(frame.cave, index), syncVisibility: () => syncLiveSwapVisibility(grid), holdBlocks: true, images: puzzleArtwork?.boosters,
         });
       };
       if (frame.at) setTimeout(show, frame.at / speed);

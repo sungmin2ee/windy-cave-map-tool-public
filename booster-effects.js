@@ -1,5 +1,24 @@
 // Presentation only: hit timing and shuffle permutations come from the shared engine.
-export function animateBoosterEffect(grid, frame, duration, { makePiece, syncVisibility, holdBlocks = false }) {
+export function setBoosterImage(element, source, defaultIcon) {
+  const key = source || '';
+  if (element.dataset.boosterImage === key) return;
+  element.dataset.boosterImage = key;
+  const fallback = document.createElement('span');
+  fallback.textContent = defaultIcon;
+  element.replaceChildren(fallback);
+  if (!source) return;
+  const image = document.createElement('img');
+  image.className = 'booster-image';
+  image.alt = '';
+  image.draggable = false;
+  image.hidden = true;
+  image.onload = () => { fallback.hidden = true; image.hidden = false; };
+  image.onerror = () => { image.remove(); fallback.hidden = false; };
+  element.append(image);
+  image.src = source;
+}
+
+export function animateBoosterEffect(grid, frame, duration, { makePiece, syncVisibility, holdBlocks = false, images = {} }) {
   const actor = frame.turnActor;
   if (actor?.type !== 'booster') return;
   const cells = [...grid.querySelectorAll(':scope > .map-cell:not(.live-piece-actor)')];
@@ -37,6 +56,13 @@ export function animateBoosterEffect(grid, frame, duration, { makePiece, syncVis
     if (!first || !last) return;
     const centerX = (first.offsetLeft + last.offsetLeft + last.offsetWidth) / 2;
     const centerY = (first.offsetTop + last.offsetTop + last.offsetHeight) / 2;
+    if (images?.shuffle) {
+      const size = Math.max(36, first.offsetWidth * 1.4);
+      const emblem = effect('booster-shuffle-icon', { left: `${centerX - size / 2}px`, top: `${centerY - size / 2}px`, width: `${size}px`, height: `${size}px` });
+      setBoosterImage(emblem, images.shuffle, '⤨');
+      run(emblem, [{ transform: 'scale(.5) rotate(-30deg)', opacity: 0 },
+        { transform: 'scale(1.15)', opacity: 1, offset: .44 }, { transform: 'scale(1.3) rotate(30deg)', opacity: 0 }]);
+    }
     for (const { from, to } of frame.motions) {
       const source = cells[from], target = cells[to];
       if (!source || !target) continue;
@@ -67,7 +93,8 @@ export function animateBoosterEffect(grid, frame, duration, { makePiece, syncVis
     const size = target.offsetWidth;
     if (actor.booster === 'hammer') {
       const hammer = effect('booster-hammer', { left: `${target.offsetLeft + size * .2}px`,
-        top: `${target.offsetTop - size * .65}px`, fontSize: `${size * 1.25}px` }, '🔨');
+        top: `${target.offsetTop - size * .65}px`, fontSize: `${size * 1.25}px`, width: `${size * 1.25}px`, height: `${size * 1.25}px` });
+      setBoosterImage(hammer, images?.hammer, '🔨');
       run(hammer, [
         { transform: 'translate(35%, -45%) rotate(-65deg)', opacity: 0 },
         { transform: 'translate(25%, -35%) rotate(-65deg)', opacity: 1, offset: .2 },
@@ -89,8 +116,13 @@ export function animateBoosterEffect(grid, frame, duration, { makePiece, syncVis
       run(beam, [{ transform: row ? 'scaleX(0)' : 'scaleY(0)', opacity: 0 },
         { transform: row ? 'scaleX(.05)' : 'scaleY(.05)', opacity: 1, offset: .12 },
         { transform: 'scale(1)', opacity: 1, offset: .84 }, { transform: 'scale(1)', opacity: 0 }]);
-      const spark = effect('booster-line-spark', { left: `${first.offsetLeft + first.offsetWidth / 2 - 9}px`,
-        top: `${first.offsetTop + first.offsetHeight / 2 - 9}px` });
+      const sparkSize = images?.[actor.booster] ? Math.max(24, size * .8) : 18;
+      const spark = effect('booster-line-spark', { left: `${first.offsetLeft + first.offsetWidth / 2 - sparkSize / 2}px`,
+        top: `${first.offsetTop + first.offsetHeight / 2 - sparkSize / 2}px`, width: `${sparkSize}px`, height: `${sparkSize}px` });
+      if (images?.[actor.booster]) {
+        spark.classList.add('custom-booster-visual');
+        setBoosterImage(spark, images[actor.booster], row ? '↔' : '↕');
+      }
       run(spark, [{ transform: 'translate(0, 0) scale(.5)', opacity: 0 },
         { transform: 'translate(0, 0) scale(1)', opacity: 1, offset: .12 },
         { transform: `translate(${row ? length - size : 0}px, ${row ? 0 : length - first.offsetHeight}px) scale(1)`, opacity: 1, offset: .86 },
