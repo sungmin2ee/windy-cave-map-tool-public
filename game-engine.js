@@ -1009,13 +1009,18 @@ export function createGameEngine(getProject) {
       const removedBlocks = new Set(clearableCells.filter((index) => state.cave.layers.block[index] && !created.has(index)));
       const burst = captureFrame && [...removedBlocks].map((index) => ({ index, block: state.cave.layers.block[index] }));
       const label = comboPending?.label ?? (triggered ? "특수 피스 폭발" : "매치");
+      const visuals = [...(expanded.visuals || [])];
+      if (comboPending) for (const index of activation) {
+        const effect = specialEffect(state.cave, state.cave.playtestPieces[index]);
+        if (effect && !visuals.some(v => v.index === index)) visuals.push({ index, effect, radius: 2, wave: expanded.impactAt?.get(index) || 0, targets: [...expanded.hits] });
+      }
       if (captureFrame && expanded.beeFlights?.length) {
         const cleared = [];
         const lastWave = Math.max(...expanded.beeFlights.map(({ wave }) => wave)) + 1;
         for (let wave = 0; wave <= lastWave; wave += 1) {
           const cells = [...highlighted].filter((index) => (expanded.impactAt.get(index) ?? 0) === wave);
           const particles = burst.filter(({ index }) => cells.includes(index));
-          if (cells.length) captureFrame(wave ? "벌 타격" : label, cells, "match", 360, [], null, particles, cleared);
+          if (cells.length) captureFrame(wave ? "벌 타격" : label, cells, "match", 360, [], null, particles, cleared, visuals.filter(v => v.wave === wave));
           cleared.push(...particles.map(({ index }) => index));
           const flights = expanded.beeFlights.filter((flight) => flight.wave === wave).map((flight) => ({
             ...flight, color: state.cave.layers.block[flight.from],
@@ -1024,7 +1029,7 @@ export function createGameEngine(getProject) {
           if (flights.length) captureFrame("벌 출격", [], "swap", 690, [], { type: "bee", flights }, null, cleared);
         }
       } else {
-        captureFrame?.(label, [...highlighted], "match", 360, [], null, burst);
+        captureFrame?.(label, [...highlighted], "match", 360, [], null, burst, [], visuals);
       }
       const splashBlocks = expanded.directOnly ? new Set() : removedBlocks;
       const terrainResult = damageTerrainFromMatches(
@@ -1622,6 +1627,7 @@ export function createGameEngine(getProject) {
     const hits = new Set(matches);
     const targetedTerrain = new Set();
     const beeFlights = [];
+    const visuals = [];
     const specialHits = initialBlast ? new Set(hits) : new Set();
     const waves = [];
     const queue = (index, wave) => {
@@ -1655,6 +1661,8 @@ export function createGameEngine(getProject) {
         const definition = effect === "script" && projectSpecialDefinition(cave, String(cave.playtestPieces[index].type));
         const commands = override ?? (effect === "script" ? getEffectCommands(definition.effectScript) : [{ op: effect }]);
         for (const { op, radius = 1, cells } of commands) {
+          const visual = { index, effect: op, radius, color, wave, targets: [] };
+          visuals.push(visual);
           if (op === "fish") {
             const target = findBeeTarget(state, hits, protectedCells, beeRandom);
             if (target >= 0) {
@@ -1684,12 +1692,15 @@ export function createGameEngine(getProject) {
             const affected = (op === "row" && dy === 0) || (op === "column" && dx === 0) ||
               (op === "cross" && (dx === 0 || dy === 0)) || (op === "area" && dx <= radius && dy <= radius) ||
               (op === "color" && color && blockMatchKey(cave, other) === color);
-            if (affected && !isExcluded(cave, other) && !protectedCells.has(other)) addSpecialHit(other, wave);
+            if (affected && !isExcluded(cave, other) && !protectedCells.has(other)) {
+              addSpecialHit(other, wave);
+              visual.targets.push(other);
+            }
           }
         }
       }
     }
-    return { hits, targetedTerrain, specialHits, beeFlights, impactAt };
+    return { hits, targetedTerrain, specialHits, beeFlights, impactAt, visuals };
   }
 
   function createdSpecials(cave, runs, preferred, hits) {

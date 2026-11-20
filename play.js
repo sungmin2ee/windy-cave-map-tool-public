@@ -1,11 +1,12 @@
-import { createPuzzleEffects } from "./puzzle-effects.js?v=3";
+import { createPuzzleEffects } from "./puzzle-effects.js?v=4";
+import { normalizeThemeSound } from "./puzzle-audio.js?v=1";
 import {
   $, adaptImportedJson, createPlayState, getAsset, normalizeObjectImage, playtestState, puzzleArtwork,
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
   readThemePack, THEME_PACK_FORMAT,
   runAutoGame, chooseAutoAction, animatePlaytestTurn, AUTO_UNLIMITED_TURN_LIMIT,
-} from "./app.js?v=229";
+} from "./app.js?v=230";
 import { runAutoPlayBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
 
 const PUZZLE_GOAL_IMAGES = {
@@ -432,13 +433,16 @@ async function loadPuzzleArtwork(previewTheme) {
       theme.background == null ? null : usableImage(imageUrl(theme.background)),
       burst?.particle ? usableImage(imageUrl(burst.particle)) : null,
     ]);
+    const effects = {};
     if (burst) {
-      const effects = {};
       if (particle) effects.particle = particle;
       if (burst.sound) effects.sound = puzzleArtworkUrl(burst.sound, base);
       if (Number.isFinite(burst.volume)) effects.volume = Math.max(0, Math.min(1, burst.volume));
-      puzzleEffects.setTheme(effects);
     }
+    if (theme.boosterSounds != null && (typeof theme.boosterSounds !== "object" || Array.isArray(theme.boosterSounds))) throw new Error("아이템 효과음 목록 형식이 올바르지 않습니다.");
+    effects.boosterSounds = Object.fromEntries(Object.entries(theme.boosterSounds || {}).filter(([id]) => ["hammer","column","row","shuffle"].includes(id))
+      .map(([id, source]) => [id, previewTheme || isPack ? normalizeThemeSound(source) : puzzleArtworkUrl(source, base)]).filter(([,source]) => source));
+    await puzzleEffects.setTheme(effects);
     setPuzzleArtwork({ layers: Object.fromEntries(layers), specials, goals, boosters });
     versions.themeVersion = themeVersion;
     if (background) {
@@ -582,7 +586,7 @@ $("soundToggle").addEventListener("click", (event) => {
   puzzleEffects.setMuted(!enabled);
 });
 
-setPuzzleView(renderPuzzlePlayer, puzzleEffects.showBurst);
+setPuzzleView(renderPuzzlePlayer, puzzleEffects.showBurst, puzzleEffects.playBooster);
 $("previewAutoForm").addEventListener("submit", startPreviewBatch);
 $("previewAutoCancel").addEventListener("click", restorePreviewManual);
 $("previewAutoManual").addEventListener("click", restorePreviewManual);

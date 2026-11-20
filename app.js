@@ -1,10 +1,15 @@
-import { AUTO_UNLIMITED_TURN_LIMIT, BOOSTERS, createGameEngine } from "./game-engine.js?v=26";
+import { AUTO_UNLIMITED_TURN_LIMIT, BOOSTERS, createGameEngine } from "./game-engine.js?v=27";
+import { createPuzzleAudio, normalizeThemeSound } from "./puzzle-audio.js?v=1";
+import { animateSpecialEffects } from "./special-effects.js?v=1";
 import { animateBoosterEffect, setBoosterImage } from "./booster-effects.js?v=2";
 import { populateDifficultyGoals } from "./difficulty-goals.js?v=4";
-import { createLiveGame } from "./live-game.js?v=9";
+import { createLiveGame } from "./live-game.js?v=10";
 import { runAutoPlayBatch, summarizeBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
 
 const gameEngine = createGameEngine(() => project);
+const editorAudio = createPuzzleAudio();
+const themeAudioPreview = createPuzzleAudio();
+let puzzleItemSound = null;
 
 const {
   SPAWNER_ID,
@@ -81,7 +86,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.77";
+const CLIENT_VERSION = "2.7.78";
 const DUST_ID = "ddung-dust-piece";
 const isFallingGimmick = (id) => id === DUST_ID || isDdungTreasure(id);
 const objectStorageLayer = (layer, id) => id === DUST_ID ? "block" : isDdungTreasure(id) ? "item" : layer;
@@ -1285,6 +1290,14 @@ function readThemePack(pack) {
     }));
   }
   if (pack.background !== undefined) theme.background = imageData(pack.background, 1500000);
+  if (pack.boosterSounds !== undefined) {
+    if (!pack.boosterSounds || typeof pack.boosterSounds !== "object" || Array.isArray(pack.boosterSounds)) throw new Error("아이템 효과음 목록이 올바르지 않아요.");
+    theme.boosterSounds = Object.fromEntries(Object.entries(pack.boosterSounds).filter(([id]) => Object.hasOwn(BOOSTERS, id)).map(([id, value]) => {
+      const sound = normalizeThemeSound(value);
+      if (!sound) throw new Error("아이템 효과음 파일 형식이나 크기를 확인하세요.");
+      return [id, sound];
+    }));
+  }
   return collectionGimmickTheme(theme);
 }
 
@@ -1346,6 +1359,7 @@ function renderAppliedEditorTheme() {
     goals: theme.goals,
     boosters: theme.boosters,
   } : null;
+  editorAudio.setTheme({ boosterSounds: theme?.boosterSounds || {} });
   const background = theme?.background
     ? `linear-gradient(rgb(12 15 30 / 55%), rgb(12 15 30 / 78%)), url(${JSON.stringify(theme.background)})`
     : "";
@@ -1407,6 +1421,60 @@ function renderThemeEditor() {
     group.append(heading, grid);
     return group;
   }));
+  const sounds = document.createElement("section");
+  const title = document.createElement("h3");
+  title.textContent = "플레이 아이템 효과음";
+  const list = document.createElement("div");
+  list.className = "theme-slot-grid";
+  list.append(...Object.entries(BOOSTERS).map(([id, { name }]) => buildThemeSoundSlot(id, name)));
+  sounds.append(title, list);
+  $("themeImageSlots").append(sounds);
+}
+
+function buildThemeSoundSlot(id, name) {
+  const card = document.createElement("div"); card.className = "theme-slot";
+  const title = document.createElement("strong"); title.textContent = name;
+  const status = document.createElement("span"); status.setAttribute("role", "status");
+  const input = document.createElement("input"); input.type = "file"; input.hidden = true;
+  input.accept = ".wav,.mp3,.ogg,.m4a,.aac,.webm,audio/*";
+  const actions = document.createElement("div"); actions.className = "theme-slot-actions";
+  const upload = document.createElement("button"), preview = document.createElement("button"), reset = document.createElement("button");
+  for (const [button, label] of [[upload,"효과음 교체"],[preview,"미리 듣기"],[reset,"기본값"]]) {
+    button.type = "button"; button.className = "button compact ghost";
+    button.textContent = label; button.setAttribute("aria-label", `${name} ${label === "효과음 교체" ? label : "효과음 " + label}`); actions.append(button);
+  }
+  const source = () => project.editorTheme?.boosterSounds?.[id] || project.appliedEditorTheme?.boosterSounds?.[id];
+  const refresh = () => { status.textContent = source() ? "교체된 효과음 · 최대 4MB" : "기본 효과음 · 최대 4MB"; reset.disabled = !source(); };
+  upload.addEventListener("click", () => input.click());
+  preview.addEventListener("click", async () => {
+    themeAudioPreview.unlockAudio();
+    await themeAudioPreview.setTheme({ boosterSounds: { [id]: source() } });
+    const played = themeAudioPreview.playSound(id);
+    status.textContent = played ? "효과음을 재생했어요." : "재생 버튼을 다시 눌러주세요.";
+  });
+  reset.addEventListener("click", () => { snapshot(); delete project.editorTheme?.boosterSounds?.[id]; delete project.appliedEditorTheme?.boosterSounds?.[id]; renderAll(); renderThemeEditor(); persist(); });
+  input.addEventListener("change", async () => {
+    const file = input.files[0]; input.value = ""; if (!file) return;
+    const original = project;
+    pendingThemeImages++;
+    for (const target of [upload,preview,reset,$("previewThemeButton"),$("applyEditorTheme"),$("saveThemePack"),$("openThemePack")]) target.disabled = true;
+    status.textContent = "효과음을 준비하고 있어요.";
+    try {
+      if (file.size > 4 * 1024 * 1024) throw new Error("4MB 이하의 효과음을 선택하세요.");
+      const mime = ({ wav:"wav",mp3:"mpeg",ogg:"ogg",m4a:"mp4",aac:"aac",webm:"webm" })[file.name.split('.').at(-1).toLowerCase()];
+      if (!mime) throw new Error("WAV·MP3·OGG·M4A·AAC·WebM 파일을 선택하세요.");
+      const data = await new Promise((resolve,reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]+,/,`data:audio/${mime};base64,`)); reader.onerror = reject; reader.readAsDataURL(file); });
+      const sound = normalizeThemeSound(data);
+      if (!sound || !await themeAudioPreview.prepareSound(sound)) throw new Error("이 브라우저에서 재생할 수 없는 효과음입니다.");
+      if (project === original) { snapshot(); ((project.editorTheme ??= {}).boosterSounds ??= {})[id] = sound; persist(); }
+      refresh();
+    } catch (error) { status.textContent = error.message; }
+    finally {
+      pendingThemeImages--; upload.disabled = preview.disabled = false; reset.disabled = !source();
+      for (const target of [$("previewThemeButton"),$("applyEditorTheme"),$("saveThemePack"),$("openThemePack")]) target.disabled = pendingThemeImages > 0;
+    }
+  });
+  card.append(title,status,input,actions); refresh(); return card;
 }
 
 function buildThemeSlot(category, id, name, inheritedImage) {
@@ -3682,6 +3750,14 @@ function playtestFrameDuration(kind, delay, speed) {
   return (kind === "fall" || kind === "refill" ? delay * (4 / 3) : delay) / speed;
 }
 
+function playBoosterSound(state, type, duration) {
+  const play = () => {
+    if (playtestState === state && playtestIsVisible()) (puzzleItemSound || editorAudio.playSound)(type);
+  };
+  if (type === "hammer") setTimeout(play, duration * .8);
+  else play();
+}
+
 async function showPlaytestFrames(state, turn, frames) {
   for (const frame of frames) {
     if (state.animationTurn !== turn || playtestState !== state || !playtestIsVisible()) return;
@@ -3694,6 +3770,8 @@ async function showPlaytestFrames(state, turn, frames) {
     for (const index of frame.cells) grid.children[index]?.classList.add("playtest-frame-" + frame.kind);
     if (frame.kind === "bonus") animateBonusCells(grid, frame.cells, delay);
     if (frame.kind !== "shuffle") animateFrameMotions(grid, frame.cave, frame.motions, delay);
+    animateSpecialEffects(grid, frame.cave, frame.specialVisuals, delay);
+    if (frame.turnActor?.type === "booster") playBoosterSound(state, frame.turnActor.booster, delay);
     if (frame.turnActor?.type === "booster") animateBoosterEffect(grid, frame, delay, {
       makePiece: (index) => livePieceSprite(frame.cave, index), syncVisibility: () => syncLiveSwapVisibility(grid), images: puzzleArtwork?.boosters,
     });
@@ -3768,6 +3846,9 @@ function showLiveEffects(state, frames) {
   const grid = $("simulationGrid");
   const speed = Number($("playtestSpeed").value) || 1;
   for (const frame of frames) {
+    if (frame.specialVisuals?.length) setTimeout(() => {
+      if (playtestState === state && playtestIsVisible()) animateSpecialEffects(grid, frame.cave, frame.specialVisuals, frame.delay / speed);
+    }, frame.at / speed);
     if (frame.kind === "bonus") {
       setTimeout(() => {
         if (playtestState === state && playtestIsVisible()) animateBonusCells(grid, frame.cells, frame.delay / speed);
@@ -3775,9 +3856,12 @@ function showLiveEffects(state, frames) {
     }
     if (frame.turnActor?.type === "booster") {
       const show = () => {
-        if (playtestState === state && playtestIsVisible()) animateBoosterEffect(grid, frame, frame.delay / speed, {
+        if (playtestState === state && playtestIsVisible()) {
+          playBoosterSound(state, frame.turnActor.booster, frame.delay / speed);
+          animateBoosterEffect(grid, frame, frame.delay / speed, {
           makePiece: (index) => livePieceSprite(frame.cave, index), syncVisibility: () => syncLiveSwapVisibility(grid), holdBlocks: true, images: puzzleArtwork?.boosters,
         });
+        }
       };
       if (frame.at) setTimeout(show, frame.at / speed);
       else show();
@@ -3889,12 +3973,12 @@ async function animatePlaytestTurn(state, action) {
   state.animating = true;
   renderBoosterControls(state, true);
   const frames = [];
-  const capture = (label, cells, kind, delay = 360, motions = [], turnActor = null, burst = null, cleared = []) => {
+  const capture = (label, cells, kind, delay = 360, motions = [], turnActor = null, burst = null, cleared = [], specialVisuals = []) => {
     const layers = Object.fromEntries(Object.entries(state.cave.layers).map(([layer, values]) => [layer, [...values]]));
     const playtestPieces = [...state.cave.playtestPieces];
     for (const index of cleared) { layers.block[index] = null; playtestPieces[index] = null; }
     frames.push({ cave: { ...state.cave, layers, playtestPieces }, clearBonus: state.clearBonus && { remaining: state.clearBonus.remaining },
-      terrainHits: [...state.terrainHits], gimmickHits: [...state.gimmickHits], label, cells, kind, delay, motions, turnActor, burst });
+      terrainHits: [...state.terrainHits], gimmickHits: [...state.gimmickHits], label, cells, kind, delay, motions, turnActor, burst, specialVisuals });
   };
   try {
     playSimulationTurn(state, action, capture);
@@ -5454,6 +5538,8 @@ function bindEditorGuide() {
 }
 
 function bindInputs() {
+  document.addEventListener("pointerdown", editorAudio.unlockAudio, { capture:true });
+  document.addEventListener("pointerup", editorAudio.unlockAudio, { capture:true });
   bindEditorTabs();
   bindEditorGuide();
   $("addDdungGimmick").addEventListener("change", ({ target }) => {
@@ -6136,7 +6222,8 @@ export {
 export function setPuzzleProject(value) { project = value; }
 export function setPuzzlePlaytestState(value) { playtestState = value; }
 export function setPuzzleArtwork(value) { puzzleArtwork = value; }
-export function setPuzzleView(render, burst) {
+export function setPuzzleView(render, burst, itemSound) {
   puzzleView = render;
   puzzleBurst = burst;
+  puzzleItemSound = itemSound;
 }

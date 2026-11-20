@@ -49,6 +49,19 @@ function collectionGimmickBoard({ exit = 32, countMode = 'manual', special = 0 }
     objectives: [{ layer: 'item', targetId: 'ddung-treasure-1', countMode, count: 1 }] });
 }
 
+for (const [type,effect] of [['horizontal','row'],['vertical','column'],['bomb','area'],['rainbow','color'],['bee','fish']]) {
+  test(`${type} emits its own presentation event at the actual activation cell`, () => {
+    const { state, live, frames } = fixture({ initialPieceTypes: {14:type} });
+    assert.equal(live.submit({first:14}), true);
+    const events = frames.flatMap(frame => frame.specialVisuals || []);
+    const event = events.find(event => event.index === 14 && event.effect === effect);
+    assert.ok(event);
+    assert.equal(event.wave, 0);
+    assert.ok(event.targets.every(index => index >= 0 && index < 36));
+    assert.equal(state.movesUsed, 1);
+  });
+}
+
 for (const [booster, target, hit] of [
   ['hammer', 20, [20]], ['row', 14, [12,13,14,15,16,17]], ['column', 14, [2,8,14,20,26,32]],
 ]) test(`${booster} booster hits only its intended cells, consumes one item and no moves`, () => {

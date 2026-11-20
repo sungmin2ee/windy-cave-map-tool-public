@@ -1,75 +1,9 @@
-const DEFAULT_VOLUME = 0.45;
-
+import { createPuzzleAudio } from './puzzle-audio.js?v=1';
 export function createPuzzleEffects() {
-  let settings = { volume: DEFAULT_VOLUME };
-  let context;
-  let customSound;
-  let muted = false;
-  let resumeRequest;
-  let popPending = false;
-
-  function unlockAudio() {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext || muted) return;
-    if (!context) {
-      context = new AudioContext();
-      if (settings.sound) {
-        fetch(settings.sound)
-          .then((response) => {
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return response.arrayBuffer();
-          })
-          .then((bytes) => context.decodeAudioData(bytes))
-          .then((buffer) => { customSound = buffer; })
-          .catch(() => {});
-      }
-    }
-    if (context.state === "running" || resumeRequest) return;
-    resumeRequest = context.resume().then(() => {
-      if (popPending) playBurstSound();
-    }).catch(() => {}).finally(() => {
-      popPending = false;
-      resumeRequest = null;
-    });
-  }
-
-  function playBurstSound() {
-    if (muted || settings.volume === 0 || !context) return;
-    if (context.state !== "running") {
-      popPending = Boolean(resumeRequest);
-      return;
-    }
-    popPending = false;
-    const time = context.currentTime;
-    const gain = context.createGain();
-    gain.connect(context.destination);
-
-    if (customSound) {
-      const source = context.createBufferSource();
-      source.buffer = customSound;
-      gain.gain.value = settings.volume;
-      source.connect(gain);
-      source.onended = () => gain.disconnect();
-      source.start();
-      return;
-    }
-
-    const pop = context.createOscillator();
-    pop.type = "triangle";
-    pop.frequency.setValueAtTime(880, time);
-    pop.frequency.exponentialRampToValueAtTime(300, time + 0.18);
-    gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(settings.volume * 0.8, time + 0.012);
-    gain.gain.exponentialRampToValueAtTime(settings.volume * 0.22, time + 0.09);
-    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.23);
-    pop.connect(gain);
-    pop.onended = () => gain.disconnect();
-    pop.start(time);
-    pop.stop(time + 0.24);
-  }
-
+  let settings = { volume: .45 };
+  const audio = createPuzzleAudio();
   function showBurst(grid, cells) {
-    playBurstSound();
+    audio.playSound('burst');
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const board = grid.getBoundingClientRect();
     for (const { index, color } of cells.slice(0, 24)) {
@@ -105,17 +39,8 @@ export function createPuzzleEffects() {
   }
 
   return {
-    setTheme(theme) { settings = { ...settings, ...theme }; },
-    setMuted(value) {
-      muted = value;
-      if (muted) {
-        popPending = false;
-      } else {
-        unlockAudio();
-        playBurstSound();
-      }
-    },
-    unlockAudio,
-    showBurst,
+    setTheme(theme) { settings = { ...settings, ...theme }; return audio.setTheme(theme); },
+    setMuted: audio.setMuted, unlockAudio: audio.unlockAudio,
+    playBooster: audio.playSound, showBurst,
   };
 }

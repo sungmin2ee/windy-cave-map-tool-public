@@ -493,3 +493,9 @@ h2 { font-size: 16px; margin-top: 3px; }
 .booster-beam-column { transform-origin: center top; }
 .booster-line-spark { width: 18px; height: 18px; border-radius: 50%; background: #fffbe4; box-shadow: 0 0 12px 5px #f2c3ff, 0 0 24px 10px #9969ff; }
 #simulationGrid > .booster-piece-actor { pointer-events: none; will-change: transform; }
+.special-effect { position: absolute; pointer-events: none; z-index: 11; box-sizing: border-box; }
+.special-effect-row, .special-effect-column { border-radius: 9px; background: #f5fcff; box-shadow: 0 0 12px 5px #6acfff, 0 0 24px #2185ff; }
+.special-effect-area { border: 6px solid #ffe5a0; border-radius: 50%; background: radial-gradient(circle,#fff4, #ff922855, transparent 70%); box-shadow: 0 0 25px #ff9d44, inset 0 0 25px #ffb44b; }
+.special-effect-fish { border: 3px solid #c9ffb2; border-radius: 50%; box-shadow: 0 0 15px #8fe35b; }
+.special-effect-color { border: 5px solid #fbdcff; border-radius: 50%; background: conic-gradient(#f668, #ff68, #6f68, #6ff8, #c6f8, #f668); box-shadow: 0 0 22px #e5b8ff; }
+.special-effect-color-ray { background: linear-gradient(90deg,#fff,#edb6ff); box-shadow: 0 0 7px #bd79ff; }

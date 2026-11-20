@@ -72,8 +72,8 @@ export function createLiveGame(state, engine, { effects = () => {}, changed = ()
     const frames = [];
     const before = { ...cave, layers: { ...cave.layers, terrain: [...cave.layers.terrain], gimmick: [...cave.layers.gimmick] } };
     const beforeHits = { terrain: [...state.terrainHits], gimmick: [...state.gimmickHits] };
-    const capture = (label, cells, kind, delay = 320, moves = [], turnActor = null, burst = null, cleared = []) => {
-      frames.push({ label, cells: [...cells], kind, delay, motions: moves, turnActor, burst, cleared,
+    const capture = (label, cells, kind, delay = 320, moves = [], turnActor = null, burst = null, cleared = [], specialVisuals = []) => {
+      frames.push({ label, cells: [...cells], kind, delay, motions: moves, turnActor, burst, cleared, specialVisuals,
         cave: { ...cave, layers: Object.fromEntries(Object.entries(cave.layers).map(([k, v]) => [k, [...v]])),
           playtestPieces: [...cave.playtestPieces] } });
     };
