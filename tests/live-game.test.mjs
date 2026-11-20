@@ -49,6 +49,46 @@ function collectionGimmickBoard({ exit = 32, countMode = 'manual', special = 0 }
     objectives: [{ layer: 'item', targetId: 'ddung-treasure-1', countMode, count: 1 }] });
 }
 
+test('collection goals refill requested kinds up to two on board and stop at quota', () => {
+  const { engine, state } = fixture({ objectives: [
+    { layer: 'item', targetId: 'ddung-treasure-1', countMode: 'manual', count: 3 },
+    { layer: 'item', targetId: 'ddung-treasure-2', countMode: 'manual', count: 2 },
+  ] });
+  assert.equal(state.cave.layers.block.some(engine.isDdungTreasure), false);
+  const counts = { 'ddung-treasure-1': 0, 'ddung-treasure-2': 0 };
+  for (let turn = 0; turn < 100 && Object.values(counts).reduce((a,b) => a+b) < 5; turn++) {
+    for (let i = 0; i < 6; i++) if (!engine.isDdungTreasure(state.cave.layers.block[i])) state.cave.layers.block[i] = null;
+    engine.refillLiveSources(state, new Set());
+    const treasures = state.cave.layers.block.flatMap((id, index) => engine.isDdungTreasure(id) ? [{ id, index }] : []);
+    assert.ok(treasures.length <= 2);
+    for (const { id, index } of treasures) {
+      state.cave.layers.block[index] = null;
+      state.cave.layers.block[30] = id;
+      assert.equal(engine.collectDdungTreasure(state), 1);
+      counts[id]++;
+    }
+  }
+  assert.deepEqual(counts, { 'ddung-treasure-1': 3, 'ddung-treasure-2': 2 });
+  for (let i = 0; i < 6; i++) state.cave.layers.block[i] = null;
+  engine.refillLiveSources(state, new Set());
+  assert.equal(state.cave.layers.block.some(engine.isDdungTreasure), false);
+});
+
+test('automatic exits are idempotent and preserve authored exits', () => {
+  const { engine, cave } = collectionGimmickBoard({ exit: 20 });
+  engine.prepareCollectionLayout(cave);
+  engine.prepareCollectionLayout(cave);
+  assert.deepEqual(cave.layers.gimmick.flatMap((id, index) => id === 'exit' ? [index] : []), [20]);
+  cave.layers.gimmick[20] = null;
+  engine.prepareCollectionLayout(cave);
+  assert.equal(cave.generatedCollectionExits.length, 6);
+  engine.prepareCollectionLayout(cave);
+  assert.equal(cave.generatedCollectionExits.length, 6);
+  cave.objectives = [];
+  engine.prepareCollectionLayout(cave);
+  assert.equal(cave.layers.gimmick.includes('exit'), false);
+});
+
 test('level turn-event settings override imported flags and survive JSON round trips', () => {
   const externalSource = { format: 'DDUNG MapInfo v68', rawMap: { mouse: 'True', spider: false } };
   const { engine, cave } = fixture({ externalSource });

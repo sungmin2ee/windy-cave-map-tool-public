@@ -618,6 +618,10 @@
           <section class="panel-section" id="selectedObjectRules" hidden>
             <h2>선택한 오브젝트 설정</h2>
             <p id="selectedObjectPlacementHelp" class="palette-help" hidden></p>
+            <div id="blockIcePlacementOptions" hidden>
+              <label class="check-field"><input type="checkbox" id="placeInIce" /> 얼음에 갇힌 상태로 배치</label>
+              <p class="palette-help">일반 블록과 먼지 모두 사용할 수 있습니다. 체크하면 선택한 오브젝트와 얼음을 함께 배치하고, 체크하지 않으면 기존 지형을 유지합니다.</p>
+            </div>
             <label class="button ghost file-picker">
               <span>이미지 선택</span>
               <input id="objectImageFile" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" aria-label="오브젝트 이미지 선택" />
@@ -1095,7 +1099,7 @@
       </div>
       <div id="levelPreviewFrameSlot"></div>
     </dialog>
-    <script type="module" src="./app.js?v=222"></script>
+    <script type="module" src="./app.js?v=224"></script>
   </body>
 </html>
 

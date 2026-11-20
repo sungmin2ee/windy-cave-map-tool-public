@@ -5,9 +5,14 @@ export function populateDifficultyGoals(cave, source, engine, {
   for (let i = 0; i < cave.layers.gimmick.length; i++) {
     if (engine.isEventOnlyGimmick(cave.layers.gimmick[i])) cave.layers.gimmick[i] = null;
   }
+  // New candidate boards receive collection pieces through refill sources.
+  for (const layer of ['item', 'block']) cave.layers[layer].forEach((id, index) => {
+    if (engine.isDdungTreasure(id)) cave.layers[layer][index] = null;
+  });
   const goals = cave.scoreTarget == null ? cave.objectives : [];
+  const isPlacedGoal = (goal) => goal.layer !== 'block' || goal.targetId === 'ddung-dust-piece';
   const adaptive = Number.isFinite(difficulty);
-  const autoGoals = goals.filter((goal) => goal.layer !== 'block' && goal.countMode === 'auto-map');
+  const autoGoals = goals.filter((goal) => isPlacedGoal(goal) && goal.countMode === 'auto-map');
   if (adaptive && !keepPlacement) {
     // Rebuild automatic quantities instead of retaining a previous harder board.
     for (const goal of autoGoals) {
@@ -29,13 +34,13 @@ export function populateDifficultyGoals(cave, source, engine, {
     const durability = goal.layer === 'terrain' ? cave.terrainRules?.[id]?.durability :
       goal.layer === 'gimmick' ? cave.gimmickRules?.[id]?.durability ||
         engine.ddungGimmickDurability({ layers: { gimmick: [id] } }, 0) : 1;
-    return { footprint, cost: footprint * Math.sqrt(Math.max(1, durability || 1)) };
+    return { footprint, cost: engine.isDdungTreasure(id) ? Math.max(2, cave.height / 2) : footprint * Math.sqrt(Math.max(1, durability || 1)) };
   };
   const activeArea = cave.layers.terrain.filter((id, index) =>
     !engine.isExcluded(cave, index) && id !== 'wall' && id !== 'pit').length;
   const moveScale = cave.moveLimitEnabled === false ? 1 :
     Math.max(0.5, Math.min(1.6, Math.sqrt((cave.moveLimit || 20) / 20)));
-  const manualWork = goals.filter((goal) => goal.layer !== 'block' && goal.countMode !== 'auto-map')
+  const manualWork = goals.filter((goal) => isPlacedGoal(goal) && goal.countMode !== 'auto-map')
     .reduce((total, goal) => total + goal.count * effort(goal).cost, 0);
   const workload = adaptive ? Math.max(autoGoals.length,
     activeArea * (0.12 + 0.60 * Math.max(1, Math.min(100, difficulty)) / 100) * moveScale *
@@ -44,7 +49,7 @@ export function populateDifficultyGoals(cave, source, engine, {
   // Reserve explicitly entered quantities before sharing free cells among auto goals.
   const ordered = [...goals.filter((goal) => goal.countMode !== 'auto-map'), ...goals.filter((goal) => goal.countMode === 'auto-map')];
   for (const goal of ordered) {
-    if (goal.layer === 'block') continue;
+    if (!isPlacedGoal(goal)) continue;
     if (engine.isEventOnlyGimmick(goal.targetId)) return { ok: false, error: '쥐·거미는 레벨 이벤트로 설정하세요. 배치형 클리어 목표로 생성할 수 없습니다.' };
     const available = Array.from({ length: cave.width * cave.height }, (_, i) => i).filter((i) => {
       if (engine.isExcluded(cave, i) || engine.isBarrier(cave, i)) return false;
@@ -58,6 +63,11 @@ export function populateDifficultyGoals(cave, source, engine, {
     let target = automatic ? (adaptive
       ? Math.max(1, Math.round(workload / autoGoals.length / cost))
       : Math.max(1, engine.resolvedObjectiveCount(source, goal))) : goal.count;
+    if (engine.isDdungTreasure(goal.targetId)) {
+      goal.count = target;
+      requirements.push({ goal, target, spawned: true });
+      continue;
+    }
     if (automatic && adaptive) target = Math.max(1, existing,
       Math.min(target, existing + Math.floor(available.length / footprint)));
     const preferred = preferredSlots(available);
@@ -79,5 +89,6 @@ export function populateDifficultyGoals(cave, source, engine, {
     }
     requirements.push({ goal, target });
   }
+  engine.prepareCollectionLayout(cave);
   return { ok: true, requirements };
 }

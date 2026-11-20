@@ -1,5 +1,5 @@
-import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=22";
-import { populateDifficultyGoals } from "./difficulty-goals.js?v=2";
+import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=23";
+import { populateDifficultyGoals } from "./difficulty-goals.js?v=4";
 import { createLiveGame } from "./live-game.js?v=8";
 import { runAutoPlayBatch, summarizeBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
 
@@ -39,6 +39,7 @@ const {
   isDdungGimmickBarrier,
   isBarrier,
   isDdungTreasure,
+  prepareCollectionLayout,
   ddungMarkersAt,
   terrainGroup,
   matchesObjectiveOnLayer,
@@ -79,7 +80,11 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.71";
+const CLIENT_VERSION = "2.7.73";
+const DUST_ID = "ddung-dust-piece";
+const isFallingGimmick = (id) => id === DUST_ID || isDdungTreasure(id);
+const objectStorageLayer = (layer, id) => id === DUST_ID ? "block" : isDdungTreasure(id) ? "item" : layer;
+const objectCategory = (layer, id) => isFallingGimmick(id) ? "gimmick" : layer;
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -112,7 +117,7 @@ const ASSETS = {
   ],
   block: [
     ...Object.keys(COLORS).map((id) => ({ id, name: id[0].toUpperCase() + id.slice(1), className: `block-${id}`, visual: "◆" })),
-    { id: "ddung-dust-piece", name: "DDUNG Dust", visual: "░" },
+    { id: "ddung-dust-piece", name: "먼지 · 낙하형 기믹", visual: "░" },
   ],
   gimmick: [
     { id: "teleport-a", name: "Teleport A", visual: "◉" },
@@ -351,7 +356,7 @@ function normalizeObjective(value, fallback = {}) {
   let targetId = source.targetId ?? source.objectId ?? source.type ?? source.target ?? source.color ?? fallback.targetId ?? fallbackTarget;
   targetId = assetId(targetId) || fallbackTarget;
   // Keep the existing JSON collection key while presenting treasures as gimmicks.
-  if (isDdungTreasure(targetId)) layer = "item";
+  layer = objectStorageLayer(layer, targetId);
   const defaultAction = OBJECTIVE_ACTIONS[layer].action;
   const requestedAction = String(source.action || source.condition || defaultAction).toLowerCase();
   const actionAliases = { clear: "match", remove: layer === "terrain" ? "destroy" : defaultAction, break: "destroy", pickup: "collect", trigger: "activate" };
@@ -381,6 +386,7 @@ function collectPaletteAssets(caves, saved = {}, definitions = {}) {
     layer, new Set([...(Array.isArray(saved?.[layer]) ? saved[layer] : []), ...(definitions[layer] || []).map(({ id }) => id)]),
   ]));
   used.gimmick.add(SPAWNER_ID);
+  used.block.add(DUST_ID);
   for (const cave of caves) {
     for (const layer of Object.keys(ASSETS)) {
       for (const id of cave.layers[layer]) used[layer].add(layer === "gimmick" && id ? ddungGimmickBase(id) : id);
@@ -573,10 +579,14 @@ function normalizeCave(data, index = 0, ddungProject = false, packedCatalog = {}
       }
     }
     if (isDdungTreasure(layers.item[cell])) layers.block[cell] = null;
+    if (layers.gimmick[cell] === DUST_ID) {
+      layers.block[cell] = DUST_ID;
+      layers.gimmick[cell] = null;
+    }
   }
   const usableBlocks = Array.isArray(source.usableBlocks)
-    ? source.usableBlocks.map(assetId).filter(Boolean)
-    : layers.block.filter(Boolean);
+    ? source.usableBlocks.map(assetId).filter((id) => id && !isFallingGimmick(id))
+    : layers.block.filter((id) => id && !isFallingGimmick(id));
   const externalSource = source.externalSource;
   const ddung = isDdungSource(externalSource) || (!externalSource && ddungProject);
   let migratedPanel = false;
@@ -666,6 +676,7 @@ function normalizeCave(data, index = 0, ddungProject = false, packedCatalog = {}
   if (migrateDdungGoals || migrateWaterReaction || (isDdungSource(externalSource) && !externalSource.jellyGroupsParsed)) normalized.externalSource = { ...externalSource, goalRulesVersion: 2, waterReactionNormalized: true, jellyGroupsParsed: true };
   delete normalized.packedLayers;
   delete normalized.storageFormat;
+  prepareCollectionLayout(normalized);
   return normalized;
 }
 
@@ -781,7 +792,7 @@ const DDUNG_GIMMICK_ART = Object.freeze({
 
 function getAsset(layer, id, cave = activeCave()) {
   if (!assetId(id)) return null;
-  if (isDdungTreasure(id)) layer = "item";
+  layer = objectStorageLayer(layer, id);
   const baseId = layer === "gimmick" ? ddungGimmickBase(id) : id;
   const known = ASSETS[layer === "block" && isDdungTreasure(id) ? "item" : layer].find((asset) => asset.id === baseId) ??
     (layer === "gimmick" && id === "ddung-iron-box" ? { name: "DDUNG Iron Box", visual: "▣" } : null);
@@ -835,8 +846,8 @@ function blockColor(id) {
 
 function paletteIdsFor(layer, cave = activeCave()) {
   const ids = project.paletteAssets[layer] || [];
-  if (layer === "gimmick") return [...new Set([...ids, ...DDUNG_ITEM_IDS])].filter((id) => !isEventOnlyGimmick(id));
-  return ids.filter((id) => !isDdungTreasure(id));
+  if (layer === "gimmick") return [...new Set([...ids, ...DDUNG_ITEM_IDS, DUST_ID])].filter((id) => !isEventOnlyGimmick(id));
+  return ids.filter((id) => !isFallingGimmick(id));
 }
 
 function paletteOptions(layer, extraId) {
@@ -845,7 +856,7 @@ function paletteOptions(layer, extraId) {
 }
 
 function objectiveLabel(objective) {
-  const category = isDdungTreasure(objective.targetId) ? "gimmick" : objective.layer;
+  const category = objectCategory(objective.layer, objective.targetId);
   const layer = LAYER_LABELS[category];
   const asset = getAsset(objective.layer, objective.targetId);
   return `${layer} · ${asset?.name || objective.targetId}`;
@@ -864,12 +875,12 @@ function addObjective(layer = null, targetId = null) {
   if (!layer) return toast("먼저 팔레트에 오브젝트 종류를 추가하세요.");
   snapshot();
   cave.objectives.push(normalizeObjective({ layer, targetId: targetId ?? paletteIdsFor(layer, cave)[0], countMode: "auto-map", count: 1 }));
-  syncLegacyTarget(cave); renderRules(); persist();
+  prepareCollectionLayout(cave); syncLegacyTarget(cave); renderRules(); renderGrid(); persist();
 }
 
 function removeObjective(index) {
   const cave = activeCave();
-  snapshot(); cave.objectives.splice(index, 1); syncLegacyTarget(cave); renderRules(); persist();
+  snapshot(); cave.objectives.splice(index, 1); prepareCollectionLayout(cave); syncLegacyTarget(cave); renderRules(); renderGrid(); persist();
 }
 
 function updateObjective(index, values) {
@@ -880,7 +891,7 @@ function updateObjective(index, values) {
   const next = normalizeObjective({ ...current, ...values }, current);
   if (next.layer !== current.layer || next.targetId !== current.targetId) next.id = crypto.randomUUID();
   cave.objectives[index] = next;
-  syncLegacyTarget(cave); renderRules(); persist();
+  prepareCollectionLayout(cave); syncLegacyTarget(cave); renderRules(); renderGrid(); persist();
 }
 
 function renderObjectives() {
@@ -888,7 +899,7 @@ function renderObjectives() {
   const list = $("objectiveList");
   list.innerHTML = "";
   cave.objectives.forEach((objective, index) => {
-    const category = isDdungTreasure(objective.targetId) ? "gimmick" : objective.layer;
+    const category = objectCategory(objective.layer, objective.targetId);
     const row = document.createElement("div");
     row.className = "objective-row";
     const targetOptions = paletteOptions(category, objective.targetId)
@@ -902,7 +913,7 @@ function renderObjectives() {
       </div>
       <div class="objective-row-bottom">
         <label><span class="field-label">완료 조건</span><div class="objective-auto-count">${escapeHtml(isDdungTreasure(objective.targetId) ? "출구까지 낙하시켜 수집" : objective.targetId === "ddung-octo" ? "얼음 파괴 후 가방 수집" : objective.targetId === "ddung-dust-piece" ? "특수 피스로 먼지 제거" : ddungObjectiveType(objective) === 7 ? "내구도 소진 후 파괴" : OBJECTIVE_ACTIONS[objective.layer].label)}</div></label>
-        <label><span class="field-label">수량 방식</span><select class="field objective-count-mode"><option value="manual"${objective.countMode === "manual" ? " selected" : ""}>직접 입력</option><option value="auto-map"${objective.countMode === "auto-map" ? " selected" : ""}>맵 개수 자동</option></select></label>
+        <label><span class="field-label">수량 방식</span><select class="field objective-count-mode"><option value="manual"${objective.countMode === "manual" ? " selected" : ""}>직접 입력</option><option value="auto-map"${objective.countMode === "auto-map" ? " selected" : ""}>${isDdungTreasure(objective.targetId) ? "난이도로 자동 수량" : "맵 개수 자동"}</option></select></label>
       </div>
       <div class="objective-row-bottom objective-count-row">
         <label><span class="field-label">목표 수량</span>${objective.countMode === "auto-map" ? `<div class="objective-auto-count">현재 ${autoCount}개</div>` : `<input class="field objective-count" type="number" min="1" max="999" value="${objective.count}" />`}</label>
@@ -1119,11 +1130,11 @@ function renderPalette() {
     : `${activeLayer.toUpperCase()} · ${current?.name || "선택 없음"}`;
   const hideAssetActions = !current || activeTool === "eraser";
   $("viewAssetUsage").hidden = $("openAssetReplace").hidden = hideAssetActions;
-  $("deleteSelectedAsset").hidden = hideAssetActions || originalItems || isDdungTreasure(current?.id) || (layer === "gimmick" && current?.id === SPAWNER_ID);
+  $("deleteSelectedAsset").hidden = hideAssetActions || originalItems || isFallingGimmick(current?.id) || (layer === "gimmick" && current?.id === SPAWNER_ID);
   renderSelectedObjectRules(hideAssetActions ? null : current);
   const colors = $("usableColors");
   colors.innerHTML = "";
-  const blockIds = project.paletteAssets.block || [];
+  const blockIds = paletteIdsFor("block");
   $("usableColorsSection").hidden = blockIds.length === 0;
   blockIds.forEach((name) => {
     const color = blockColor(name);
@@ -1154,10 +1165,14 @@ function renderSelectedObjectRules(asset) {
   const placementHelp = {
     "ddung-mouse-panel": "기존 JSON의 쥐 데이터입니다. 새 배치 대신 레벨 설정의 쥐 이벤트를 사용하세요.",
     "ddung-spider-cave": "기존 JSON의 거미 데이터입니다. 새 배치 대신 레벨 설정의 거미 이벤트를 사용하세요.",
+    "ddung-treasure-1": "목표로 추가하면 일반 블록 대신 스포너에서 모자가 나옵니다. 시작 보드에는 깔지 않으며 출구는 자동 배치됩니다.",
+    "ddung-treasure-2": "목표로 추가하면 일반 블록 대신 스포너에서 가방이 나옵니다. 시작 보드에는 깔지 않으며 출구는 자동 배치됩니다.",
+    "ddung-dust-piece": "특수 피스로 제거하는 낙하형 기믹입니다. ‘얼음에 갇힌 상태로 배치’를 켜면 먼지와 얼음을 함께 놓습니다. 기존 칸의 거미줄·서리는 지형 레이어에서 편집할 수 있습니다.",
   }[asset?.id];
   $("selectedObjectPlacementHelp").hidden = !placementHelp;
   $("selectedObjectPlacementHelp").textContent = placementHelp || "";
-  $("resetObjectImage").hidden = !asset || !project.assetDefinitions?.[isDdungTreasure(asset.id) ? "item" : activeLayer]?.some(
+  $("blockIcePlacementOptions").hidden = !asset || objectStorageLayer(activeLayer, asset.id) !== "block";
+  $("resetObjectImage").hidden = !asset || !project.assetDefinitions?.[objectStorageLayer(activeLayer, asset.id)]?.some(
     (definition) => definition.id === asset.id && definition.image);
   const cave = activeCave();
   const showRule = asset && activeLayer === "gimmick" && asset.id !== SPAWNER_ID &&
@@ -1176,7 +1191,7 @@ function renderSelectedObjectRules(asset) {
 }
 
 function saveObjectImage(layer, id, image) {
-  if (isDdungTreasure(id)) layer = "item";
+  layer = objectStorageLayer(layer, id);
   const definitions = project.assetDefinitions?.[layer] ?? [];
   const current = definitions.find((asset) => asset.id === id);
   const next = definitions.filter((asset) => asset.id !== id);
@@ -1236,12 +1251,15 @@ const THEME_PACK_FORMAT = "windy-cave-theme-pack";
 function collectionGimmickTheme(theme) {
   if (!theme || typeof theme !== "object" || Array.isArray(theme)) return theme;
   const item = { ...theme.item };
+  const block = { ...theme.block };
   const gimmick = { ...theme.gimmick };
+  if (block[DUST_ID] && !gimmick[DUST_ID]) gimmick[DUST_ID] = block[DUST_ID];
+  delete block[DUST_ID];
   for (const id of DDUNG_ITEM_IDS) {
     if (item[id] && !gimmick[id]) gimmick[id] = item[id];
     delete item[id];
   }
-  return { ...theme, item, gimmick };
+  return { ...theme, block, item, gimmick };
 }
 
 function readThemePack(pack) {
@@ -1271,7 +1289,7 @@ function readThemePack(pack) {
 
 function objectThemeImages(layer) {
   return Object.fromEntries(Object.entries(project.assetDefinitions ?? {}).flatMap(([sourceLayer, assets]) =>
-    assets.filter(({ id, image }) => image && (isDdungTreasure(id) ? "gimmick" : sourceLayer) === layer)
+    assets.filter(({ id, image }) => image && objectCategory(sourceLayer, id) === layer)
       .map(({ id, image }) => [id, image])));
 }
 
@@ -1309,7 +1327,7 @@ async function loadThemePack(event) {
 
 function editorGoalArt(objective) {
   return puzzleArtwork?.goals?.[objective.targetId] || puzzleArtwork?.layers[objective.layer]?.[objective.targetId] ||
-    (isDdungTreasure(objective.targetId) && puzzleArtwork?.layers.gimmick?.[objective.targetId]);
+    (isFallingGimmick(objective.targetId) && puzzleArtwork?.layers.gimmick?.[objective.targetId]);
 }
 
 function renderAppliedEditorTheme() {
@@ -1361,8 +1379,8 @@ function renderThemeEditor() {
     if (layer === "block") {
       for (const id of [...Object.keys(COLORS), ...paletteIdsFor(layer, cave)]) ids.add(id);
     }
-    if (layer === "gimmick") for (const id of DDUNG_ITEM_IDS) ids.add(id);
-    const entries = [...ids].filter((id) => layer !== "item" || !isDdungTreasure(id))
+    if (layer === "gimmick") for (const id of [...DDUNG_ITEM_IDS, DUST_ID]) ids.add(id);
+    const entries = [...ids].filter((id) => objectCategory(layer, id) === layer)
       .map((id) => [id, getAsset(layer, id, cave)?.name ?? id, inherited[id]]);
     return entries.length ? [[layer, title, entries]] : [];
   });
@@ -1507,7 +1525,7 @@ function saveSelectedGimmickRule(event) {
 }
 
 function findAssetUsage(caves, layer, id) {
-  if (isDdungTreasure(id)) layer = "item";
+  layer = objectStorageLayer(layer, id);
   return caves.flatMap((cave) => {
     const reasons = [];
     const placed = cave.layers[layer].filter((value) => (layer === "gimmick" ? ddungGimmickBase(value) : value) === id).length;
@@ -1519,7 +1537,7 @@ function findAssetUsage(caves, layer, id) {
 }
 
 function showAssetUsage(layer, id, name, usage, message) {
-  if (isDdungTreasure(id)) layer = "item";
+  layer = objectStorageLayer(layer, id);
   const dialog = $("assetUsageDialog");
   $("assetUsageMessage").textContent = message;
   const list = $("assetUsageList");
@@ -1625,7 +1643,7 @@ let assetReplacement = null;
 
 function openAssetReplacement() {
   const id = selectedAssets[activeLayer];
-  const layer = isDdungTreasure(id) ? "item" : activeLayer;
+  const layer = objectStorageLayer(activeLayer, id);
   const cave = activeCave();
   if (!id || !paletteIdsFor(activeLayer, cave).includes(id)) return toast("교체할 오브젝트를 선택하세요.");
   if (layer === "gimmick" && ddungLargeGimmick(id)) return toast("2×2 기믹은 보드에서 지우거나 다시 배치하세요.");
@@ -1865,7 +1883,7 @@ function applyCellVisual(cell, cave, index, damage = null) {
       visual.dataset.warpEnd = assetId === "teleport-a" ? "A" : "B";
     }
     const artwork = puzzleArtwork?.layers[layer]?.[assetId] ||
-      (isDdungTreasure(assetId) && puzzleArtwork?.layers.gimmick?.[assetId]);
+      (isFallingGimmick(assetId) && puzzleArtwork?.layers.gimmick?.[assetId]);
     let usesSpecialImage = false;
     if (layer === "block") {
       visual.style.background = blockColor(assetId);
@@ -1949,10 +1967,10 @@ function editCell(index, fillMode) {
   if (!strokeSnapshotTaken) { snapshot(); strokeSnapshotTaken = true; }
   const value = activeTool === "eraser" ? null : selectedAssets[activeLayer];
   if (fillMode && !(activeLayer === "gimmick" && ddungLargeGimmick(value))) floodFill(cave, activeLayer, index, value);
-  else paintLayerCell(cave, activeLayer, index, value);
+  else paintLayerCell(cave, activeLayer, index, value, { inIce: $("placeInIce").checked });
   renderGrid();
   if (cave.objectives.some((objective) => (objective.layer === activeLayer ||
-      activeLayer === "gimmick" && isDdungTreasure(objective.targetId)) && objective.countMode === "auto-map")) renderObjectives();
+      activeLayer === "gimmick" && isFallingGimmick(objective.targetId)) && objective.countMode === "auto-map")) renderObjectives();
   persist(); showCellStatus(index);
 }
 
@@ -1967,7 +1985,21 @@ function ddungLargeGimmick(id) {
   return ["ddung-mayor-large", "ddung-feng-large-row", "ddung-feng-large-column"].includes(id);
 }
 
-function paintLayerCell(cave, layer, index, value) {
+function paintLayerCell(cave, layer, index, value, { inIce = false } = {}) {
+  if (layer === "gimmick" && value === DUST_ID) {
+    const cover = cave.terrainRules?.[cave.layers.terrain[index]];
+    const canContainPiece = cover?.locksBlock && !cover.blocksFlow &&
+      !isDdungGimmickBarrier(cave, index) && !ddungBoxDurability(cave, index) && !isExcluded(cave, index);
+    if (isBarrier(cave, index) && !canContainPiece) return;
+    if (isDdungTreasure(cave.layers.item[index])) cave.layers.item[index] = null;
+    layer = "block";
+  }
+  if (layer === "gimmick" && value === null && cave.layers.block[index] === DUST_ID) {
+    cave.layers.block[index] = null;
+    clearInitialPiece(cave, index);
+    return;
+  }
+  if (isDdungTreasure(value)) return toast("수집형은 칸에 배치하지 않고 ‘이 오브젝트를 목표로 추가’에서 설정하세요.");
   if (layer === "gimmick" && isEventOnlyGimmick(value)) return;
   if (layer === "gimmick" && isDdungTreasure(value)) layer = "item";
   if (layer === "item" && isDdungTreasure(value)) {
@@ -1979,6 +2011,7 @@ function paintLayerCell(cave, layer, index, value) {
   if (layer === "block") {
     if (value && (isDdungGimmickBarrier(cave, index) || ddungBoxDurability(cave, index))) return;
     clearInitialPiece(cave, index);
+    if (value && inIce) cave.layers.terrain[index] = "ddung-ice";
   }
   if (layer === "gimmick") {
     const placedCells = ddungLargeGimmick(value) ? [index, index + 1, index + cave.width, index + cave.width + 1] : [index];
@@ -2001,17 +2034,19 @@ function paintLayerCell(cave, layer, index, value) {
 }
 
 function floodFill(cave, layer, start, replacement) {
-  const cells = cave.layers[layer === "gimmick" && (isDdungTreasure(replacement) ||
+  const dust = layer === "gimmick" && (replacement === DUST_ID ||
+    replacement === null && cave.layers.block[start] === DUST_ID);
+  const cells = cave.layers[dust ? "block" : layer === "gimmick" && (isDdungTreasure(replacement) ||
     isDdungTreasure(cave.layers.item[start])) ? "item" : layer];
   const target = cells[start];
-  if (target === replacement && layer !== "block") return;
+  if (target === replacement && layer !== "block" && !dust) return;
   const queue = [start];
   const visited = new Set();
   while (queue.length) {
     const index = queue.shift();
     if (visited.has(index) || isExcluded(cave, index) || cells[index] !== target) continue;
     visited.add(index);
-    paintLayerCell(cave, layer, index, replacement);
+    paintLayerCell(cave, layer, index, replacement, { inIce: $("placeInIce").checked });
     const x = index % cave.width;
     const y = Math.floor(index / cave.width);
     if (x > 0) queue.push(index - 1);
@@ -2390,11 +2425,11 @@ function randomizeBlocks() {
   const cave = activeCave();
   const seed = ($("randomSeed").value.trim() || `CAVE-${Date.now().toString(36).toUpperCase()}`).slice(0, 40);
   const density = clampNumber($("randomDensity").value, 100, 10, 100);
-  const colors = cave.usableBlocks.length ? cave.usableBlocks : project.paletteAssets.block || [];
+  const colors = cave.usableBlocks.length ? cave.usableBlocks : paletteIdsFor("block");
   if (!colors.some((id) => blockWeight(cave, id) > 0)) return toast("생성 가중치가 0보다 큰 블록 종류를 선택하세요.");
   const random = seededRandom(`${seed}|${cave.width}x${cave.height}|${colors.join(",")}|${density}`);
   const fixed = cave.layers.block.map((_, index) =>
-    isBarrier(cave, index) || Boolean(cave.layers.item[index]) || Boolean(initialPieceAt(cave, index))
+    isBarrier(cave, index) || isFallingGimmick(cave.layers.block[index]) || Boolean(cave.layers.item[index]) || Boolean(initialPieceAt(cave, index))
   );
   const blocks = cave.layers.block.map((block, index) => fixed[index] ? block : null);
   const eligible = [];
@@ -2406,7 +2441,7 @@ function randomizeBlocks() {
     blocks[index] = candidates.length ? chooseBlockColor(cave, candidates, random) : null;
   }
   const shortfalls = [];
-  for (const objective of cave.objectives.filter((item) => item.layer === "block")) {
+  for (const objective of cave.objectives.filter((item) => item.layer === "block" && !isFallingGimmick(item.targetId))) {
     const targetNeeded = resolvedObjectiveCount(cave, objective);
     let targetPlaced = blocks.filter((value) => value === objective.targetId).length;
     const shuffled = [...eligible].sort(() => random() - 0.5);
@@ -2478,13 +2513,12 @@ function canGenerateGimmick(id) {
 
 function difficultyItemIds(cave) {
   // Generation still writes collection pieces to their compatible JSON slots.
-  return usesDdungGeneration(cave) ? [...DDUNG_ITEM_IDS] :
-    (project.paletteAssets.item || []);
+  return (project.paletteAssets.item || []).filter((id) => !isDdungTreasure(id));
 }
 
 function difficultyBlockIds(cave, automatic) {
   const ddung = usesDdungGeneration(cave);
-  let colors = cave.usableBlocks.length ? cave.usableBlocks : project.paletteAssets.block || [];
+  let colors = cave.usableBlocks.length ? cave.usableBlocks : paletteIdsFor("block");
   if (ddung) {
     colors = colors.filter((id) => DDUNG_COLOR_IDS.includes(id));
     if (automatic && !colors.length && !cave.usableBlocks.length) colors = DDUNG_COLOR_IDS;
@@ -2609,7 +2643,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   if (usesDdungGeneration(source)) cave.generatedBlockArt = "ddung";
   else delete cave.generatedBlockArt;
   syncLegacyTarget(cave);
-  if (cave.layers.gimmick.some(isEventOnlyGimmick) || required.requirements.some(({ goal, target }) => countObjectiveAssets(cave, goal) < target)) return null;
+  if (cave.layers.gimmick.some(isEventOnlyGimmick) || required.requirements.some(({ goal, target, spawned }) => !spawned && countObjectiveAssets(cave, goal) < target)) return null;
   const validation = validateCave(cave, collectPaletteAssets([cave], project.paletteAssets, project.assetDefinitions));
   return validation.errors.length || validation.unsupported.length ? null : cave;
 }
@@ -2705,7 +2739,7 @@ function openDifficultyGenerator() {
   $("difficultyBoardSummary").textContent = `현재 보드 ${cave.width} × ${cave.height} · 막힌 칸 ${closedCells}개 · ${moveLimitSummary(cave)}`;
   $("difficultyGoalSummary").textContent = cave.scoreTarget != null ? `현재 목표 · ${cave.scoreTarget}점`
     : cave.objectives.length ? "현재 목표 · " + cave.objectives.map((goal) =>
-      `${objectiveLabel(goal)} ${goal.countMode === "auto-map" ? (goal.layer === "block" ? "(생성된 보드 개수 기준)" : "(난이도에 맞춰 수량 자동 결정)") : goal.count + "개"}`).join(" · ")
+      `${objectiveLabel(goal)} ${goal.countMode === "auto-map" ? (goal.layer === "block" && goal.targetId !== DUST_ID ? "(생성된 보드 개수 기준)" : "(난이도에 맞춰 수량 자동 결정)") : goal.count + "개"}`).join(" · ")
       : "클리어 목표가 비어 있어요. 레벨 설정에서 미션이나 목표 점수를 먼저 정하세요.";
   const terrainIds = difficultyTerrainIds(cave);
   renderDifficultyChoices("difficultyTerrain", "terrain", difficultyTerrainAssets(cave), (id) => terrainIds.includes(id));
@@ -2883,21 +2917,21 @@ function validateCave(cave, palette = project.paletteAssets, scoreTarget = cave.
     if (limitation) unsupported.push(`${label} · ${limitation}`);
     if (!limitation && !isDdungBoardObjective(cave, objective)) {
       if (target < 1) errors.push(`${label} 목표 수량은 1 이상이어야 합니다.`);
-      if (objective.countMode === "auto-map" && placed < 1) errors.push(`${label} 자동 수량 목표지만 맵에 배치된 대상이 없습니다.`);
+      if (objective.countMode === "auto-map" && placed < 1 && !isDdungTreasure(objective.targetId)) errors.push(`${label} 자동 수량 목표지만 맵에 배치된 대상이 없습니다.`);
     }
-    if (!limitation && objective.layer === "block" && !cave.usableBlocks.includes(objective.targetId) && (!isDdungSource(cave.externalSource) || placed < target)) errors.push(`${label} 색상이 사용 가능 블록에서 제외되어 있습니다.`);
+    if (!limitation && objective.layer === "block" && !isFallingGimmick(objective.targetId) && !cave.usableBlocks.includes(objective.targetId) && (!isDdungSource(cave.externalSource) || placed < target)) errors.push(`${label} 색상이 사용 가능 블록에서 제외되어 있습니다.`);
     if (objective.layer === "terrain" && !Object.hasOwn(DDUNG_JAM_COLORS, objective.targetId) &&
         cave.terrainRules?.[objective.targetId]?.reaction === "none") errors.push(`${label} 목표는 제거 불가 규칙입니다. Terrain 반응을 같은 칸 또는 인접 매치로 바꾸세요.`);
-    if (objective.countMode === "manual" && objective.layer !== "block" && target > placed &&
-        !(isDdungSource(cave.externalSource) && objective.layer === "item" && isDdungTreasure(objective.targetId))) warnings.push(`${label} 목표 ${target}개보다 맵 배치 ${placed}개가 적습니다.`);
-    if (objective.layer === "block" && placed < target) warnings.push(`${label}은 현재 ${placed}개입니다. 리필에서 생성될 수 있지만 목표 달성 편차가 커질 수 있습니다.`);
+    if (objective.countMode === "manual" && (objective.layer !== "block" || objective.targetId === DUST_ID) && target > placed &&
+        !isDdungTreasure(objective.targetId)) warnings.push(`${label} 목표 ${target}개보다 맵 배치 ${placed}개가 적습니다.`);
+    if (objective.layer === "block" && !isFallingGimmick(objective.targetId) && placed < target) warnings.push(`${label}은 현재 ${placed}개입니다. 리필에서 생성될 수 있지만 목표 달성 편차가 커질 수 있습니다.`);
   });
   if (cave.moveLimit < 1) errors.push("Moves는 1 이상이어야 합니다.");
   if (cave.parMoves < 1) errors.push("권장 클리어 Moves는 1 이상이어야 합니다.");
   if (!cave.usableBlocks.length) errors.push("사용 가능한 블록 색상을 하나 이상 선택해야 합니다.");
   else if (!cave.usableBlocks.some((id) => blockWeight(cave, id) > 0)) errors.push("사용 색상 중 하나 이상의 생성 가중치를 0보다 높게 설정하세요.");
   if (teleportA !== teleportB) errors.push(`Teleport A/B 개수가 다릅니다. (${teleportA}/${teleportB})`);
-  if (cave.layers.block.some((block) => block && !cave.usableBlocks.includes(block))) {
+  if (cave.layers.block.some((block) => block && !isFallingGimmick(block) && !cave.usableBlocks.includes(block))) {
     if (isDdungSource(cave.externalSource) || cave.generatedBlockArt === "ddung") warnings.push("리필 색상에 없는 고정 배치 블록이 있습니다.");
     else errors.push("사용 색상에서 제외된 블록이 맵에 배치되어 있습니다.");
   }
@@ -5523,8 +5557,10 @@ function updateClearMode() {
   }
   snapshot();
   cave.scoreTarget = scoreMode ? target : null;
+  prepareCollectionLayout(cave);
   if (scoreMode) cave.pointsPerBlock = points;
   renderClearMode(cave);
+  renderGrid();
   renderDifficultySummary(cave);
   persist();
 }

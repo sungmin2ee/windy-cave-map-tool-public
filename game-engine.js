@@ -147,6 +147,7 @@ export function createGameEngine(getProject) {
   }
 
   function resolvedObjectiveCount(cave, objective) {
+    if (objective.layer === "item" && isDdungTreasure(objective.targetId)) return objective.count;
     return objective.countMode === "auto-map" ? countObjectiveAssets(cave, objective) : objective.count;
   }
 
@@ -193,6 +194,30 @@ export function createGameEngine(getProject) {
     const imported = getProject().caves.filter((level) => level.externalSource);
     return imported.length > 0 && imported.every((level) => isDdungSource(level.externalSource)) &&
       cave.usableBlocks.every((id) => DDUNG_COLOR_IDS.includes(id));
+  }
+
+  function prepareCollectionLayout(cave) {
+    for (const index of cave.generatedCollectionExits || []) {
+      if (cave.layers.gimmick[index] === "exit") cave.layers.gimmick[index] = null;
+    }
+    cave.generatedCollectionExits = [];
+    cave.generatedCollectionExitOverlaps = [];
+    const hasCollection = cave.scoreTarget == null && cave.objectives?.some((goal) =>
+      goal.layer === "item" && isDdungTreasure(goal.targetId));
+    if (!hasCollection) return;
+    const hasSources = cave.layers.gimmick.includes(SPAWNER_ID) ||
+      cave.layers.gimmick.some((_, index) => ddungMarkersAt(cave, index).includes(SPAWNER_ID));
+    if (!hasSources) placeGenerationSpawners(cave);
+    // Imported/manual exit coordinates remain authoritative.
+    if (cave.layers.gimmick.some((id, index) => id === "exit" || ddungMarkersAt(cave, index).includes("exit"))) return;
+    for (const line of gravityLines(cave)) {
+      const index = line.find((cell) => !isExcluded(cave, cell) && !isBarrier(cave, cell));
+      if (index === undefined) continue;
+      if (!cave.layers.gimmick[index]) {
+        cave.layers.gimmick[index] = "exit";
+        cave.generatedCollectionExits.push(index);
+      } else cave.generatedCollectionExitOverlaps.push(index);
+    }
   }
 
   function blockMatchKey(cave, index) {
@@ -683,7 +708,7 @@ export function createGameEngine(getProject) {
   }
 
   function chooseDdungTreasure(state) {
-    if (!state.treasureGoals.length) return null;
+    if (state.initializing || !state.treasureGoals.length) return null;
     const blocks = state.cave.layers.block;
     const onBoard = blocks.filter(isDdungTreasure);
     if (onBoard.length >= 2) return null;
@@ -702,9 +727,9 @@ export function createGameEngine(getProject) {
     const rawSize = Number(cave.externalSource?.rawMap?.size);
     const original = cave.width === rawSize && cave.height === rawSize
       ? cave.externalSource?.overlappingMarkers?.[index] ?? [] : [];
-    if (!Array.isArray(cave.generatedSpawnerOverlaps)) return original;
-    const markers = original.filter((id) => id !== SPAWNER_ID);
-    if (cave.generatedSpawnerOverlaps.includes(index)) markers.push(SPAWNER_ID);
+    const markers = Array.isArray(cave.generatedSpawnerOverlaps) ? original.filter((id) => id !== SPAWNER_ID) : [...original];
+    if (cave.generatedSpawnerOverlaps?.includes(index)) markers.push(SPAWNER_ID);
+    if (cave.generatedCollectionExitOverlaps?.includes(index)) markers.push("exit");
     return markers;
   }
 
@@ -2284,6 +2309,7 @@ export function createGameEngine(getProject) {
 
   function createPlayState(cave, seedSuffix, manual = false, { scoreTarget = cave.scoreTarget ?? null, pointsPerBlock = cave.pointsPerBlock ?? 100 } = {}) {
     const copy = deepCopy(cave);
+    prepareCollectionLayout(copy);
     copy.layers.block.forEach((id, index) => {
       const item = copy.layers.item[index];
       if (isDdungTreasure(item)) {
@@ -2322,8 +2348,9 @@ export function createGameEngine(getProject) {
       ddungEvents: ddungTurnEvents(copy),
       ddungEventRandom: seededRandom(`${copy.randomSeed}|${seedSuffix}|ddung-events`),
       treasureMisses: 0,
+      initializing: true,
       treasureGoals: copy.objectives.flatMap((objective, index) =>
-        objective.layer === "item" && isDdungTreasure(objective.targetId)
+        scoreTarget === null && objective.layer === "item" && isDdungTreasure(objective.targetId)
           ? [{ index, targetId: objective.targetId }] : []),
       terrainHits: Array(copy.width * copy.height).fill(0),
       ddungJellyCells: ddungJellyCells(copy),
@@ -2353,6 +2380,7 @@ export function createGameEngine(getProject) {
       collectDdungTreasure(state);
       refillBlocks(state);
     }
+    state.initializing = false;
     if (clearConditionMet(state)) state.status = "won";
     else ensurePlayableBoard(state);
     return state;
@@ -2518,6 +2546,7 @@ export function createGameEngine(getProject) {
     isDdungGimmickBarrier,
     isBarrier,
     isDdungTreasure,
+    prepareCollectionLayout,
     ddungMarkersAt,
     terrainGroup,
     ddungJellyCells,

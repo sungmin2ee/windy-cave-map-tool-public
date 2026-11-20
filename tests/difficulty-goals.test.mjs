@@ -30,6 +30,21 @@ test('Jelly 20 is mandatory even with no optional terrain and only four preferre
   assert.equal(engine.createPlayState(cave, 'test').objectiveProgress[0].target, 20);
 });
 
+test('falling dust goals place initial objects instead of using normal color-goal generation', () => {
+  const goal = { layer: 'block', targetId: 'ddung-dust-piece', countMode: 'manual', count: 6 };
+  const { cave, engine, populate } = fixture([goal]);
+  assert.equal(populate().ok, true);
+  assert.equal(engine.countObjectiveAssets(cave, goal), 6);
+  cave.layers.terrain[cave.layers.block.indexOf(goal.targetId)] = 'ddung-frost';
+  const state = engine.createPlayState(JSON.parse(JSON.stringify(cave)), 'dust-in-ice');
+  assert.equal(state.objectiveProgress[0].target, 6);
+  assert.equal(state.cave.layers.block.filter(id => id === goal.targetId).length, 6);
+  const trapped = state.cave.layers.terrain.indexOf('ddung-frost');
+  assert.equal(state.cave.layers.block[trapped], goal.targetId);
+  assert.equal(engine.isSwapBlocked(state.cave, trapped), true);
+  assert.equal(engine.findMatches(state.cave).has(trapped), false);
+});
+
 test('board-count goals keep their original quantity instead of becoming one', () => {
   const goal = { layer: 'terrain', targetId: 'ddung-jelly', countMode: 'auto-map', count: 1 };
   const { cave, engine, populate } = fixture([goal]);
@@ -58,7 +73,35 @@ test('multiple fixed-object goals are supplied before optional decorations', () 
   ];
   const { cave, engine, populate } = fixture(goals);
   assert.equal(populate().ok, true);
-  for (const goal of goals) assert.equal(engine.countObjectiveAssets(cave, goal), goal.count);
+  for (const goal of goals) {
+    assert.equal(engine.countObjectiveAssets(cave, goal), engine.isDdungTreasure(goal.targetId) ? 0 : goal.count);
+    assert.equal(engine.resolvedObjectiveCount(cave, goal), goal.count);
+  }
+});
+
+test('collection quotas exceed board capacity without preplacing collection pieces', () => {
+  const goal = { layer: 'item', targetId: 'ddung-treasure-1', countMode: 'manual', count: 20 };
+  const { cave, engine, populate } = fixture([goal], 4);
+  assert.equal(populate().ok, true);
+  assert.equal(engine.countObjectiveAssets(cave, goal), 0);
+  assert.equal(cave.layers.gimmick.filter(id => id === 'exit').length, 4);
+  const state = engine.createPlayState(JSON.parse(JSON.stringify(cave)), 'collection');
+  assert.equal(state.objectiveProgress[0].target, 20);
+  assert.equal(state.cave.layers.block.some(engine.isDdungTreasure), false);
+  assert.equal(state.status, 'playing');
+});
+
+test('automatic collection quotas survive JSON loading without initial collection pieces', () => {
+  const setup = difficulty => {
+    const goal = { layer: 'item', targetId: 'ddung-treasure-2', countMode: 'auto-map', count: 1 };
+    const { cave, engine, populate } = fixture([goal]);
+    assert.equal(populate(structuredClone(cave), { difficulty, keepPlacement: false }).ok, true);
+    const saved = JSON.parse(JSON.stringify(cave));
+    assert.equal(engine.createPlayState(saved, 'auto-collection').objectiveProgress[0].target, goal.count);
+    assert.equal(engine.countObjectiveAssets(cave, goal), 0);
+    return goal.count;
+  };
+  assert.ok(setup(90) > setup(10));
 });
 
 test('insufficient space reports the requested amount instead of reducing the goal', () => {
