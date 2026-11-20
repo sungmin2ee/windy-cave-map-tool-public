@@ -49,6 +49,34 @@ function collectionGimmickBoard({ exit = 32, countMode = 'manual', special = 0 }
     objectives: [{ layer: 'item', targetId: 'ddung-treasure-1', countMode, count: 1 }] });
 }
 
+test('level turn-event settings override imported flags and survive JSON round trips', () => {
+  const externalSource = { format: 'DDUNG MapInfo v68', rawMap: { mouse: 'True', spider: false } };
+  const { engine, cave } = fixture({ externalSource });
+  assert.deepEqual(engine.ddungTurnEvents(cave), { mouse: true, spider: false });
+  cave.turnEvents = { mouse: false, spider: true };
+  assert.deepEqual(engine.ddungTurnEvents(JSON.parse(JSON.stringify(cave))), { mouse: false, spider: true });
+  const state = engine.createPlayState(cave, 'events');
+  assert.deepEqual(state.ddungEvents, { mouse: false, spider: true });
+  assert.equal(engine.isEventOnlyGimmick('ddung-mouse-panel'), true);
+  assert.equal(engine.isEventOnlyGimmick('ddung-spider-cave'), true);
+  assert.equal(engine.isEventOnlyGimmick('ddung-box'), false);
+  assert.equal(engine.isEventOnlyGimmick(null), false);
+});
+
+test('ordinary authored levels run enabled mouse and spider events without placed actors', () => {
+  const { engine, cave } = fixture({ turnEvents: { mouse: true, spider: true } });
+  assert.equal(cave.layers.gimmick.some(engine.isEventOnlyGimmick), false);
+  const state = engine.createPlayState(cave, 'events');
+  const labels = [];
+  for (let turn = 0; turn < 4; turn++) {
+    assert.equal(state.status, 'playing');
+    engine.playSimulationTurn(state, engine.chooseAutoAction(state), (label) => labels.push(label));
+  }
+  assert.ok(labels.includes('거미 등장 · 블록을 가져갑니다'));
+  assert.ok(labels.includes('쥐 등장 · 한 행의 블록 교환'));
+  assert.equal(state.cave.layers.gimmick.some(engine.isEventOnlyGimmick), false);
+});
+
 test('ordinary maps use falling collection pieces and collect them only at the exit', () => {
   const { engine, state, live } = collectionGimmickBoard({ exit: 20 });
   state.clearBonusEnabled = false;

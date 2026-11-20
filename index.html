@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0d12" />
     <meta name="description" content="Cave 단위 퍼즐 레벨을 제작하는 웹 맵툴" />
     <title>3-Match Puzzle Map Tool</title>
-    <link rel="stylesheet" href="./styles.css?v=29" />
+    <link rel="stylesheet" href="./styles.css?v=30" />
     <style>
     .object-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
     .asset-visual { position: relative; }
@@ -314,6 +314,12 @@
             <div class="level-setting-group" data-setting-group="name">
             <label class="field-label" for="caveName">Cave 이름</label>
             <input class="field" id="caveName" />
+            <fieldset class="level-turn-events">
+              <legend>인게임 이벤트</legend>
+              <label class="check-field"><input id="mouseTurnEvent" type="checkbox">쥐 이벤트 · 4번 이동마다 한 행 교환</label>
+              <label class="check-field"><input id="spiderTurnEvent" type="checkbox">거미 이벤트 · 2번째 이동부터 4번마다 블록 가져가기</label>
+              <small class="rule-help">칸에 배치하지 않고 플레이 중에 등장합니다. 난이도 자동 플레이에도 반영됩니다.</small>
+            </fieldset>
             <p id="ddungTurnEvents" class="field-label" hidden></p>
             </div>
 
@@ -611,6 +617,7 @@
 
           <section class="panel-section" id="selectedObjectRules" hidden>
             <h2>선택한 오브젝트 설정</h2>
+            <p id="selectedObjectPlacementHelp" class="palette-help" hidden></p>
             <label class="button ghost file-picker">
               <span>이미지 선택</span>
               <input id="objectImageFile" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" aria-label="오브젝트 이미지 선택" />
@@ -668,6 +675,7 @@
         <fieldset id="difficultyFields">
           <p id="difficultyBoardSummary"></p>
           <p id="difficultyGoalSummary"></p>
+          <p class="palette-help">직접 입력한 목표 수량은 그대로 배치합니다. ‘맵 개수 자동’인 지형·기믹·수집 오브젝트는 목표 난이도, 보드 크기, 내구도와 이동 횟수에 맞춰 수량을 정합니다. 기존 배치 유지 시에는 이미 배치된 수량을 줄이지 않습니다. 아래 선택은 추가 배치용입니다.</p>
           <label>목표 난이도 (1~100)
             <input id="difficultyTarget" class="field" type="number" min="1" max="100" step="1" value="50" required>
           </label>
@@ -1087,7 +1095,7 @@
       </div>
       <div id="levelPreviewFrameSlot"></div>
     </dialog>
-    <script type="module" src="./app.js?v=217"></script>
+    <script type="module" src="./app.js?v=222"></script>
   </body>
 </html>
 

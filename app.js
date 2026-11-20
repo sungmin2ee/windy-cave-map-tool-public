@@ -1,4 +1,5 @@
-import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=19";
+import { AUTO_UNLIMITED_TURN_LIMIT, createGameEngine } from "./game-engine.js?v=22";
+import { populateDifficultyGoals } from "./difficulty-goals.js?v=2";
 import { createLiveGame } from "./live-game.js?v=8";
 import { runAutoPlayBatch, summarizeBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
 
@@ -55,6 +56,7 @@ const {
   chooseAutoAction,
   bombPanelReady,
   ddungTurnEvents,
+  isEventOnlyGimmick,
   playSimulationTurn,
   createPlayState,
   runAutoGame,
@@ -77,7 +79,7 @@ const COLORS = {
   green: "#36d477", orange: "#ff8a36", purple: "#b65bff",
 };
 
-const CLIENT_VERSION = "2.7.66";
+const CLIENT_VERSION = "2.7.71";
 const SCHEMA_VERSION = 5;
 const MIN_SCHEMA_VERSION = 1;
 
@@ -122,10 +124,10 @@ const ASSETS = {
     { id: SPAWNER_ID, name: "Spawner", visual: "✦" },
     { id: "exit", name: "Exit", visual: "⇥", className: "cell-exit" },
     { id: "ddung-box", name: "DDUNG Box", visual: "□" },
-    { id: "ddung-mouse-panel", name: "DDUNG Mouse Panel", visual: "◉" },
+    { id: "ddung-mouse-panel", name: "쥐 · 기존 JSON 호환", visual: "◉" },
     { id: "ddung-dungs", name: "DDUNG Dungs", visual: "♟" },
     { id: "ddung-bulldozer", name: "DDUNG Ghost", visual: "▸" },
-    { id: "ddung-spider-cave", name: "DDUNG Spider Cave", visual: "⌂" },
+    { id: "ddung-spider-cave", name: "거미 · 기존 JSON 호환", visual: "⌂" },
     { id: "ddung-bee", name: "DDUNG Honey", visual: "♢" },
     { id: "ddung-feng", name: "DDUNG Feng", visual: "風" },
     { id: "ddung-mayor-small", name: "DDUNG Mayor Small", visual: "♙" },
@@ -833,7 +835,7 @@ function blockColor(id) {
 
 function paletteIdsFor(layer, cave = activeCave()) {
   const ids = project.paletteAssets[layer] || [];
-  if (layer === "gimmick") return [...new Set([...ids, ...DDUNG_ITEM_IDS])];
+  if (layer === "gimmick") return [...new Set([...ids, ...DDUNG_ITEM_IDS])].filter((id) => !isEventOnlyGimmick(id));
   return ids.filter((id) => !isDdungTreasure(id));
 }
 
@@ -988,6 +990,8 @@ function renderRules() {
   const cave = activeCave();
   $("caveName").value = cave.name;
   const events = ddungTurnEvents(cave);
+  $("mouseTurnEvent").checked = events.mouse;
+  $("spiderTurnEvent").checked = events.spider;
   $("ddungTurnEvents").hidden = !events.mouse && !events.spider;
   $("caveEventBadges").hidden = !events.mouse && !events.spider;
   $("caveMouseBadge").hidden = !events.mouse;
@@ -1078,7 +1082,7 @@ function renderPalette() {
   if (layer === "gimmick") {
     ddungPicker.replaceChildren(new Option("DDUNG 원작 기믹 추가", ""));
     for (const { id } of ASSETS.gimmick) {
-      if (id.startsWith("ddung-") && id !== "ddung-feng") ddungPicker.add(new Option(getAsset("gimmick", id).name, id));
+      if (id.startsWith("ddung-") && id !== "ddung-feng" && !isEventOnlyGimmick(id)) ddungPicker.add(new Option(getAsset("gimmick", id).name, id));
     }
     ddungPicker.add(new Option("DDUNG Iron Box", "ddung-iron-box"));
   }
@@ -1147,6 +1151,12 @@ function renderPalette() {
 
 function renderSelectedObjectRules(asset) {
   $("selectedObjectRules").hidden = !asset;
+  const placementHelp = {
+    "ddung-mouse-panel": "기존 JSON의 쥐 데이터입니다. 새 배치 대신 레벨 설정의 쥐 이벤트를 사용하세요.",
+    "ddung-spider-cave": "기존 JSON의 거미 데이터입니다. 새 배치 대신 레벨 설정의 거미 이벤트를 사용하세요.",
+  }[asset?.id];
+  $("selectedObjectPlacementHelp").hidden = !placementHelp;
+  $("selectedObjectPlacementHelp").textContent = placementHelp || "";
   $("resetObjectImage").hidden = !asset || !project.assetDefinitions?.[isDdungTreasure(asset.id) ? "item" : activeLayer]?.some(
     (definition) => definition.id === asset.id && definition.image);
   const cave = activeCave();
@@ -1958,6 +1968,7 @@ function ddungLargeGimmick(id) {
 }
 
 function paintLayerCell(cave, layer, index, value) {
+  if (layer === "gimmick" && isEventOnlyGimmick(value)) return;
   if (layer === "gimmick" && isDdungTreasure(value)) layer = "item";
   if (layer === "item" && isDdungTreasure(value)) {
     if (isBarrier(cave, index)) return;
@@ -2455,13 +2466,14 @@ function difficultyPatternSlots(cave, slots, pattern, attempt) {
 
 function difficultyGimmickIds(cave) {
   const palette = project.paletteAssets.gimmick || [];
-  return usesDdungGeneration(cave)
+  const ids = usesDdungGeneration(cave)
     ? [...new Set([...ASSETS.gimmick.map(({ id }) => id), "ddung-iron-box", ...palette])]
     : palette;
+  return ids.filter((id) => !isEventOnlyGimmick(id));
 }
 
 function canGenerateGimmick(id) {
-  return ![SPAWNER_ID, "teleport-a", "teleport-b", "exit"].includes(id);
+  return !isEventOnlyGimmick(id) && ![SPAWNER_ID, "teleport-a", "teleport-b", "exit"].includes(id);
 }
 
 function difficultyItemIds(cave) {
@@ -2480,6 +2492,7 @@ function difficultyBlockIds(cave, automatic) {
   return colors.filter((id) => blockWeight(cave, id) > 0);
 }
 
+let difficultyGenerationIssue = "";
 function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement, pattern = "random", gimmickIds = [], selectedTerrain = []) {
   const cave = deepCopy(source);
   const goals = cave.objectives;
@@ -2505,6 +2518,15 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   if (colors.length < 2) return null;
   cave.usableBlocks = colors;
   cave.testClearMoves = 0;
+  cave.generatedBoard = true;
+  const required = populateDifficultyGoals(cave, source, gameEngine, {
+    random,
+    difficulty: target,
+    keepPlacement,
+    preferredSlots: (slots) => difficultyPatternSlots(cave, slots, pattern, attempt),
+    place: paintLayerCell,
+  });
+  if (!required.ok) { difficultyGenerationIssue = required.error; return null; }
 
   const terrain = cave.layers.terrain;
   const terrainSlots = difficultyPatternSlots(cave,
@@ -2513,17 +2535,6 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   terrain.forEach((id, index) => {
     if (id && !isExcluded(cave, index)) terrainCounts.set(id, (terrainCounts.get(id) || 0) + 1);
   });
-  for (const goal of requiredGoals.filter(({ layer }) => layer === "terrain")) {
-    const minimum = goal.countMode === "manual" ? goal.count : 1;
-    const needed = minimum - countObjectiveAssets(cave, goal);
-    if (needed <= 0) continue;
-    if (!difficultyTerrainIds(cave).includes(goal.targetId) || needed > terrainSlots.length) return null;
-    for (let placed = 0; placed < needed; placed++) {
-      const [index] = terrainSlots.splice(Math.floor(random() * terrainSlots.length), 1);
-      terrain[index] = goal.targetId;
-      terrainCounts.set(goal.targetId, (terrainCounts.get(goal.targetId) ?? 0) + 1);
-    }
-  }
   const targets = difficultyTerrainIds(cave).filter((id) =>
     selectedTerrain.includes(id) &&
     (terrainCounts.has(id) || terrainSlots.length));
@@ -2547,8 +2558,8 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
     (!terrain[index] || terrain[index] === "floor") && !gimmicks[index] && !cave.layers.item[index] ? [index] : []
   );
   const eligibleAssets = {
-    gimmick: gimmickIds,
-    item: difficultyItemIds(cave),
+    gimmick: gimmickIds.filter(canGenerateGimmick).filter((id) => !requiredGoals.some((goal) => goal.layer === "gimmick" && goal.targetId === id)),
+    item: difficultyItemIds(cave).filter((id) => !requiredGoals.some((goal) => goal.layer === "item" && goal.targetId === id)),
   };
   for (const [layer, assets] of Object.entries(eligibleAssets)) {
     if (!assets.length) continue;
@@ -2588,7 +2599,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
 
   const blocks = cave.layers.block;
   for (let index = 0; index < blocks.length; index += 1) {
-    if (blocks[index] || isBarrier(cave, index)) continue;
+    if (blocks[index] || isBarrier(cave, index) || isDdungTreasure(cave.layers.item[index])) continue;
     const available = colors.filter((color) => !wouldCreateMatch(blocks, index, color, cave));
     if (!available.length) return null;
     blocks[index] = chooseBlockColor(cave, available, random);
@@ -2598,6 +2609,7 @@ function buildDifficultyCandidate(source, colors, target, attempt, keepPlacement
   if (usesDdungGeneration(source)) cave.generatedBlockArt = "ddung";
   else delete cave.generatedBlockArt;
   syncLegacyTarget(cave);
+  if (cave.layers.gimmick.some(isEventOnlyGimmick) || required.requirements.some(({ goal, target }) => countObjectiveAssets(cave, goal) < target)) return null;
   const validation = validateCave(cave, collectPaletteAssets([cave], project.paletteAssets, project.assetDefinitions));
   return validation.errors.length || validation.unsupported.length ? null : cave;
 }
@@ -2624,6 +2636,18 @@ function renderDifficultyCandidates(source, candidates) {
     const goals = document.createElement("p");
     goals.textContent = cave.scoreTarget != null ? "목표 점수 " + cave.scoreTarget
       : cave.objectives.map((goal) => objectiveLabel(goal) + " " + resolvedObjectiveCount(cave, goal) + "개").join(" · ");
+    const events = document.createElement("div");
+    events.className = "difficulty-event-icons";
+    const enabledEvents = ddungTurnEvents(cave);
+    for (const [key, label] of [["mouse", "쥐 이벤트"], ["spider", "거미 이벤트"]]) {
+      if (!enabledEvents[key]) continue;
+      const icon = document.createElement("img");
+      icon.src = `./art/ddung/turn-${key}.webp`;
+      icon.alt = label;
+      icon.title = label;
+      icon.width = icon.height = 32;
+      events.append(icon);
+    }
     const viewport = document.createElement("div");
     viewport.className = "difficulty-preview-scroll";
     const grid = document.createElement("div");
@@ -2651,7 +2675,7 @@ function renderDifficultyCandidates(source, candidates) {
       persist();
       toast(batch.wins ? "추정 난이도 " + score + " 후보를 적용했습니다." : "자동 검증 미클리어 후보를 적용했습니다.");
     };
-    card.append(summary, info, goals, viewport, apply);
+    card.append(summary, info, goals, events, viewport, apply);
     options.append(card);
   }
 }
@@ -2681,7 +2705,7 @@ function openDifficultyGenerator() {
   $("difficultyBoardSummary").textContent = `현재 보드 ${cave.width} × ${cave.height} · 막힌 칸 ${closedCells}개 · ${moveLimitSummary(cave)}`;
   $("difficultyGoalSummary").textContent = cave.scoreTarget != null ? `현재 목표 · ${cave.scoreTarget}점`
     : cave.objectives.length ? "현재 목표 · " + cave.objectives.map((goal) =>
-      `${objectiveLabel(goal)} ${goal.countMode === "auto-map" ? "(보드 개수 기준)" : goal.count + "개"}`).join(" · ")
+      `${objectiveLabel(goal)} ${goal.countMode === "auto-map" ? (goal.layer === "block" ? "(생성된 보드 개수 기준)" : "(난이도에 맞춰 수량 자동 결정)") : goal.count + "개"}`).join(" · ")
       : "클리어 목표가 비어 있어요. 레벨 설정에서 미션이나 목표 점수를 먼저 정하세요.";
   const terrainIds = difficultyTerrainIds(cave);
   renderDifficultyChoices("difficultyTerrain", "terrain", difficultyTerrainAssets(cave), (id) => terrainIds.includes(id));
@@ -2704,6 +2728,7 @@ function difficultyObjectOptions(random, pool, count) {
 }
 
 async function generateDifficultyCandidates(event) {
+  difficultyGenerationIssue = "";
   event.preventDefault();
   const source = activeCave();
   const dialog = $("difficultyDialog");
@@ -2725,7 +2750,7 @@ async function generateDifficultyCandidates(event) {
     return;
   }
   const terrainPool = selectedTerrain.length ? selectedTerrain : difficultyTerrainIds(source);
-  const gimmickPool = gimmickIds.length ? gimmickIds : difficultyGimmickIds(source).filter(canGenerateGimmick);
+  const gimmickPool = (gimmickIds.length ? gimmickIds : difficultyGimmickIds(source)).filter(canGenerateGimmick);
   if (!Number.isInteger(terrainCount) || terrainCount < 0 || terrainCount > MAX_OBJECTIVES ||
       !Number.isInteger(gimmickCount) || gimmickCount < 0 || gimmickCount > 6) return;
   if (terrainCount > terrainPool.length || gimmickCount > gimmickPool.length) {
@@ -2781,7 +2806,7 @@ async function generateDifficultyCandidates(event) {
     renderDifficultyCandidates(source, best);
     status.textContent = best.length
       ? "목표 " + target + " · 가까운 후보 " + best.length + "개 · 후보당 자동 플레이 " + runs + "회"
-      : "현재 목표에 필요한 오브젝트를 배치할 공간이 부족하거나 시작 상태에서 교환할 수 없어요. 보드와 목표 설정을 확인해 주세요.";
+      : difficultyGenerationIssue || "현재 목표에 필요한 오브젝트를 배치할 공간이 부족하거나 시작 상태에서 교환할 수 없어요. 보드와 목표 설정을 확인해 주세요.";
   } catch (error) {
     console.error(error);
     status.textContent = "후보를 만드는 중 오류가 발생했습니다.";
@@ -3627,12 +3652,12 @@ function showLiveEffects(state, frames) {
         sprite.dataset.swapCell = to;
         // A delayed return must not paint its first frame over the outgoing
         // swap. Only the actor for the currently running leg is visible.
-        sprite.style.visibility = "hidden";
+        sprite.style.opacity = "0";
         positionLiveSprite(sprite, target);
         grid.append(sprite);
         const animation = sprite.animate([
-          { visibility: "visible", transform: `translate(${source.offsetLeft - target.offsetLeft}px, ${source.offsetTop - target.offsetTop}px)` },
-          { visibility: "visible", transform: "translate(0, 0)" },
+          { opacity: 1, transform: `translate(${source.offsetLeft - target.offsetLeft}px, ${source.offsetTop - target.offsetTop}px)` },
+          { opacity: 1, transform: "translate(0, 0)" },
         ], { duration: frame.delay / speed, delay: frame.at / speed, fill: "none", easing: "ease-in-out" });
         const cleanup = () => { sprite.remove(); syncLiveSwapVisibility(grid); };
         animation.finished.then(cleanup, cleanup);
@@ -3973,11 +3998,8 @@ function renderPlaytest() {
 
 function resetPlaytest() {
   if (!playtestState) return;
-  if (playtestState.replay) {
-    const { cave, example } = playtestState.replay;
-    startBatchReplay(cave, playtestState.validation, example);
-    return;
-  }
+  cancelAutoPlayBatch();
+  $("autoPlayBatchSummary").hidden = true;
   const cave = activeCave();
   playtestState = createPlayState(cave, `playtest-${crypto.randomUUID()}`, true);
   playtestState.validation = validateCave(cave);
@@ -4082,6 +4104,10 @@ function buildDdungLevelExport(cave) {
   const settings = cave.levelSettings;
   const before = baseline.levelSettings;
   if (cave.moveLimit !== baseline.moveLimit) source.count = cave.moveLimit;
+  if (cave.turnEvents) {
+    const events = ddungTurnEvents(cave);
+    for (const key of ["mouse", "spider"]) source[key] = typeof source[key] === "string" ? (events[key] ? "True" : "False") : events[key];
+  }
   if (settings.difficulty !== before.difficulty) source.levelclass = settings.difficulty;
   if (settings.spawnMode !== before.spawnMode) {
     if (settings.spawnMode !== 0 && !/^\d{12}$/.test(String(source.objectpercent || ""))) {
@@ -4106,7 +4132,7 @@ function exportGridTilesProfile() {
     const goalIds = cave.objectives.map(({ targetId }) => targetId);
     const needsWindyGoals = cave.objectives.some(({ countMode }) => countMode === "auto-map") ||
       new Set(goalIds).size !== goalIds.length;
-    if (cave.scoreTarget != null || cave.moveLimitEnabled === false || project.swapDuringEffects ||
+    if (cave.scoreTarget != null || cave.moveLimitEnabled === false || cave.turnEvents || project.swapDuringEffects ||
         (cave.externalSource?.gridTilesTemplate && needsWindyGoals) ||
         Object.entries(project.terrainRules).some(([id, rule]) => isCustomTerrainRule(id, rule)) ||
         Object.keys(project.gimmickRules).length) {
@@ -4209,6 +4235,7 @@ function describePatchChanges(previous, cave) {
     ["보드 배치", ["layers", "excludedCells", "width", "height", "initialPieceTypes", "initialPieceDefinitions", "specialMatches"]],
     ["클리어 목표", ["objectives", "targetType", "targetCount", "scoreTarget", "pointsPerBlock"]],
     ["이동 횟수", ["moveLimit", "moveLimitEnabled", "parMoves", "testClearMoves"]],
+    ["인게임 이벤트", ["turnEvents"]],
   ];
   const changed = (key) => JSON.stringify(previous[key]) !== JSON.stringify(cave[key]);
   const labels = groups.filter(([, keys]) => keys.some(changed)).map(([label]) => label);
@@ -5243,7 +5270,7 @@ function bindInputs() {
   bindEditorGuide();
   $("addDdungGimmick").addEventListener("change", ({ target }) => {
     const id = target.value;
-    if (!id || activeLayer !== "gimmick") return;
+    if (!id || activeLayer !== "gimmick" || isEventOnlyGimmick(id)) return;
     snapshot();
     const ids = project.paletteAssets.gimmick ??= [];
     if (!ids.includes(id)) ids.push(id);
@@ -5410,6 +5437,14 @@ function bindInputs() {
   }
   $("moveLimit").addEventListener("change", updateRule);
   $("moveLimitEnabled").addEventListener("change", updateRule);
+  for (const id of ["mouseTurnEvent", "spiderTurnEvent"]) $(id).addEventListener("change", () => {
+    snapshot();
+    const cave = activeCave();
+    cave.turnEvents = { mouse: $("mouseTurnEvent").checked, spider: $("spiderTurnEvent").checked };
+    cave.testClearMoves = 0;
+    renderRules();
+    persist();
+  });
   $("parMoves").addEventListener("change", updateRule);
   $("testClearMoves").addEventListener("change", updateRule);
   $("simulationRuns").addEventListener("change", updateRule);
@@ -5904,6 +5939,7 @@ if (document.body.dataset.puzzlePlayer === undefined) loadProject().then((loaded
 export {
   $, activeCave, adaptImportedJson, createPlayState, getAsset, normalizeObjectImage, playtestState, puzzleArtwork,
   readThemePack, THEME_PACK_FORMAT,
+  runAutoGame, chooseAutoAction, animatePlaytestTurn, AUTO_UNLIMITED_TURN_LIMIT,
   renderPlaytest, renderSimulationGrid, showObjectImage, showPlaytestHint, validateCave,
 };
 

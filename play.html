@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#171d34">
   <title>DDUNG 퍼즐</title>
-  <link rel="stylesheet" href="./styles.css?v=27">
-  <link rel="stylesheet" href="./play.css?v=11">
-  <script type="module" src="./play.js?v=74"></script>
+  <link rel="stylesheet" href="./styles.css?v=30">
+  <link rel="stylesheet" href="./play.css?v=12">
+  <script type="module" src="./play.js?v=79"></script>
 </head>
 <body data-puzzle-player>
   <main class="puzzle-shell">
@@ -29,6 +29,20 @@
         </section>
       </div>
     </header>
+    <section id="previewAutoControls" class="preview-auto-controls" aria-label="미리보기 자동 플레이" hidden>
+      <form id="previewAutoForm">
+        <label>자동 플레이 횟수 <input class="field" id="previewAutoRuns" type="number" min="1" max="1000" step="1" value="30" required></label>
+        <button class="button primary" id="previewAutoStart" type="submit" disabled>자동 플레이</button>
+        <button class="button" id="previewAutoCancel" type="button" hidden>계산 중단</button>
+      </form>
+      <div id="previewAutoSummary" class="preview-auto-summary" role="status" hidden></div>
+      <div class="preview-auto-actions">
+        <button class="button" id="previewAutoPause" type="button" hidden>대표 판 일시정지</button>
+        <button class="button" id="previewAutoReplay" type="button" hidden>대표 판 다시 보기</button>
+        <label>재생 속도 <select id="previewAutoSpeed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label>
+        <button class="button" id="previewAutoManual" type="button">직접 플레이로 초기화</button>
+      </div>
+    </section>
     <section class="puzzle-stage" id="simulationDialog" aria-labelledby="levelTitle">
       <div id="simulationGrid" class="simulation-grid" aria-label="퍼즐판"></div>
       <p id="playtestFrameStatus" role="status">퍼즐을 불러오는 중입니다.</p>

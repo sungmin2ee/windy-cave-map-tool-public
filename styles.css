@@ -466,4 +466,4 @@ h2 { font-size: 16px; margin-top: 3px; }
 #simulationGrid .live-piece-moving > .cell-block,
 #simulationGrid .live-piece-moving > .initial-piece-badge,
 #simulationGrid .live-swap-covered > .cell-block,
-#simulationGrid .live-swap-covered > .initial-piece-badge { visibility: hidden; }
+#simulationGrid .live-swap-covered > .initial-piece-badge { visibility: hidden; opacity: 0; }

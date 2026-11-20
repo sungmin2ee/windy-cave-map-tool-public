@@ -103,7 +103,7 @@ export function createGameEngine(getProject) {
     }
     if (type === 11 || type === 12) return null;
     if (type === 9 && objective.targetId !== "ddung-dust-piece") return "먼지 목표를 판정하려면 원본 JSON을 다시 가져오세요.";
-    if (type === 36) return ddungJellyCells(cave).size ? null : "원본 젤리 그룹 좌표가 필요합니다.";
+    if (type === 36) return ddungJellyCells(cave).size || (cave.generatedBoard && cave.layers.terrain.includes("ddung-jelly")) ? null : "원본 젤리 그룹 좌표가 필요합니다.";
     if (type === 7) return cave.externalSource.boxLayoutParsed ? null : "철 상자 배치를 확인하려면 원본 JSON을 다시 가져오세요.";
     if ([8, 9, 10, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37].includes(type)) return null;
     return "원본 전용 오브젝트 동작";
@@ -135,7 +135,7 @@ export function createGameEngine(getProject) {
     if (objective.layer === "terrain" && objective.targetId === "ddung-jelly") {
       const cells = ddungJellyCells(cave);
       if (cells.size) return new Set([...cells].filter(([index]) => cave.layers.terrain[index] === "ddung-jelly")
-        .map(([, cell]) => cell.group)).size;
+        .map(([, cell]) => cell.group)).size + cave.layers.terrain.filter((id, index) => id === "ddung-jelly" && !cells.has(index)).length;
     }
     const primaryCount = cave.layers[objective.layer].filter((id, index) => matchesObjectiveAsset(objective, id) &&
       (objective.layer !== "block" || specialEffect(cave,
@@ -800,6 +800,7 @@ export function createGameEngine(getProject) {
     const raw = cave.externalSource?.rawMap;
     const size = Number(raw?.size);
     const cells = new Map();
+    if (cave.generatedJellyLayout) return cells;
     if (!isDdungSource(cave.externalSource) || !size || !cave.width) return cells;
     for (const token of ddungPositionGroups(raw.jellys, 5)) {
       const x = Number(token[0]);
@@ -1872,7 +1873,13 @@ export function createGameEngine(getProject) {
   function ddungTurnEvents(cave) {
     const raw = isDdungSource(cave.externalSource) ? cave.externalSource.rawMap : null;
     const enabled = (flag) => flag === true || (typeof flag === "string" && flag.trim().toLowerCase() === "true");
-    return { mouse: enabled(raw?.mouse), spider: enabled(raw?.spider) };
+    const events = cave.turnEvents;
+    return Object.fromEntries(["mouse", "spider"].map((key) => [key,
+      enabled(events && Object.hasOwn(events, key) ? events[key] : raw?.[key])]));
+  }
+
+  function isEventOnlyGimmick(id) {
+    return ["ddung-mouse-panel", "ddung-spider-cave"].includes(ddungGimmickBase(id));
   }
 
   function runDdungTurnEvent(state, captureFrame) {
@@ -2527,6 +2534,7 @@ export function createGameEngine(getProject) {
     chooseAutoAction,
     bombPanelReady,
     ddungTurnEvents,
+    isEventOnlyGimmick,
     playSimulationTurn,
     clearConditionMet,
     resolveMatches,

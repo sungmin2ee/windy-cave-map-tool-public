@@ -4,7 +4,9 @@ import {
   renderPlaytest, renderSimulationGrid, setPuzzleArtwork, setPuzzlePlaytestState, setPuzzleProject,
   setPuzzleView, showObjectImage, showPlaytestHint, validateCave,
   readThemePack, THEME_PACK_FORMAT,
-} from "./app.js?v=217";
+  runAutoGame, chooseAutoAction, animatePlaytestTurn, AUTO_UNLIMITED_TURN_LIMIT,
+} from "./app.js?v=222";
+import { runAutoPlayBatch, validAutoPlayRuns } from "./auto-play-batch.js?v=1";
 
 const PUZZLE_GOAL_IMAGES = {
   "ddung-oak": "./art/ddung/goal-oak.webp",
@@ -26,6 +28,107 @@ let linkedPuzzle;
 let resultOrigin;
 let puzzleMaps;
 let puzzleProgress = { current: 1, bestStars: {} };
+let editorPreview = false;
+let previewBatchJob = null;
+
+function setPreviewBatchBusy(busy) {
+  $("previewAutoRuns").disabled = busy;
+  $("previewAutoStart").disabled = busy;
+  $("previewAutoCancel").hidden = !busy;
+}
+
+function restorePreviewManual() {
+  previewBatchJob = null;
+  setPreviewBatchBusy(false);
+  $("previewAutoSummary").hidden = true;
+  $("previewAutoPause").hidden = true;
+  $("previewAutoReplay").hidden = true;
+  $("playtestSpeed").value = "1";
+  beginPuzzle(linkedPuzzle.project, linkedPuzzle.cave, linkedPuzzle.title);
+}
+
+async function replayPreviewGame(state) {
+  if (state.running) return;
+  state.running = true;
+  try {
+    while (playtestState === state && !cancelled && !state.paused && state.status === "playing") {
+      await new Promise((resolve) => setTimeout(resolve, 650 / (Number($("playtestSpeed").value) || 1)));
+      if (playtestState !== state || cancelled || state.paused) break;
+      if (state.cave.moveLimitEnabled === false && state.movesUsed >= AUTO_UNLIMITED_TURN_LIMIT) {
+        state.status = "limit";
+        state.message = `자동 테스트 ${AUTO_UNLIMITED_TURN_LIMIT}턴 상한에 도달했습니다.`;
+        renderPuzzlePlayer();
+        break;
+      }
+      await animatePlaytestTurn(state, chooseAutoAction(state));
+    }
+  } catch (error) {
+    if (playtestState === state) {
+      state.paused = true;
+      state.message = "대표 플레이 재생 중 오류가 발생했습니다. 다시 재생해 주세요.";
+      renderPuzzlePlayer();
+    }
+    console.error(error);
+  } finally {
+    state.running = false;
+    if (playtestState === state && !state.paused && !cancelled && state.status === "playing") replayPreviewGame(state);
+  }
+}
+
+function startPreviewReplay(cave, example) {
+  $("playtestSpeed").value = $("previewAutoSpeed").value;
+  const state = createPlayState(cave, `batch-${example.runIndex}`);
+  state.validation = validateCave(cave);
+  state.replay = { cave, example };
+  state.previewAuto = true;
+  state.message = "대표 플레이 · 첫 번째 판 재생 중";
+  setPuzzlePlaytestState(state);
+  renderPuzzlePlayer();
+  replayPreviewGame(state);
+}
+
+async function startPreviewBatch(event) {
+  event.preventDefault();
+  const input = $("previewAutoRuns");
+  if (!editorPreview || !linkedPuzzle || previewBatchJob || !input.reportValidity() || !validAutoPlayRuns(input.value)) return;
+  const runs = Number(input.value);
+  const cave = structuredClone(linkedPuzzle.cave);
+  cave.randomSeed = `${cave.randomSeed}|preview-auto-${crypto.randomUUID()}`;
+  const job = {};
+  previewBatchJob = job;
+  setPreviewBatchBusy(true);
+  setPuzzlePlaytestState(null);
+  $("previewAutoPause").hidden = $("previewAutoReplay").hidden = true;
+  $("hint").hidden = true;
+  renderSimulationGrid(cave, false);
+  const summary = $("previewAutoSummary");
+  summary.hidden = false;
+  summary.textContent = `자동 플레이 0 / ${runs}회 · 계산 중`;
+  try {
+    const batch = await runAutoPlayBatch(cave, runs, runAutoGame, {
+      isCanceled: () => previewBatchJob !== job || cancelled,
+      onProgress: (done) => { summary.textContent = `자동 플레이 ${done} / ${runs}회 · 계산 중`; },
+    });
+    if (!batch || previewBatchJob !== job) return;
+    summary.innerHTML = `<strong>성공 확률 ${batch.clearRate}% · ${batch.wins} / ${batch.runs}회 성공</strong><br>` +
+      `실패 ${batch.lost + batch.stuck}회 · 테스트 상한 도달 ${batch.limited}회<br>` +
+      `대표 플레이: 첫 번째 판 (성공·실패와 관계없이 선택)<br>` +
+      `<small>현재 레벨의 초기 보드부터 반복한 자동 플레이 결과이며 실제 유저의 성공 확률과는 다를 수 있습니다.</small>`;
+    startPreviewReplay(cave, batch.representative);
+  } catch (error) {
+    if (previewBatchJob === job) {
+      restorePreviewManual();
+      summary.hidden = false;
+      summary.textContent = "자동 플레이 중 오류가 발생했습니다. 다시 실행해 주세요.";
+    }
+    console.error(error);
+  } finally {
+    if (previewBatchJob === job) {
+      previewBatchJob = null;
+      setPreviewBatchBusy(false);
+    }
+  }
+}
 
 function loadPuzzleProgress() {
   try {
@@ -150,6 +253,7 @@ function renderPuzzleGoals(state) {
 
 function renderPuzzlePlayer() {
   const state = playtestState;
+  if (!state) return;
   $("movesLeft").textContent = state.clearBonus?.remaining ?? state.movesLeft ?? "무제한";
   const scoreMode = state.scoreTarget !== null;
   $("scoreCard").hidden = !scoreMode && !rules.pointsPerGoalUnit && !rules.pointsPerMoveLeft;
@@ -168,10 +272,15 @@ function renderPuzzlePlayer() {
       ? "이동 횟수를 모두 사용했어요."
       : state.message;
   $("restart").hidden = embedded;
-  $("hint").hidden = !playing || Boolean(state.clearBonus);
+  $("hint").hidden = !playing || Boolean(state.clearBonus) || Boolean(state.previewAuto);
   $("next").hidden = !won || !hasNext;
-  renderSimulationGrid(state.cave, playing && !state.clearBonus);
-  if (!playing) reportPuzzleResult(state, won ? "won" : "lost");
+  renderSimulationGrid(state.cave, playing && !state.clearBonus && !state.previewAuto);
+  if (editorPreview) {
+    $("previewAutoPause").hidden = !state.previewAuto || !playing;
+    $("previewAutoPause").textContent = state.paused ? "대표 판 재생" : "대표 판 일시정지";
+    $("previewAutoReplay").hidden = !state.previewAuto;
+  }
+  if (!playing && !state.previewAuto) reportPuzzleResult(state, won ? "won" : "lost");
 
   const dialog = $("clearDialog");
   if (embedded) return;
@@ -223,7 +332,14 @@ function sendToHost(type, payload = {}) {
 if (embedded) {
   $("levelSelectControl").hidden = true;
   $("quit").hidden = false;
-  $("quit").addEventListener("click", () => cancelEmbeddedPuzzle());
+  $("quit").addEventListener("click", () => {
+    if (editorPreview) {
+      cancelled = true;
+      previewBatchJob = null;
+      setPuzzlePlaytestState(null);
+      sendToHost("result", { outcome: "cancelled", success: false, movesUsed: 0, stars: 0, score: 0 });
+    } else cancelEmbeddedPuzzle();
+  });
   window.addEventListener("message", (event) => {
     const receiver = window.parent !== window ? window.parent : window.opener;
     if (event.source !== receiver || event.origin !== resultOrigin || event.data?.requestId !== requestId ||
@@ -389,7 +505,10 @@ async function loadLinkedPuzzle(mapPath, levelKey) {
   const [response] = await Promise.all([fetch(url, { credentials: "omit" }), localPreview ? null : loadPuzzleArtwork(), loadPuzzleRules()]);
   if (!response.ok) throw new Error(`맵 JSON을 읽을 수 없습니다 (HTTP ${response.status}).`);
   const data = await response.json();
-  if (localPreview) await loadPuzzleArtwork(data?.editorTheme);
+  if (localPreview) {
+    editorPreview = true;
+    await loadPuzzleArtwork(data?.editorTheme);
+  }
   if (cancelled) return;
   versions.mapVersion = data?.contentVersion == null && data?.version == null ? null : String(data.contentVersion ?? data.version);
   const expectedVersion = puzzleParams.get("mapVersion");
@@ -415,6 +534,11 @@ async function loadLinkedPuzzle(mapPath, levelKey) {
   linkedPuzzle = { project: mapProject, cave, title: cave.name || `레벨 ${cave.number}` };
   $("levelSelectControl").hidden = true;
   beginPuzzle(mapProject, cave, linkedPuzzle.title);
+  if (editorPreview) {
+    $("previewAutoControls").hidden = false;
+    $("previewAutoRuns").value = String(cave.simulationRuns);
+    setPreviewBatchBusy(false);
+  }
   if (playtestState.status === "playing") sendToHost("ready", { levelId: cave.id, level: cave.number });
 }
 
@@ -458,4 +582,20 @@ $("soundToggle").addEventListener("click", (event) => {
 });
 
 setPuzzleView(renderPuzzlePlayer, puzzleEffects.showBurst);
+$("previewAutoForm").addEventListener("submit", startPreviewBatch);
+$("previewAutoCancel").addEventListener("click", restorePreviewManual);
+$("previewAutoManual").addEventListener("click", restorePreviewManual);
+$("previewAutoReplay").addEventListener("click", () => {
+  const replay = playtestState?.replay;
+  if (replay) startPreviewReplay(replay.cave, replay.example);
+});
+$("previewAutoPause").addEventListener("click", () => {
+  const state = playtestState;
+  if (!state?.previewAuto || state.status !== "playing") return;
+  state.paused = !state.paused;
+  state.message = state.paused ? "대표 플레이 일시정지" : "대표 플레이 재생 중";
+  renderPuzzlePlayer();
+  if (!state.paused) replayPreviewGame(state);
+});
+$("previewAutoSpeed").addEventListener("change", (event) => { $("playtestSpeed").value = event.currentTarget.value; });
 loadPuzzleMaps();

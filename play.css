@@ -250,3 +250,12 @@ span.puzzle-burst-particle {
   box-shadow: 0 0 4px rgb(255 255 255 / 60%);
 }
 img.puzzle-burst-particle { width: 16px; height: 16px; }
+.preview-auto-controls { padding: 12px; margin: 0 0 14px; background: #151a2c; border: 1px solid #41465b; border-radius: 14px; }
+.preview-auto-controls[hidden] { display: none; }
+.preview-auto-controls form, .preview-auto-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.preview-auto-controls label { display: grid; gap: 4px; font-size: .85rem; }
+.preview-auto-controls input { width: 110px; }
+.preview-auto-actions { margin-top: 10px; }
+.preview-auto-controls .button { min-height: 40px; padding: 8px 12px; font-size: .85rem; }
+.preview-auto-summary { padding: 10px; margin-top: 10px; border-radius: 8px; background: #0b1020; font-size: .85rem; line-height: 1.6; }
+.preview-auto-summary strong { color: #9be8b5; }
